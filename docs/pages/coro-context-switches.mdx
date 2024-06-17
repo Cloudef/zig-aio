@@ -1,0 +1,23 @@
+# CORO API
+
+:::warning
+
+This part of the API is likely to change.
+
+:::
+
+
+## Context switches
+
+To yield running task to the caller use the following.
+
+```zig
+coro.yield();
+```
+
+To continue running the task from where it left, use the following.
+This can also be used to cancel any IO operations.
+
+```zig
+coro.wakeup();
+```

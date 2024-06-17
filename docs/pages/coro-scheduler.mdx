@@ -1,0 +1,67 @@
+# CORO API
+
+## Scheduler
+
+To do a non-blocking IO while still maintaining the imperative blocking style of coding.
+We need a coroutines and a scheduler that schedules the context switches of said coroutines.
+In this guide we refer to the coroutines as tasks.
+
+### Initializing Scheduler instance
+
+Scheduler requires an `allocator` and optional `InitOptions`.
+The scheduler stores the `allocator` and uses it for managed task creation and destruction.
+
+```zig
+var scheduler = try coro.Scheduler.init(gpa.allocator(), .{});
+defer scheduler.deinit();
+```
+
+### Spawning tasks
+
+A new task can be spawned by specifying `entrypoint`, which must be a function with either `void` or `!void` return type.
+If it's `!void` and returns a error then a stacktrace of the error is dumped, similarly to how std's `std.Thread` works.
+Supply arguments to the `entrypoint` by providing a tuple as the second parameter.
+The third parameter takes a optional `SpawnOptions`, which can be used to specify the stack size of the Task, or
+provide a pre-allocated unmanaged stack.
+
+When task is spawned, the `entrypoint` is immediately called and the code in the `entrypoint` runs until the task either
+yields or performs a IO operation using one of the `coro.io` namespace functions.
+
+```zig
+var task = try scheduler.spawn(entrypoint, .{ 1, "args" }, .{});
+```
+
+### Reaping tasks
+
+Following removes a task, freeing its memory and canceling all running IO operations for that task.
+
+```zig
+scheduler.reap(task);
+```
+
+Alternatively reap all the tasks using the following.
+
+```zig
+scheduler.reapAll();
+```
+
+Call to `deinit` also reaps all tasks.
+
+### Running
+
+The scheduler can process tasks and io one step a time with the tick method.
+By running tick the scheduler will reap tasks that returned (dead tasks) and context switch back to the
+tasks in case they completed their IO operations.
+
+```zig
+// if there are pending io operations, blocks until at least one completes
+try scheduler.tick(.blocking);
+// returns immediately regardless of the current io state
+try scheduler.tick(.nonblocking);
+```
+
+To run the scheduler until all tasks have returned aka died, then use the following.
+
+```zig
+try scheduler.run();
+```

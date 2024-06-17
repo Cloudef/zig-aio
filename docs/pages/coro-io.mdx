@@ -1,0 +1,27 @@
+# CORO API
+
+## IO
+
+Inside a task it is possible to use the IO functions inside the `coro.io` namespace to perform cooperative
+IO with the `Scheduler`. When calling a `coro.io` operation from a task, the task setups some internal state,
+queues the IO operations for `Scheduler` and then yields, allowing other code to run in the program.
+
+All the IO operations are merged into one `aio.Dynamic` instance for completition during the next scheduler tick.
+While this may not be beneficial on all backends, the io_uring backend allows the kernel to execute all
+the yielding tasks IO operations with a single syscall.
+
+### Performing io operations
+
+Performing operations is similar to `aio` module. The api is the same, but instead use the `coro.io` namespace.
+Below is a full example of simple server / client program using the `coro` api.
+
+```zig
+// [!include ~/../examples/coro.zig]
+```
+
+### Cancellations
+
+Use `aio.Cancel` operation to cancel the currently running operations in a task.
+The `out_error` of such operation will then be set as `error.OperationCanceled`.
+
+Alternatively it's possible to call `scheduler.wakeup(task);` which also cancels all currently running io on that task.

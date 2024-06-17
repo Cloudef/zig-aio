@@ -1,0 +1,34 @@
+# Integrating zig-aio
+
+## Zig Package Manager
+
+### Fetching and updating the zig-aio dependency
+
+Run the following command in zig project root directory.
+
+```sh
+zig fetch --save git+https://github.com/Cloudef/zig-aio.git
+```
+
+### Using zig-aio modules in zig project
+
+In `build.zig` file add the following for whichever modules `zig-aio` is required.
+
+```zig
+// get the "zig-aio" dependency from "build.zig.zon"
+const zig_aio = b.dependency("zig-aio", .{});
+// for exe, lib, tests, etc.
+exe.root_module.addImport("aio", zig_aio.module("aio"));
+// for coroutines api
+exe.root_module.addImport("coro", zig_aio.module("coro"));
+```
+
+### Using zig-aio in zig code
+
+It's possible to import the modules like this.
+
+```zig
+const aio = @import("aio");
+const coro = @import("coro");
+```
+

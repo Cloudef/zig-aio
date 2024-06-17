@@ -1,0 +1,262 @@
+# AIO API
+
+## Operations
+
+A handful of IO operations are supported.
+
+### Common fields
+
+Every operation supports these common fields.
+
+```zig
+const Counter = union(enum) {
+    inc: *u16,
+    dec: *u16,
+    nop: void,
+};
+
+out_id: ?*Id = null,
+out_error: ?*(E || SharedError) = null,
+counter: Counter = .nop,
+link_next: bool = false,
+```
+
+If `out_id` is set, the id of the operation will be written into that address.
+The `id` can then be used in future operations to refer to this operation.
+If `out_error` is set, the error of the operation will be written into that address, in case the operation failed.
+If there was no failure a `error.Success` will be store in that address.
+`counter` can be used to set either decreasing or increasing counter.
+When operation completes it will either decrease or increase the `u16` stored at the address.
+`link_next` can be used to link the next operation into this operation.
+When operations are linked, the next operation won't start until this operation has completed first.
+
+### Fsync
+
+Synchronizes the contents of a `file` onto the disk.
+
+```zig
+pub const Fsync = Define(struct {
+    file: std.fs.File,
+}, std.fs.File.SyncError);
+```
+
+### Read
+
+Reads a `file` into a `buffer` from a `offset`.
+The amount of bytes read is stored in the location pointed by `out_read`.
+
+```zig
+pub const Read = Define(struct {
+    file: std.fs.File,
+    buffer: []u8,
+    offset: u64 = 0,
+    out_read: *usize,
+}, std.fs.File.ReadError);
+```
+
+### Write
+
+Writes contents of `buffer` from `offset` into a `file`.
+The amount of bytes written is stored in the location pointed by `out_written`.
+
+```zig
+pub const Write = Define(struct {
+    file: std.fs.File,
+    buffer: []const u8,
+    offset: u64 = 0,
+    out_written: ?*usize = null,
+}, std.fs.File.WriteError);
+```
+
+### Accept
+
+See `man accept(2)`
+
+```zig
+pub const Accept = Define(struct {
+    socket: std.posix.socket_t,
+    addr: ?*sockaddr = null,
+    inout_addrlen: ?*std.posix.socklen_t = null,
+    out_socket: *std.posix.socket_t,
+}, std.posix.AcceptError);
+```
+
+### Connect
+
+See `man connect(2)`
+
+```zig
+pub const Connect = Define(struct {
+    socket: std.posix.socket_t,
+    addr: *const sockaddr,
+    addrlen: std.posix.socklen_t,
+}, std.posix.ConnectError);
+```
+
+### Recv
+
+See `man recv(2)`
+
+```zig
+pub const Recv = Define(struct {
+    socket: std.posix.socket_t,
+    buffer: []u8,
+    out_read: *usize,
+}, std.posix.RecvFromError);
+```
+
+### Send
+
+See `man send(2)`
+
+```zig
+pub const Send = Define(struct {
+    socket: std.posix.socket_t,
+    buffer: []const u8,
+    out_written: ?*usize = null,
+}, std.posix.SendError);
+```
+
+### OpenAt
+
+Opens `path` relative to a `dir`, opening is customized by `flags`.
+The opened file is stored into the location pointed by `out_file`.
+
+```zig
+pub const OpenAt = Define(struct {
+    dir: std.fs.Dir,
+    path: [*:0]const u8,
+    flags: std.fs.File.OpenFlags,
+    out_file: *std.fs.File,
+}, std.fs.File.OpenError);
+```
+
+### Close
+
+Closes a `file`.
+
+```zig
+pub const Close = Define(struct {
+    file: std.fs.File,
+}, error{});
+```
+
+### Timeout
+
+Starts a timeout. Once the timeout expires the operation completes.
+The timeout uses a monotnic clock source.
+
+```zig
+pub const Timeout = Define(struct {
+    ts: struct { sec: i64 = 0, nsec: i64 = 0 },
+}, error{});
+```
+
+### TimeoutRemove
+
+Cancel existing timeout referenced by `id`.
+
+```zig
+pub const TimeoutRemove = Define(struct {
+    id: Id,
+}, error{ InProgress, NotFound });
+```
+
+### LinkTimeout
+
+Timeout linked to a operation.
+The operation before must have set `link_next` to `true`.
+If the operation finishes before the timeout, then the timeout will be canceled.
+If the timeout finishes before the operation, then the operation will be canceled.
+
+```zig
+pub const LinkTimeout = Define(struct {
+    ts: struct { sec: i64 = 0, nsec: i64 = 0 },
+    out_expired: ?*bool = null,
+}, error{InProgress});
+```
+
+### Cancel
+
+Cancel existing operation referenced by `id`.
+
+```zig
+pub const Cancel = Define(struct {
+    id: Id,
+}, error{ InProgress, NotFound });
+```
+
+### RenameAt
+
+Rename a `old_path` relative to `old_dir` into `new_path` relative to `new_dir`.
+
+```zig
+pub const RenameAt = Define(struct {
+    old_dir: std.fs.Dir,
+    old_path: [*:0]const u8,
+    new_dir: std.fs.Dir,
+    new_path: [*:0]const u8,
+}, std.fs.Dir.RenameError);
+```
+
+### UnlinkAt
+
+Delete a file or directory locating in `path` relative to `dir`.
+
+```zig
+pub const UnlinkAt = Define(struct {
+    dir: std.fs.Dir,
+    path: [*:0]const u8,
+}, std.posix.UnlinkatError);
+```
+
+### MkDirAt
+
+Create directory relative to `dir` at `path`.
+The `mode` parameter can specify the mode of the directory on supporting operating systems.
+
+```zig
+pub const MkDirAt = Define(struct {
+    dir: std.fs.Dir,
+    path: [*:0]const u8,
+    mode: u32 = std.fs.Dir.default_mode,
+}, std.fs.Dir.MakeError);
+```
+
+### SymlinkAt
+
+Create a symlink relative to `dir` at `link_path` linking to the `target`.
+
+```zig
+pub const SymlinkAt = Define(struct {
+    dir: std.fs.Dir,
+    target: [*:0]const u8,
+    link_path: [*:0]const u8,
+}, std.posix.SymLinkError);
+```
+
+### Socket
+
+See `man socket(2)`
+
+```zig
+pub const Socket = Define(struct {
+    /// std.posix.AF
+    domain: u32,
+    /// std.posix.SOCK
+    flags: u32,
+    /// std.posix.IPPROTO
+    protocol: u32,
+    out_socket: *std.posix.socket_t,
+}, std.posix.SocketError);
+```
+
+### CloseSocket
+
+Closes a `socket`.
+
+```zig
+pub const CloseSocket = Define(struct {
+    socket: std.posix.socket_t,
+}, error{});
+```

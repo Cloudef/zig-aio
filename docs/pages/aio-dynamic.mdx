@@ -1,0 +1,49 @@
+# AIO API
+
+## Dynamic IO
+
+In case the amount of IO operations isn't known ahead of time the dynamic api can be used.
+
+### Initializing Dynamic instance
+
+Creating a Dynamic instance requires an allocator and upper bound for non-completed operations.
+The instance allocates only during the `init`, and frees the memory during `deinit`.
+Same allocator must be used in `deinit` that was used in `init`.
+
+```zig
+const max_operations = 32;
+var work = try Dynamic.init(std.heap.page_allocator, max_operations);
+defer work.deinit(std.heap.page_allocator);
+```
+
+### Queuing operations
+
+It is possible to queue either single or multiple operations just like with the immediate api.
+The call to queue is atomic, if the call fails, none of the operations will be actually performed.
+
+```zig
+// Multiple operations
+try work.queue(.{
+    aio.Read{...},
+    aio.Write{...},
+    aio.Fsync{...},
+});
+
+// Single operation
+try work.queue(aio.Timeout{...});
+```
+
+### Completing operations
+
+It is possible to complete the operations either in blocking or non-blocking fashion.
+The blocking mode will wait for at least one operation to complete.
+The non-blocking always returns immediately even if no operations were completed.
+The call to complete returns `aio.CompletionResult` containing the number of operations that were completed
+and the number of errors that occured.
+
+```zig
+// blocks until at least 1 operation completes
+const res = try work.complete(.blocking);
+// returns immediately
+const res = try work.complete(.nonblocking);
+```

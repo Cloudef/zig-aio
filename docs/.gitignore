@@ -1,0 +1,9 @@
+.DS_Store
+dist
+node_modules
+_lib
+tsconfig.tsbuildinfo
+tsconfig.*.tsbuildinfo
+vocs.config.ts.timestamp-*
+.vercel
+.vocs
