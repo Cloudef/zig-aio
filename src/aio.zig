@@ -53,6 +53,8 @@ pub const Dynamic = struct {
         const ti = @typeInfo(@TypeOf(operations));
         if (comptime ti == .Struct and ti.Struct.is_tuple) {
             return self.io.queue(operations.len, &struct { ops: @TypeOf(operations) }{ .ops = operations });
+        } else if (comptime ti == .Array) {
+            return self.io.queue(operations.len, &struct { ops: @TypeOf(operations) }{ .ops = operations });
         } else {
             return self.io.queue(1, &struct { ops: @TypeOf(.{operations}) }{ .ops = .{operations} });
         }
@@ -78,8 +80,10 @@ pub inline fn batch(operations: anytype) ImmediateError!CompletionResult {
     const ti = @typeInfo(@TypeOf(operations));
     if (comptime ti == .Struct and ti.Struct.is_tuple) {
         return IO.immediate(operations.len, &struct { ops: @TypeOf(operations) }{ .ops = operations });
+    } else if (comptime ti == .Array) {
+        return IO.immediate(operations.len, &struct { ops: @TypeOf(operations) }{ .ops = operations });
     } else {
-        @compileError("expected a tuple of operations");
+        @compileError("expected a tuple or array of operations");
     }
 }
 
@@ -93,7 +97,7 @@ pub inline fn multi(operations: anytype) (ImmediateError || error{SomeOperationF
 /// Completes a single operation immediately, blocks until complete
 pub inline fn single(operation: anytype) (ImmediateError || OperationError)!void {
     var op: @TypeOf(operation) = operation;
-    var err: @TypeOf(op.out_error.?.*) = error.Success;
+    var err: @TypeOf(operation).Error = error.Success;
     op.out_error = &err;
     _ = try batch(.{op});
     if (err != error.Success) return err;
@@ -119,7 +123,7 @@ pub const RenameAt = ops.RenameAt;
 pub const UnlinkAt = ops.UnlinkAt;
 pub const MkDirAt = ops.MkDirAt;
 pub const SymlinkAt = ops.SymlinkAt;
-pub const WaitPid = ops.WaitPid;
+pub const ChildExit = ops.ChildExit;
 pub const Socket = ops.Socket;
 pub const CloseSocket = ops.CloseSocket;
 

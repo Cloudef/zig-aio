@@ -21,10 +21,10 @@ counter: Counter = .nop,
 link_next: bool = false,
 ```
 
-If `out_id` is set, the id of the operation will be written into that address.
+If `out_id` is set, the id of the operation will be stored into that address.
 The `id` can then be used in future operations to refer to this operation.
-If `out_error` is set, the error of the operation will be written into that address, in case the operation failed.
-If there was no failure a `error.Success` will be store in that address.
+If `out_error` is set, the error of the operation will be stored into that address, in case the operation failed.
+If there was no failure a `error.Success` will be stored in that address.
 `counter` can be used to set either decreasing or increasing counter.
 When operation completes it will either decrease or increase the `u16` stored at the address.
 `link_next` can be used to link the next operation into this operation.

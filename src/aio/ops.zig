@@ -221,14 +221,14 @@ pub const SymlinkAt = struct {
 // TODO: linkat
 
 /// std.process.Child.wait
-pub const WaitPid = struct {
-    pub const Error = SharedError;
+pub const ChildExit = struct {
+    pub const Error = error{ NotFound, Unexpected } || SharedError;
     child: std.process.Child.Id,
-    out_term: *std.process.Child.Term,
+    out_term: ?*std.process.Child.Term = null,
     _: switch (builtin.target.os.tag) {
         .linux => std.os.linux.siginfo_t,
         else => @compileError("unsupported os"),
-    },
+    } = undefined,
     out_id: ?*Id = null,
     out_error: ?*Error = null,
     counter: Counter = .nop,
@@ -279,7 +279,7 @@ pub const Operation = enum {
     unlink_at,
     mkdir_at,
     symlink_at,
-    waitpid,
+    child_exit,
     socket,
     close_socket,
 
@@ -301,7 +301,7 @@ pub const Operation = enum {
         .unlink_at = UnlinkAt,
         .mkdir_at = MkDirAt,
         .symlink_at = SymlinkAt,
-        .waitpid = WaitPid,
+        .child_exit = ChildExit,
         .socket = Socket,
         .close_socket = CloseSocket,
     });

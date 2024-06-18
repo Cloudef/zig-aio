@@ -20,8 +20,8 @@ try aio.single(aio.Write{.file = f, .buffer = "contents"});
 
 #### Using multi
 
-Completes a list of operations immediately, blocks until complete
-Returns `error.SomeOperationFailed` if any operation failed
+Completes a list of operations immediately, blocks until complete.
+Returns `error.SomeOperationFailed` if any operation failed.
 Returns `void` if there were no errors.
 
 ```zig
@@ -35,7 +35,7 @@ try aio.multi(.{
 ```
 
 The `.link_next` field of operation can be used to link the operation to the next operation.
-When linking operations, the next operation won't start until the previous operation is complete.
+When linking operations, the next operation won't start until this operation is complete.
 
 #### Using batch
 

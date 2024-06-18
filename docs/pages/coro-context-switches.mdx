@@ -1,23 +1,39 @@
 # CORO API
 
-:::warning
-
-This part of the API is likely to change.
-
-:::
-
-
-## Context switches
+## Paired context switches
 
 To yield running task to the caller use the following.
+The function takes a enum value as a argument representing the yield state of the task.
 
 ```zig
-coro.yield();
+coro.yield(SomeEnum.value);
 ```
 
-To continue running the task from where it left, use the following.
-This can also be used to cancel any IO operations.
+To continue running the task from where it left, you need to issue the same enum value to the following function.
+If the task currently isn't being yielded in the supplied state, the call is no-op.
 
 ```zig
-coro.wakeup();
+coro.wakeupFromState(task, SomeEnum.value);
 ```
+
+This is the preferred way to handle the control flow between tasks.
+
+## Canceling IO
+
+While it's possible to cancel IO by using the `aio.Cancel` operations. It is also possible to cancel
+all IO operations currently blocking a task by doing the following.
+If the task currently isn't being yielded by IO then the call is no-op.
+
+```zig
+coro.wakeupFromIo(task);
+```
+
+## Unpaired wakeup
+
+Sometimes it's useful to be able to wakeup the task from any yielding state.
+
+```zig
+coro.wakeup(task);
+```
+
+In this case the task will wake up no matter what its yielding state is currently.

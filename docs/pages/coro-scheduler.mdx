@@ -34,12 +34,14 @@ var task = try scheduler.spawn(entrypoint, .{ 1, "args" }, .{});
 ### Reaping tasks
 
 Following removes a task, freeing its memory and canceling all running IO operations for that task.
+The reap may be delayed in case the task is currently doing IO, the IO operations will be actively canceled.
 
 ```zig
 scheduler.reap(task);
 ```
 
 Alternatively reap all the tasks using the following.
+The reap may be delayed in case the tasks are currently doing IO, the IO operations will be actively canceled.
 
 ```zig
 scheduler.reapAll();

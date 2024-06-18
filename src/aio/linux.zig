@@ -148,7 +148,7 @@ inline fn uring_queue(io: *std.os.linux.IoUring, op: anytype, user_data: u64) ai
         .unlink_at => try io.unlinkat(user_data, op.dir.handle, op.path, 0),
         .mkdir_at => try io.mkdirat(user_data, op.dir.handle, op.path, op.mode),
         .symlink_at => try io.symlinkat(user_data, op.target, op.dir.handle, op.link_path),
-        .waitpid => try io.waitid(user_data, .PID, op.child, &op._, 0, 0),
+        .child_exit => try io.waitid(user_data, .PID, op.child, @constCast(&op._), std.posix.W.EXITED, 0),
         .socket => try io.socket(user_data, op.domain, op.flags, op.protocol, 0),
         .close_socket => try io.close(user_data, op.socket),
     };
@@ -452,7 +452,11 @@ inline fn uring_handle_completion(op: anytype, cqe: *std.os.linux.io_uring_cqe) 
                     .ROFS => error.ReadOnlyFileSystem,
                     else => std.posix.unexpectedErrno(err),
                 },
-                .waitpid => unreachable,
+                .child_exit => switch (err) {
+                    .SUCCESS, .INTR, .AGAIN, .FAULT, .INVAL => unreachable,
+                    .CHILD => error.NotFound,
+                    else => std.posix.unexpectedErrno(err),
+                },
                 .socket => switch (err) {
                     .SUCCESS, .INTR, .AGAIN, .FAULT => unreachable,
                     .ACCES => error.PermissionDenied,
@@ -490,7 +494,9 @@ inline fn uring_handle_completion(op: anytype, cqe: *std.os.linux.io_uring_cqe) 
         .timeout, .timeout_remove, .link_timeout => {},
         .cancel => {},
         .rename_at, .unlink_at, .mkdir_at, .symlink_at => {},
-        .waitpid => op.out_term.* = statusToTerm(@intCast(op._.fields.common.second.sigchld.status)),
+        .child_exit => if (op.out_term) |term| {
+            term.* = statusToTerm(@intCast(op._.fields.common.second.sigchld.status));
+        },
         .socket => op.out_socket.* = cqe.res,
     }
 }
