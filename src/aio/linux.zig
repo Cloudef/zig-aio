@@ -4,13 +4,13 @@ const Operation = @import("ops.zig").Operation;
 const ErrorUnion = @import("ops.zig").ErrorUnion;
 
 io: std.os.linux.IoUring,
-ops: Pool(Operation, u16),
+ops: Pool(Operation.Union, u16),
 
 pub fn init(allocator: std.mem.Allocator, n: u16) aio.InitError!@This() {
     const n2 = try std.math.ceilPowerOfTwo(u16, n);
     var io = try uring_init(n2);
     errdefer io.deinit();
-    const ops = try Pool(Operation, u16).init(allocator, n2);
+    const ops = try Pool(Operation.Union, u16).init(allocator, n2);
     errdefer ops.deinit(allocator);
     return .{ .io = io, .ops = ops };
 }
@@ -25,7 +25,7 @@ inline fn queueOperation(self: *@This(), op: anytype) aio.QueueError!u16 {
     const n = self.ops.next() orelse return error.Overflow;
     try uring_queue(&self.io, op, n);
     const tag = @tagName(comptime Operation.tagFromPayloadType(@TypeOf(op.*)));
-    return self.ops.add(@unionInit(Operation, tag, op.*)) catch unreachable;
+    return self.ops.add(@unionInit(Operation.Union, tag, op.*)) catch unreachable;
 }
 
 pub fn queue(self: *@This(), comptime len: u16, work: anytype) aio.QueueError!void {
@@ -134,8 +134,8 @@ inline fn uring_queue(io: *std.os.linux.IoUring, op: anytype, user_data: u64) ai
         .fsync => try io.fsync(user_data, op.file.handle, 0),
         .read => try io.read(user_data, op.file.handle, .{ .buffer = op.buffer }, op.offset),
         .write => try io.write(user_data, op.file.handle, op.buffer, op.offset),
-        .accept => try io.accept(user_data, op.socket, @ptrCast(@alignCast(op.addr)), op.inout_addrlen, 0),
-        .connect => try io.connect(user_data, op.socket, @ptrCast(@alignCast(op.addr)), op.addrlen),
+        .accept => try io.accept(user_data, op.socket, @ptrCast(op.addr), op.inout_addrlen, 0),
+        .connect => try io.connect(user_data, op.socket, @ptrCast(op.addr), op.addrlen),
         .recv => try io.recv(user_data, op.socket, .{ .buffer = op.buffer }, 0),
         .send => try io.send(user_data, op.socket, op.buffer, 0),
         .open_at => try io.openat(user_data, op.dir.handle, op.path, convertOpenFlags(op.flags)),
@@ -148,12 +148,14 @@ inline fn uring_queue(io: *std.os.linux.IoUring, op: anytype, user_data: u64) ai
         .unlink_at => try io.unlinkat(user_data, op.dir.handle, op.path, 0),
         .mkdir_at => try io.mkdirat(user_data, op.dir.handle, op.path, op.mode),
         .symlink_at => try io.symlinkat(user_data, op.target, op.dir.handle, op.link_path),
-        // .waitid => try io.waitid(user_data, .PID, op.child, &op._, 0, 0),
+        .waitpid => try io.waitid(user_data, .PID, op.child, &op._, 0, 0),
         .socket => try io.socket(user_data, op.domain, op.flags, op.protocol, 0),
         .close_socket => try io.close(user_data, op.socket),
     };
     if (op.link_next) sqe.flags |= std.os.linux.IOSQE_IO_LINK;
-    if (op.out_id) |id| id.* = @enumFromInt(user_data);
+    if (@hasField(@TypeOf(op.*), "out_id")) {
+        if (op.out_id) |id| id.* = @enumFromInt(user_data);
+    }
 }
 
 inline fn uring_submit(io: *std.os.linux.IoUring) aio.CompletionError!u16 {
@@ -450,7 +452,7 @@ inline fn uring_handle_completion(op: anytype, cqe: *std.os.linux.io_uring_cqe) 
                     .ROFS => error.ReadOnlyFileSystem,
                     else => std.posix.unexpectedErrno(err),
                 },
-                // .waitid => unreachable,
+                .waitpid => unreachable,
                 .socket => switch (err) {
                     .SUCCESS, .INTR, .AGAIN, .FAULT => unreachable,
                     .ACCES => error.PermissionDenied,
@@ -488,7 +490,7 @@ inline fn uring_handle_completion(op: anytype, cqe: *std.os.linux.io_uring_cqe) 
         .timeout, .timeout_remove, .link_timeout => {},
         .cancel => {},
         .rename_at, .unlink_at, .mkdir_at, .symlink_at => {},
-        // .waitid => op.out_term.* = statusToTerm(@intCast(op._.fields.common.second.sigchld.status)),
+        .waitpid => op.out_term.* = statusToTerm(@intCast(op._.fields.common.second.sigchld.status)),
         .socket => op.out_socket.* = cqe.res,
     }
 }

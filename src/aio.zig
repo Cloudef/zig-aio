@@ -27,8 +27,6 @@ pub const CompletionError = error{
     Unexpected,
 };
 
-pub const OperationError = ops.ErrorUnion;
-
 pub const ImmediateError = InitError || QueueError || CompletionError;
 
 pub const CompletionResult = struct {
@@ -77,7 +75,12 @@ pub const Dynamic = struct {
 /// Completes a list of operations immediately, blocks until complete
 /// For error handling you must check the `out_error` field in the operation
 pub inline fn batch(operations: anytype) ImmediateError!CompletionResult {
-    return IO.immediate(operations.len, &struct { ops: @TypeOf(operations) }{ .ops = operations });
+    const ti = @typeInfo(@TypeOf(operations));
+    if (comptime ti == .Struct and ti.Struct.is_tuple) {
+        return IO.immediate(operations.len, &struct { ops: @TypeOf(operations) }{ .ops = operations });
+    } else {
+        @compileError("expected a tuple of operations");
+    }
 }
 
 /// Completes a list of operations immediately, blocks until complete
@@ -98,7 +101,8 @@ pub inline fn single(operation: anytype) (ImmediateError || OperationError)!void
 
 const ops = @import("aio/ops.zig");
 pub const Id = ops.Id;
-pub const Sync = ops.Sync;
+pub const OperationError = ops.Operation.Error;
+pub const Fsync = ops.Fsync;
 pub const Read = ops.Read;
 pub const Write = ops.Write;
 pub const Accept = ops.Accept;
@@ -115,6 +119,7 @@ pub const RenameAt = ops.RenameAt;
 pub const UnlinkAt = ops.UnlinkAt;
 pub const MkDirAt = ops.MkDirAt;
 pub const SymlinkAt = ops.SymlinkAt;
+pub const WaitPid = ops.WaitPid;
 pub const Socket = ops.Socket;
 pub const CloseSocket = ops.CloseSocket;
 

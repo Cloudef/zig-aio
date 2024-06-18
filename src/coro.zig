@@ -48,8 +48,12 @@ pub const io = struct {
             var work = struct { ops: @TypeOf(operations) }{ .ops = operations };
             inline for (&work.ops, &state) |*op, *s| {
                 op.counter = .{ .dec = &task.io_counter };
-                s.old_id = op.out_id;
-                op.out_id = &s.id;
+                if (@hasDecl(@TypeOf(op.*), "out_id")) {
+                    s.old_id = op.out_id;
+                    op.out_id = &s.id;
+                } else {
+                    s.old_id = null;
+                }
                 s.old_err = op.out_error;
                 op.out_error = @ptrCast(&s.err);
             }
@@ -89,6 +93,7 @@ pub const io = struct {
 
     /// Completes a single operation immediately, blocks the coroutine until complete
     /// The IO operation can be cancelled by calling `wakeup`
+    /// TODO: combine this and multi to avoid differences/bugs in implementation
     pub fn single(operation: anytype) (aio.QueueError || aio.OperationError)!void {
         if (Fiber.current()) |fiber| {
             var task: *Scheduler.TaskState = @ptrFromInt(fiber.getUserDataPtr().*);
@@ -97,7 +102,11 @@ pub const io = struct {
             var err: @TypeOf(op.out_error.?.*) = error.Success;
             var id: aio.Id = undefined;
             op.counter = .{ .dec = &task.io_counter };
-            op.out_id = &id;
+            var old_id: ?*aio.Id = null;
+            if (@hasDecl(@TypeOf(op), "out_id")) {
+                old_id = op.out_id;
+                op.out_id = &id;
+            }
             op.out_error = &err;
             try task.io.queue(op);
             task.io_counter = 1;
@@ -113,6 +122,7 @@ pub const io = struct {
                 Fiber.yield();
             }
 
+            if (old_id) |p| p.* = id;
             if (err != error.Success) return err;
         } else {
             unreachable; // this io function is only meant to be used in coroutines!
