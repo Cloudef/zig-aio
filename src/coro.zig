@@ -379,21 +379,25 @@ pub const ThreadPool = struct {
 
     /// Yield until `func` finishes on another thread
     pub fn yieldForCompletition(self: *@This(), func: anytype, args: anytype) ReturnType(@TypeOf(func)) {
-        if (Fiber.current()) |_| {
-            var ret: @typeInfo(@TypeOf(func)).Fn.return_type.? = undefined;
-            var source = try aio.EventSource.init();
-            errdefer source.deinit();
-            try self.pool.spawn(entrypoint, .{ &source, func, &ret, args });
-            if (try io.privateComplete(.{
-                aio.WaitEventSource{ .source = source, .link_next = true },
-                aio.CloseEventSource{ .source = source },
-            }, .io_waiting_thread) > 0) {
-                return error.SomeOperationFailed;
+        var ret: @typeInfo(@TypeOf(func)).Fn.return_type.? = undefined;
+        var source = try aio.EventSource.init();
+        errdefer source.deinit();
+        try self.pool.spawn(entrypoint, .{ &source, func, &ret, args });
+        var wait_err: aio.WaitEventSource.Error = error.Success;
+        if (try io.privateComplete(.{
+            aio.WaitEventSource{ .source = source, .link_next = true, .out_error = &wait_err },
+            aio.CloseEventSource{ .source = source },
+        }, .io_waiting_thread) > 0) {
+            if (wait_err != error.Success) {
+                // it's possible to end up here if aio implementation ran out of resources
+                // in case of io_uring the application managed to fill up the submission queue
+                // normally this should not happen, but as to not crash the program do a blocking wait
+                source.wait();
             }
-            return ret;
-        } else {
-            unreachable; // yieldForCompletition can only be used from a task
+            // close manually
+            source.deinit();
         }
+        return ret;
     }
 };
 

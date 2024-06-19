@@ -123,6 +123,10 @@ pub const EventSource = struct {
     pub inline fn notify(self: *@This()) void {
         self.native.notify();
     }
+
+    pub inline fn wait(self: *@This()) void {
+        self.native.wait();
+    }
 };
 
 const IO = switch (@import("builtin").target.os.tag) {

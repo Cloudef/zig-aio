@@ -24,6 +24,11 @@ pub const EventSource = struct {
     pub inline fn notify(self: *@This()) void {
         _ = std.posix.write(self.fd, &std.mem.toBytes(@as(u64, 1))) catch unreachable;
     }
+
+    pub inline fn wait(self: *@This()) void {
+        var v: u64 = undefined;
+        _ = std.posix.read(self.fd, std.mem.asBytes(&v)) catch unreachable;
+    }
 };
 
 io: std.os.linux.IoUring,
