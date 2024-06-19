@@ -63,7 +63,7 @@ pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode) aio.Completion
 }
 
 pub fn immediate(comptime len: u16, work: anytype) aio.ImmediateError!aio.CompletionResult {
-    var io = try uring_init(len);
+    var io = try uring_init(try std.math.ceilPowerOfTwo(u16, len));
     defer io.deinit();
     inline for (&work.ops, 0..) |*op, idx| try uring_queue(&io, op, idx);
     var num = try uring_submit(&io);

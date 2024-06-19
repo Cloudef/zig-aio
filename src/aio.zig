@@ -138,6 +138,29 @@ pub const ChildExit = ops.ChildExit;
 pub const Socket = ops.Socket;
 pub const CloseSocket = ops.CloseSocket;
 
+test "shared outputs" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var f = try tmp.dir.createFile("test", .{});
+    defer f.close();
+    var id1: Id = @enumFromInt(69);
+    var id2: Id = undefined;
+    var id3: Id = undefined;
+    var counter1: u16 = 0;
+    var counter2: u16 = 2;
+    try multi(.{
+        Fsync{ .file = f, .out_id = &id1, .counter = .{ .inc = &counter1 } },
+        Fsync{ .file = f, .out_id = &id2, .counter = .{ .inc = &counter1 } },
+        Fsync{ .file = f, .out_id = &id3, .counter = .{ .dec = &counter2 } },
+    });
+    try std.testing.expect(id1 != @as(Id, @enumFromInt(69)));
+    try std.testing.expect(id1 != id2);
+    try std.testing.expect(id1 != id3);
+    try std.testing.expect(id2 != id3);
+    try std.testing.expect(counter1 == 2);
+    try std.testing.expect(counter2 == 1);
+}
+
 test "Fsync" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
