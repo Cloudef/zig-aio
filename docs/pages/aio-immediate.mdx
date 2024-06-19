@@ -37,12 +37,12 @@ try aio.multi(.{
 The `.link_next` field of operation can be used to link the operation to the next operation.
 When linking operations, the next operation won't start until this operation is complete.
 
-#### Using batch
+#### Using complete
 
-Batch is similar to multi, but it will not return `error.SomeOperationFailed` in case any of the operations fail.
-Instead batch returns `aio.CompletionResult` which contains the number of operations that was completed, and number of
+Complete is similar to multi, but it will not return `error.SomeOperationFailed` in case any of the operations fail.
+Instead complete returns `aio.CompletionResult` which contains the number of operations that was completed, and number of
 errors that occured. To find out which operations failed, errors have to be stored somewhere by setting the `.out_error`
-field of the operation. The batch call may still fail in implementation defined ways, such as running out of system resources.
+field of the operation. The complete call may still fail in implementation defined ways, such as running out of system resources.
 
 ```zig
 var my_buffer: [1024]u8 = undefined;
@@ -50,7 +50,7 @@ var my_len: usize = undefined;
 var write_error: std.posix.WriteError = undefined;
 var read_error: std.posix.ReadError = undefined;
 
-const res = try aio.batch(.{
+const res = try aio.complete(.{
     aio.Write{.file = f, .buffer = "contents", .out_error = &write_error, .link_next = true},
     aio.Read{.file = f, .buffer = &my_buffer, .out_error = &read_error, .out_read = &my_len},
 });

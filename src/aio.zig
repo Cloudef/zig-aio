@@ -76,7 +76,7 @@ pub const Dynamic = struct {
 
 /// Completes a list of operations immediately, blocks until complete
 /// For error handling you must check the `out_error` field in the operation
-pub inline fn batch(operations: anytype) ImmediateError!CompletionResult {
+pub inline fn complete(operations: anytype) ImmediateError!CompletionResult {
     const ti = @typeInfo(@TypeOf(operations));
     if (comptime ti == .Struct and ti.Struct.is_tuple) {
         return IO.immediate(operations.len, &struct { ops: @TypeOf(operations) }{ .ops = operations });
@@ -90,7 +90,7 @@ pub inline fn batch(operations: anytype) ImmediateError!CompletionResult {
 /// Completes a list of operations immediately, blocks until complete
 /// Returns `error.SomeOperationFailed` if any operation failed
 pub inline fn multi(operations: anytype) (ImmediateError || error{SomeOperationFailed})!void {
-    const res = try batch(operations);
+    const res = try complete(operations);
     if (res.num_errors > 0) return error.SomeOperationFailed;
 }
 
@@ -99,7 +99,7 @@ pub inline fn single(operation: anytype) (ImmediateError || OperationError)!void
     var op: @TypeOf(operation) = operation;
     var err: @TypeOf(operation).Error = error.Success;
     op.out_error = &err;
-    _ = try batch(.{op});
+    _ = try complete(.{op});
     if (err != error.Success) return err;
 }
 

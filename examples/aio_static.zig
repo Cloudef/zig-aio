@@ -13,7 +13,7 @@ pub fn main() !void {
     var buf2: [4096]u8 = undefined;
     var len2: usize = 0;
 
-    const ret = try aio.batch(.{
+    const ret = try aio.complete(.{
         aio.Read{
             .file = f,
             .buffer = &buf,

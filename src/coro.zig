@@ -39,7 +39,7 @@ pub const io = struct {
     /// The IO operations can be cancelled by calling `wakeup`
     /// For error handling you must check the `out_error` field in the operation
     /// Returns the number of errors occured, 0 if there were no errors
-    pub inline fn batch(operations: anytype) aio.QueueError!u16 {
+    pub inline fn complete(operations: anytype) aio.QueueError!u16 {
         if (Fiber.current()) |fiber| {
             var task: *Scheduler.TaskState = @ptrFromInt(fiber.getUserDataPtr().*);
 
@@ -86,7 +86,7 @@ pub const io = struct {
     /// The IO operations can be cancelled by calling `wakeupFromIo`, or doing `aio.Cancel`
     /// Returns `error.SomeOperationFailed` if any operation failed
     pub inline fn multi(operations: anytype) (aio.QueueError || error{SomeOperationFailed})!void {
-        if (try batch(operations) > 0) return error.SomeOperationFailed;
+        if (try complete(operations) > 0) return error.SomeOperationFailed;
     }
 
     /// Completes a single operation immediately, blocks the coroutine until complete
@@ -95,7 +95,7 @@ pub const io = struct {
         var op: @TypeOf(operation) = operation;
         var err: @TypeOf(operation).Error = error.Success;
         op.out_error = &err;
-        _ = try batch(.{op});
+        _ = try complete(.{op});
         if (err != error.Success) return err;
     }
 };
