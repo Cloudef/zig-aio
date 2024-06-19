@@ -3,6 +3,7 @@
 ## Operations
 
 A handful of IO operations are supported.
+All the pointer arguments in operations must remain stable until the operation has been completed.
 
 ### Common fields
 
@@ -16,12 +17,12 @@ const Counter = union(enum) {
 };
 
 out_id: ?*Id = null,
-out_error: ?*(E || SharedError) = null,
+out_error: ?*Operation.Error = null,
 counter: Counter = .nop,
 link_next: bool = false,
 ```
 
-If `out_id` is set, the id of the operation will be stored into that address.
+If `out_id` is set, the id of the operation will be stored into that address immediately after sucessful queue.
 The `id` can then be used in future operations to refer to this operation.
 If `out_error` is set, the error of the operation will be stored into that address, in case the operation failed.
 If there was no failure a `error.Success` will be stored in that address.
@@ -35,9 +36,7 @@ When operations are linked, the next operation won't start until this operation 
 Synchronizes the contents of a `file` onto the disk.
 
 ```zig
-pub const Fsync = Define(struct {
-    file: std.fs.File,
-}, std.fs.File.SyncError);
+file: std.fs.File,
 ```
 
 ### Read
@@ -46,12 +45,10 @@ Reads a `file` into a `buffer` from a `offset`.
 The amount of bytes read is stored in the location pointed by `out_read`.
 
 ```zig
-pub const Read = Define(struct {
-    file: std.fs.File,
-    buffer: []u8,
-    offset: u64 = 0,
-    out_read: *usize,
-}, std.fs.File.ReadError);
+file: std.fs.File,
+buffer: []u8,
+offset: u64 = 0,
+out_read: *usize,
 ```
 
 ### Write
@@ -60,12 +57,10 @@ Writes contents of `buffer` from `offset` into a `file`.
 The amount of bytes written is stored in the location pointed by `out_written`.
 
 ```zig
-pub const Write = Define(struct {
-    file: std.fs.File,
-    buffer: []const u8,
-    offset: u64 = 0,
-    out_written: ?*usize = null,
-}, std.fs.File.WriteError);
+file: std.fs.File,
+buffer: []const u8,
+offset: u64 = 0,
+out_written: ?*usize = null,
 ```
 
 ### Accept
@@ -73,12 +68,10 @@ pub const Write = Define(struct {
 See `man accept(2)`
 
 ```zig
-pub const Accept = Define(struct {
-    socket: std.posix.socket_t,
-    addr: ?*sockaddr = null,
-    inout_addrlen: ?*std.posix.socklen_t = null,
-    out_socket: *std.posix.socket_t,
-}, std.posix.AcceptError);
+socket: std.posix.socket_t,
+addr: ?*std.posix.sockaddr = null,
+inout_addrlen: ?*std.posix.socklen_t = null,
+out_socket: *std.posix.socket_t,
 ```
 
 ### Connect
@@ -86,11 +79,9 @@ pub const Accept = Define(struct {
 See `man connect(2)`
 
 ```zig
-pub const Connect = Define(struct {
-    socket: std.posix.socket_t,
-    addr: *const sockaddr,
-    addrlen: std.posix.socklen_t,
-}, std.posix.ConnectError);
+socket: std.posix.socket_t,
+addr: *std.posix.sockaddr,
+addrlen: std.posix.socklen_t,
 ```
 
 ### Recv
@@ -98,11 +89,9 @@ pub const Connect = Define(struct {
 See `man recv(2)`
 
 ```zig
-pub const Recv = Define(struct {
-    socket: std.posix.socket_t,
-    buffer: []u8,
-    out_read: *usize,
-}, std.posix.RecvFromError);
+socket: std.posix.socket_t,
+buffer: []u8,
+out_read: *usize,
 ```
 
 ### Send
@@ -110,11 +99,9 @@ pub const Recv = Define(struct {
 See `man send(2)`
 
 ```zig
-pub const Send = Define(struct {
-    socket: std.posix.socket_t,
-    buffer: []const u8,
-    out_written: ?*usize = null,
-}, std.posix.SendError);
+socket: std.posix.socket_t,
+buffer: []const u8,
+out_written: ?*usize = null,
 ```
 
 ### OpenAt
@@ -123,22 +110,26 @@ Opens `path` relative to a `dir`, opening is customized by `flags`.
 The opened file is stored into the location pointed by `out_file`.
 
 ```zig
-pub const OpenAt = Define(struct {
-    dir: std.fs.Dir,
-    path: [*:0]const u8,
-    flags: std.fs.File.OpenFlags,
-    out_file: *std.fs.File,
-}, std.fs.File.OpenError);
+dir: std.fs.Dir,
+path: [*:0]const u8,
+flags: std.fs.File.OpenFlags = .{},
+out_file: *std.fs.File,
 ```
 
-### Close
+### CloseFile
 
 Closes a `file`.
 
 ```zig
-pub const Close = Define(struct {
-    file: std.fs.File,
-}, error{});
+file: std.fs.File,
+```
+
+### CloseDir
+
+Closes a `dir`.
+
+```zig
+dir: std.fs.Dir,
 ```
 
 ### Timeout
@@ -147,19 +138,7 @@ Starts a timeout. Once the timeout expires the operation completes.
 The timeout uses a monotnic clock source.
 
 ```zig
-pub const Timeout = Define(struct {
-    ts: struct { sec: i64 = 0, nsec: i64 = 0 },
-}, error{});
-```
-
-### TimeoutRemove
-
-Cancel existing timeout referenced by `id`.
-
-```zig
-pub const TimeoutRemove = Define(struct {
-    id: Id,
-}, error{ InProgress, NotFound });
+ns: i128,
 ```
 
 ### LinkTimeout
@@ -170,10 +149,8 @@ If the operation finishes before the timeout, then the timeout will be canceled.
 If the timeout finishes before the operation, then the operation will be canceled.
 
 ```zig
-pub const LinkTimeout = Define(struct {
-    ts: struct { sec: i64 = 0, nsec: i64 = 0 },
-    out_expired: ?*bool = null,
-}, error{InProgress});
+ns: i128,
+out_expired: ?*bool = null,
 ```
 
 ### Cancel
@@ -181,9 +158,7 @@ pub const LinkTimeout = Define(struct {
 Cancel existing operation referenced by `id`.
 
 ```zig
-pub const Cancel = Define(struct {
-    id: Id,
-}, error{ InProgress, NotFound });
+id: Id,
 ```
 
 ### RenameAt
@@ -191,12 +166,10 @@ pub const Cancel = Define(struct {
 Rename a `old_path` relative to `old_dir` into `new_path` relative to `new_dir`.
 
 ```zig
-pub const RenameAt = Define(struct {
-    old_dir: std.fs.Dir,
-    old_path: [*:0]const u8,
-    new_dir: std.fs.Dir,
-    new_path: [*:0]const u8,
-}, std.fs.Dir.RenameError);
+old_dir: std.fs.Dir,
+old_path: [*:0]const u8,
+new_dir: std.fs.Dir,
+new_path: [*:0]const u8,
 ```
 
 ### UnlinkAt
@@ -204,10 +177,8 @@ pub const RenameAt = Define(struct {
 Delete a file or directory locating in `path` relative to `dir`.
 
 ```zig
-pub const UnlinkAt = Define(struct {
-    dir: std.fs.Dir,
-    path: [*:0]const u8,
-}, std.posix.UnlinkatError);
+dir: std.fs.Dir,
+path: [*:0]const u8,
 ```
 
 ### MkDirAt
@@ -216,11 +187,9 @@ Create directory relative to `dir` at `path`.
 The `mode` parameter can specify the mode of the directory on supporting operating systems.
 
 ```zig
-pub const MkDirAt = Define(struct {
-    dir: std.fs.Dir,
-    path: [*:0]const u8,
-    mode: u32 = std.fs.Dir.default_mode,
-}, std.fs.Dir.MakeError);
+dir: std.fs.Dir,
+path: [*:0]const u8,
+mode: u32 = std.fs.Dir.default_mode,
 ```
 
 ### SymlinkAt
@@ -228,11 +197,18 @@ pub const MkDirAt = Define(struct {
 Create a symlink relative to `dir` at `link_path` linking to the `target`.
 
 ```zig
-pub const SymlinkAt = Define(struct {
-    dir: std.fs.Dir,
-    target: [*:0]const u8,
-    link_path: [*:0]const u8,
-}, std.posix.SymLinkError);
+dir: std.fs.Dir,
+target: [*:0]const u8,
+link_path: [*:0]const u8,
+```
+
+### ChildExit
+
+Waits for a child process to exit and collects its exit status.
+
+```zig
+child: std.process.Child.Id,
+out_term: ?*std.process.Child.Term = null,
 ```
 
 ### Socket
@@ -240,15 +216,13 @@ pub const SymlinkAt = Define(struct {
 See `man socket(2)`
 
 ```zig
-pub const Socket = Define(struct {
-    /// std.posix.AF
-    domain: u32,
-    /// std.posix.SOCK
-    flags: u32,
-    /// std.posix.IPPROTO
-    protocol: u32,
-    out_socket: *std.posix.socket_t,
-}, std.posix.SocketError);
+/// std.posix.AF
+domain: u32,
+/// std.posix.SOCK
+flags: u32,
+/// std.posix.IPPROTO
+protocol: u32,
+out_socket: *std.posix.socket_t,
 ```
 
 ### CloseSocket
@@ -256,7 +230,5 @@ pub const Socket = Define(struct {
 Closes a `socket`.
 
 ```zig
-pub const CloseSocket = Define(struct {
-    socket: std.posix.socket_t,
-}, error{});
+socket: std.posix.socket_t,
 ```

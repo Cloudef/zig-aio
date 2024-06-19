@@ -40,9 +40,9 @@ When linking operations, the next operation won't start until this operation is 
 #### Using complete
 
 Complete is similar to multi, but it will not return `error.SomeOperationFailed` in case any of the operations fail.
-Instead complete returns `aio.CompletionResult` which contains the number of operations that was completed, and number of
-errors that occured. To find out which operations failed, errors have to be stored somewhere by setting the `.out_error`
-field of the operation. The complete call may still fail in implementation defined ways, such as running out of system resources.
+Instead complete returns the number of errors occured. To find out which operations failed, errors have to be stored
+somewhere by setting the `.out_error` field of the operation. The complete call may still fail in implementation
+defined ways, such as running out of system resources.
 
 ```zig
 var my_buffer: [1024]u8 = undefined;

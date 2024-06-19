@@ -13,7 +13,8 @@ the yielding tasks IO operations with a single syscall.
 ### Performing io operations
 
 Performing operations is similar to `aio` module. The api is the same, but instead use the `coro.io` namespace.
-Below is a full example of simple server / client program using the `coro` api.
+Below is a full example of simple server / client program using the `coro` api. If `coro.io` functions are used
+outside a task then the call would be equal to calling the equal function from the `aio` module.
 
 ```zig
 // [!include ~/../examples/coro.zig]
@@ -25,4 +26,4 @@ Use `aio.Cancel` operation to cancel the currently running operations in a task.
 The `out_error` of such operation will then be set as `error.OperationCanceled`.
 
 Alternatively it's possible to call `scheduler.wakeup(task);` or `scheduler.wakeupFromIo(task)`
-which also cancels all currently running io on that task.
+which also cancels all currently running IO on that task.
