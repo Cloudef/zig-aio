@@ -5,7 +5,6 @@
 const std = @import("std");
 
 pub const InitError = error{
-    Overflow,
     OutOfMemory,
     PermissionDenied,
     ProcessQuotaExceeded,
@@ -16,7 +15,7 @@ pub const InitError = error{
 };
 
 pub const QueueError = error{
-    Overflow,
+    OutOfMemory,
     SubmissionQueueFull,
 };
 
@@ -101,13 +100,30 @@ pub inline fn multi(operations: anytype) (ImmediateError || error{SomeOperationF
 }
 
 /// Completes a single operation immediately, blocks until complete
-pub inline fn single(operation: anytype) (ImmediateError || OperationError)!void {
+pub inline fn single(operation: anytype) (ImmediateError || @TypeOf(operation).Error)!void {
     var op: @TypeOf(operation) = operation;
     var err: @TypeOf(operation).Error = error.Success;
     op.out_error = &err;
     _ = try complete(.{op});
     if (err != error.Success) return err;
 }
+
+pub const EventSource = struct {
+    native: IO.EventSource,
+
+    pub inline fn init() InitError!@This() {
+        return .{ .native = try IO.EventSource.init() };
+    }
+
+    pub inline fn deinit(self: *@This()) void {
+        self.native.deinit();
+        self.* = undefined;
+    }
+
+    pub inline fn notify(self: *@This()) void {
+        self.native.notify();
+    }
+};
 
 const IO = switch (@import("builtin").target.os.tag) {
     .linux => @import("aio/linux.zig"),
@@ -116,7 +132,6 @@ const IO = switch (@import("builtin").target.os.tag) {
 
 const ops = @import("aio/ops.zig");
 pub const Id = ops.Id;
-pub const OperationError = ops.Operation.Error;
 pub const Fsync = ops.Fsync;
 pub const Read = ops.Read;
 pub const Write = ops.Write;
@@ -137,6 +152,9 @@ pub const SymlinkAt = ops.SymlinkAt;
 pub const ChildExit = ops.ChildExit;
 pub const Socket = ops.Socket;
 pub const CloseSocket = ops.CloseSocket;
+pub const NotifyEventSource = ops.NotifyEventSource;
+pub const WaitEventSource = ops.WaitEventSource;
+pub const CloseEventSource = ops.CloseEventSource;
 
 test "shared outputs" {
     var tmp = std.testing.tmpDir(.{});
@@ -252,12 +270,11 @@ test "Timeout" {
 test "LinkTimeout" {
     var err: Timeout.Error = undefined;
     var expired: bool = undefined;
-    const res = try complete(.{
+    const num_errors = try complete(.{
         Timeout{ .ns = 2 * std.time.ns_per_s, .out_error = &err, .link_next = true },
         LinkTimeout{ .ns = 1 * std.time.ns_per_s, .out_expired = &expired },
     });
-    try std.testing.expectEqual(2, res.num_completed);
-    try std.testing.expectEqual(1, res.num_errors);
+    try std.testing.expectEqual(1, num_errors);
     try std.testing.expectEqual(error.OperationCanceled, err);
     try std.testing.expectEqual(true, expired);
 }
@@ -355,4 +372,13 @@ test "Socket" {
         .out_socket = &socket,
     });
     try single(CloseSocket{ .socket = socket });
+}
+
+test "EventSource" {
+    const source = try EventSource.init();
+    try multi(.{
+        NotifyEventSource{ .source = source },
+        WaitEventSource{ .source = source, .link_next = true },
+        CloseEventSource{ .source = source },
+    });
 }

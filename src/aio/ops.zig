@@ -1,5 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
+const aio = @import("../aio.zig");
 
 // Virtual linked actions are possible with `nop` under io_uring :thinking:
 
@@ -261,6 +262,30 @@ pub const CloseSocket = struct {
     link_next: bool = false,
 };
 
+pub const NotifyEventSource = struct {
+    pub const Error = SharedError;
+    source: aio.EventSource,
+    out_error: ?*Error = null,
+    counter: Counter = .nop,
+    link_next: bool = false,
+};
+
+pub const WaitEventSource = struct {
+    pub const Error = SharedError;
+    source: aio.EventSource,
+    out_error: ?*Error = null,
+    counter: Counter = .nop,
+    link_next: bool = false,
+};
+
+pub const CloseEventSource = struct {
+    pub const Error = SharedError;
+    source: aio.EventSource,
+    out_error: ?*Error = null,
+    counter: Counter = .nop,
+    link_next: bool = false,
+};
+
 pub const Operation = enum {
     fsync,
     read,
@@ -282,6 +307,9 @@ pub const Operation = enum {
     child_exit,
     socket,
     close_socket,
+    notify_event_source,
+    wait_event_source,
+    close_event_source,
 
     pub const map = std.enums.EnumMap(@This(), type).init(.{
         .fsync = Fsync,
@@ -304,6 +332,9 @@ pub const Operation = enum {
         .child_exit = ChildExit,
         .socket = Socket,
         .close_socket = CloseSocket,
+        .notify_event_source = NotifyEventSource,
+        .wait_event_source = WaitEventSource,
+        .close_event_source = CloseEventSource,
     });
 
     pub fn tagFromPayloadType(comptime Op: type) @This() {
@@ -315,12 +346,6 @@ pub const Operation = enum {
         }
         unreachable;
     }
-
-    pub const Error = blk: {
-        var set = error{};
-        for (Operation.map.values) |v| set = set || v.Error;
-        break :blk set;
-    };
 
     pub const Union = blk: {
         var fields: []const std.builtin.Type.UnionField = &.{};

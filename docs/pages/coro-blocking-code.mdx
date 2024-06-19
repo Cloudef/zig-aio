@@ -1,0 +1,31 @@
+# CORO API
+
+## Mixing blocking code
+
+Sometimes it's not feasible to rewrite blocking code so that it plays nice with the `coro.Scheduler`.
+In that kind of scenario it is possible to use `coro.ThreadPool` to allow tasks to yield until blocking code
+finishes on a worker thread.
+
+### Example
+
+```zig
+fn blockingCode() u32 {
+    std.time.sleep(1 * std.time.ns_per_s);
+    return 69;
+}
+
+fn task(pool: *ThreadPool) !void {
+    const ret = try pool.yieldForCompletition(blockingCode, .{});
+    try std.testing.expectEqual(69, ret);
+}
+
+var pool: ThreadPool = .{};
+defer pool.deinit(); // pool must always be destroyed before scheduler
+try pool.start(std.testing.allocator, 0);
+
+var scheduler = try Scheduler.init(std.testing.allocator, .{});
+defer scheduler.deinit();
+_ = try scheduler.spawn(task, .{&pool}, .{});
+try scheduler.run();
+```
+

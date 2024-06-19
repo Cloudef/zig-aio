@@ -1,13 +1,36 @@
 const std = @import("std");
 const aio = @import("../aio.zig");
 const Operation = @import("ops.zig").Operation;
-const ErrorUnion = @import("ops.zig").ErrorUnion;
+
+pub const EventSource = struct {
+    fd: std.posix.fd_t,
+
+    pub inline fn init() !@This() {
+        return .{
+            .fd = std.posix.eventfd(0, std.os.linux.EFD.CLOEXEC) catch |err| return switch (err) {
+                error.SystemResources => error.SystemResources,
+                error.ProcessFdQuotaExceeded => error.ProcessQuotaExceeded,
+                error.SystemFdQuotaExceeded => error.SystemQuotaExceeded,
+                error.Unexpected => error.Unexpected,
+            },
+        };
+    }
+
+    pub inline fn deinit(self: *@This()) void {
+        std.posix.close(self.fd);
+        self.* = undefined;
+    }
+
+    pub inline fn notify(self: *@This()) void {
+        _ = std.posix.write(self.fd, &std.mem.toBytes(@as(u64, 1))) catch unreachable;
+    }
+};
 
 io: std.os.linux.IoUring,
 ops: Pool(Operation.Union, u16),
 
 pub fn init(allocator: std.mem.Allocator, n: u16) aio.InitError!@This() {
-    const n2 = try std.math.ceilPowerOfTwo(u16, n);
+    const n2 = std.math.ceilPowerOfTwo(u16, n) catch return error.SystemQuotaExceeded;
     var io = try uring_init(n2);
     errdefer io.deinit();
     const ops = try Pool(Operation.Union, u16).init(allocator, n2);
@@ -22,7 +45,7 @@ pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
 }
 
 inline fn queueOperation(self: *@This(), op: anytype) aio.QueueError!u16 {
-    const n = self.ops.next() orelse return error.Overflow;
+    const n = self.ops.next() orelse return error.OutOfMemory;
     try uring_queue(&self.io, op, n);
     const tag = @tagName(comptime Operation.tagFromPayloadType(@TypeOf(op.*)));
     return self.ops.add(@unionInit(Operation.Union, tag, op.*)) catch unreachable;
@@ -63,7 +86,7 @@ pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode) aio.Completion
 }
 
 pub fn immediate(comptime len: u16, work: anytype) aio.ImmediateError!u16 {
-    var io = try uring_init(try std.math.ceilPowerOfTwo(u16, len));
+    var io = try uring_init(std.math.ceilPowerOfTwo(u16, len) catch return error.SystemQuotaExceeded);
     defer io.deinit();
     inline for (&work.ops, 0..) |*op, idx| try uring_queue(&io, op, idx);
     var num = try uring_submit(&io);
@@ -126,6 +149,9 @@ fn convertOpenFlags(flags: std.fs.File.OpenFlags) std.posix.O {
 }
 
 inline fn uring_queue(io: *std.os.linux.IoUring, op: anytype, user_data: u64) aio.QueueError!void {
+    const Trash = struct {
+        var u_64: u64 align(1) = undefined;
+    };
     const RENAME_NOREPLACE = 1 << 0;
     var sqe = switch (comptime Operation.tagFromPayloadType(@TypeOf(op.*))) {
         .fsync => try io.fsync(user_data, op.file.handle, 0),
@@ -161,6 +187,9 @@ inline fn uring_queue(io: *std.os.linux.IoUring, op: anytype, user_data: u64) ai
         .child_exit => try io.waitid(user_data, .PID, op.child, @constCast(&op._), std.posix.W.EXITED, 0),
         .socket => try io.socket(user_data, op.domain, op.flags, op.protocol, 0),
         .close_socket => try io.close(user_data, op.socket),
+        .notify_event_source => try io.write(user_data, op.source.native.fd, &std.mem.toBytes(@as(u64, 1)), 0),
+        .wait_event_source => try io.read(user_data, op.source.native.fd, .{ .buffer = std.mem.asBytes(&Trash.u_64) }, 0),
+        .close_event_source => try io.close(user_data, op.source.native.fd),
     };
     if (op.link_next) sqe.flags |= std.os.linux.IOSQE_IO_LINK;
     if (@hasField(@TypeOf(op.*), "out_id")) {
@@ -355,6 +384,7 @@ inline fn uring_handle_completion(op: anytype, cqe: *std.os.linux.io_uring_cqe) 
                 else => std.posix.unexpectedErrno(err),
             },
             .close_file, .close_dir, .close_socket => unreachable,
+            .notify_event_source, .wait_event_source, .close_event_source => unreachable,
             .timeout => switch (err) {
                 .SUCCESS, .INTR, .INVAL, .AGAIN => unreachable,
                 .TIME => error.Success,
@@ -493,6 +523,7 @@ inline fn uring_handle_completion(op: anytype, cqe: *std.os.linux.io_uring_cqe) 
         },
         .open_at => op.out_file.handle = cqe.res,
         .close_file, .close_dir, .close_socket => {},
+        .notify_event_source, .wait_event_source, .close_event_source => {},
         .timeout, .link_timeout => {},
         .cancel => {},
         .rename_at, .unlink_at, .mkdir_at, .symlink_at => {},

@@ -77,6 +77,10 @@ export default defineConfig({
           text: 'Context switches',
           link: '/coro-context-switches',
         },
+        {
+          text: 'Mixing blocking code',
+          link: '/coro-blocking-code',
+        },
       ],
     },
   ],
