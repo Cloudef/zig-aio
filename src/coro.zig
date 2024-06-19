@@ -39,9 +39,9 @@ pub const io = struct {
     /// The IO operations can be cancelled by calling `wakeup`
     /// For error handling you must check the `out_error` field in the operation
     /// Returns the number of errors occured, 0 if there were no errors
-    pub inline fn complete(operations: anytype) aio.QueueError!u16 {
+    pub inline fn complete(operations: anytype) aio.ImmediateError!u16 {
         if (Fiber.current()) |fiber| {
-            var task: *Scheduler.TaskState = @ptrFromInt(fiber.getUserDataPtr().*);
+            var task: *TaskState = @ptrFromInt(fiber.getUserDataPtr().*);
 
             const State = struct { old_err: ?*anyerror, old_id: ?*aio.Id, id: aio.Id, err: anyerror };
             var state: [operations.len]State = undefined;
@@ -78,20 +78,20 @@ pub const io = struct {
             }
             return num_errors;
         } else {
-            unreachable; // this io function is only meant to be used in coroutines!
+            return aio.complete(operations);
         }
     }
 
     /// Completes a list of operations immediately, blocks until complete
     /// The IO operations can be cancelled by calling `wakeupFromIo`, or doing `aio.Cancel`
     /// Returns `error.SomeOperationFailed` if any operation failed
-    pub inline fn multi(operations: anytype) (aio.QueueError || error{SomeOperationFailed})!void {
+    pub inline fn multi(operations: anytype) (aio.ImmediateError || error{SomeOperationFailed})!void {
         if (try complete(operations) > 0) return error.SomeOperationFailed;
     }
 
     /// Completes a single operation immediately, blocks the coroutine until complete
     /// The IO operation can be cancelled by calling `wakeupFromIo`, or doing `aio.Cancel`
-    pub fn single(operation: anytype) (aio.QueueError || aio.OperationError)!void {
+    pub fn single(operation: anytype) (aio.ImmediateError || aio.OperationError)!void {
         var op: @TypeOf(operation) = operation;
         var err: @TypeOf(operation).Error = error.Success;
         op.out_error = &err;
@@ -106,21 +106,21 @@ pub inline fn yield(state: anytype) void {
 }
 
 /// Wakeups a task from a yielded state, no-op if `state` does not match the current yielding state
-pub inline fn wakeupFromState(task: Scheduler.Task, state: anytype) void {
+pub inline fn wakeupFromState(task: Task, state: anytype) void {
     const node: *Scheduler.TaskNode = @ptrCast(task);
     if (node.data.marked_for_reap) return;
     privateWakeup(&node.data, @enumFromInt(std.meta.fields(YieldState).len + @intFromEnum(state)));
 }
 
 /// Wakeups a task from IO by canceling the current IO operations for that task
-pub inline fn wakeupFromIo(task: Scheduler.Task) void {
+pub inline fn wakeupFromIo(task: Task) void {
     const node: *Scheduler.TaskNode = @ptrCast(task);
     if (node.data.marked_for_reap) return;
     privateWakeup(&node.data, .io);
 }
 
 /// Wakeups a task regardless of the current yielding state
-pub inline fn wakeup(task: Scheduler.Task) void {
+pub inline fn wakeup(task: Task) void {
     const node: *Scheduler.TaskNode = @ptrCast(task);
     if (node.data.marked_for_reap) return;
     // do not wakeup from io_cancel state as that can potentially lead to memory corruption
@@ -137,22 +137,49 @@ const YieldState = enum(u8) {
 
 inline fn privateYield(state: YieldState) void {
     if (Fiber.current()) |fiber| {
-        var task: *Scheduler.TaskState = @ptrFromInt(fiber.getUserDataPtr().*);
+        var task: *TaskState = @ptrFromInt(fiber.getUserDataPtr().*);
         std.debug.assert(task.yield_state == .not_yielding);
         task.yield_state = state;
         debug("yielding: {}", .{task});
         Fiber.yield();
     } else {
-        unreachable; // yield is only meant to be used in coroutines!
+        unreachable; // yield can only be used from a task
     }
 }
 
-inline fn privateWakeup(task: *Scheduler.TaskState, state: YieldState) void {
+inline fn privateWakeup(task: *TaskState, state: YieldState) void {
     if (task.yield_state != state) return;
     debug("waking up from yield: {}", .{task});
     task.yield_state = .not_yielding;
     task.fiber.switchTo();
 }
+
+const TaskState = struct {
+    fiber: *Fiber,
+    stack: ?Fiber.Stack = null,
+    marked_for_reap: bool = false,
+    io: *aio.Dynamic,
+    io_counter: u16 = 0,
+    yield_state: YieldState = .not_yielding,
+
+    pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        if (self.io_counter > 0) {
+            try writer.print("{x}: {s}, {} ops left", .{ @intFromPtr(self.fiber), @tagName(self.yield_state), self.io_counter });
+        } else {
+            try writer.print("{x}: {s}", .{ @intFromPtr(self.fiber), @tagName(self.yield_state) });
+        }
+    }
+
+    fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
+        // we can only safely deinit the task when it is not doing IO
+        // otherwise for example io_uring might write to invalid memory address
+        std.debug.assert(self.yield_state != .io and self.yield_state != .io_cancel);
+        if (self.stack) |stack| allocator.free(stack);
+        self.* = undefined;
+    }
+};
+
+pub const Task = *align(@alignOf(Scheduler.TaskNode)) anyopaque;
 
 /// Runtime for asynchronous IO tasks
 pub const Scheduler = struct {
@@ -161,34 +188,7 @@ pub const Scheduler = struct {
     tasks: std.DoublyLinkedList(TaskState) = .{},
     pending_for_reap: bool = false,
 
-    const TaskState = struct {
-        fiber: *Fiber,
-        stack: ?Fiber.Stack = null,
-        marked_for_reap: bool = false,
-        io: *aio.Dynamic,
-        io_counter: u16 = 0,
-        yield_state: YieldState = .not_yielding,
-
-        pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-            if (self.io_counter > 0) {
-                try writer.print("{x}: {s}, {} ops left", .{ @intFromPtr(self.fiber), @tagName(self.yield_state), self.io_counter });
-            } else {
-                try writer.print("{x}: {s}", .{ @intFromPtr(self.fiber), @tagName(self.yield_state) });
-            }
-        }
-
-        fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
-            if (Fiber.current()) |_| unreachable; // do not call deinit from a task
-            // we can only safely deinit the task when it is not doing IO
-            // otherwise for example io_uring might write to invalid memory address
-            std.debug.assert(self.yield_state != .io and self.yield_state != .io_cancel);
-            if (self.stack) |stack| allocator.free(stack);
-            self.* = undefined;
-        }
-    };
-
     const TaskNode = std.DoublyLinkedList(TaskState).Node;
-    pub const Task = *align(@alignOf(TaskNode)) anyopaque;
 
     pub const InitOptions = struct {
         /// This is a hint, the implementation makes the final call
@@ -196,7 +196,6 @@ pub const Scheduler = struct {
     };
 
     pub fn init(allocator: std.mem.Allocator, opts: InitOptions) !@This() {
-        if (Fiber.current()) |_| unreachable; // do not call init from a task
         return .{
             .allocator = allocator,
             .io = try aio.Dynamic.init(allocator, opts.io_queue_entries),
@@ -204,7 +203,6 @@ pub const Scheduler = struct {
     }
 
     pub fn reapAll(self: *@This()) void {
-        if (Fiber.current()) |_| unreachable; // do not call reapAll from a task
         var maybe_node = self.tasks.first;
         while (maybe_node) |node| {
             node.data.marked_for_reap = true;
@@ -214,7 +212,6 @@ pub const Scheduler = struct {
     }
 
     fn privateReap(self: *@This(), node: *TaskNode) bool {
-        if (Fiber.current()) |_| unreachable; // do not call reap from a task
         if (node.data.yield_state == .io or node.data.yield_state == .io_cancel) {
             debug("task is pending on io, reaping later: {}", .{node.data});
             if (node.data.yield_state == .io) privateWakeup(&node.data, .io); // cancel io
@@ -235,7 +232,6 @@ pub const Scheduler = struct {
     }
 
     pub fn deinit(self: *@This()) void {
-        if (Fiber.current()) |_| unreachable; // do not call deinit from a task
         // destroy io backend first to make sure we can destroy the tasks safely
         self.io.deinit(self.allocator);
         while (self.tasks.pop()) |node| {
@@ -254,7 +250,7 @@ pub const Scheduler = struct {
         } else {
             @call(.auto, func, args);
         }
-        var task: *Scheduler.TaskState = @ptrFromInt(Fiber.current().?.getUserDataPtr().*);
+        var task: *TaskState = @ptrFromInt(Fiber.current().?.getUserDataPtr().*);
         task.marked_for_reap = true;
         self.pending_for_reap = true;
         debug("finished: {}", .{task});
@@ -271,7 +267,6 @@ pub const Scheduler = struct {
 
     /// Spawns a new task, the task may do local IO operations which will not block the whole process using the `io` namespace functions
     pub fn spawn(self: *@This(), comptime func: anytype, args: anytype, opts: SpawnOptions) SpawnError!Task {
-        if (Fiber.current()) |_| unreachable; // do not call spawn from a task
         const stack = switch (opts.stack) {
             .unmanaged => |buf| buf,
             .managed => |sz| try self.allocator.alignedAlloc(u8, Fiber.stack_alignment, sz),
@@ -312,7 +307,6 @@ pub const Scheduler = struct {
 
     /// Processes pending IO and reaps dead tasks
     pub fn tick(self: *@This(), mode: aio.Dynamic.CompletionMode) !void {
-        if (Fiber.current()) |_| unreachable; // do not call tick from a task
         try self.tickIo(mode);
         if (self.pending_for_reap) {
             var num_unreaped: usize = 0;

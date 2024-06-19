@@ -13,7 +13,7 @@ pub fn main() !void {
     var buf2: [4096]u8 = undefined;
     var len2: usize = 0;
 
-    const ret = try aio.complete(.{
+    const num_errors = try aio.complete(.{
         aio.Read{
             .file = f,
             .buffer = &buf,
@@ -28,5 +28,5 @@ pub fn main() !void {
 
     log.info("{s}", .{buf[0..len]});
     log.info("{s}", .{buf2[0..len2]});
-    log.info("{}", .{ret});
+    log.info("{}", .{num_errors});
 }

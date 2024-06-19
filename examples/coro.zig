@@ -7,7 +7,11 @@ pub const aio_coro_options: coro.Options = .{
     .debug = false, // set to true to enable debug logs
 };
 
-fn server() !void {
+const Yield = enum {
+    server_ready,
+};
+
+fn server(client_task: coro.Task) !void {
     var socket: std.posix.socket_t = undefined;
     try coro.io.single(aio.Socket{
         .domain = std.posix.AF.INET,
@@ -21,6 +25,8 @@ fn server() !void {
     try std.posix.setsockopt(socket, std.posix.SOL.SOCKET, std.posix.SO.REUSEPORT, &std.mem.toBytes(@as(c_int, 1)));
     try std.posix.bind(socket, &address.any, address.getOsSockLen());
     try std.posix.listen(socket, 128);
+
+    coro.wakeupFromState(client_task, Yield.server_ready);
 
     var client_sock: std.posix.socket_t = undefined;
     try coro.io.single(aio.Accept{ .socket = socket, .out_socket = &client_sock });
@@ -43,9 +49,6 @@ fn server() !void {
 }
 
 fn client() !void {
-    log.info("waiting 2 secs, to give time for the server to spin up", .{});
-    try coro.io.single(aio.Timeout{ .ts = .{ .sec = 2, .nsec = 0 } });
-
     var socket: std.posix.socket_t = undefined;
     try coro.io.single(aio.Socket{
         .domain = std.posix.AF.INET,
@@ -53,6 +56,8 @@ fn client() !void {
         .protocol = std.posix.IPPROTO.TCP,
         .out_socket = &socket,
     });
+
+    coro.yield(Yield.server_ready);
 
     const address = std.net.Address.initIp4(.{ 127, 0, 0, 1 }, 1327);
     try coro.io.single(aio.Connect{
@@ -83,7 +88,7 @@ pub fn main() !void {
     defer _ = gpa.deinit();
     var scheduler = try coro.Scheduler.init(gpa.allocator(), .{});
     defer scheduler.deinit();
-    _ = try scheduler.spawn(server, .{}, .{});
-    _ = try scheduler.spawn(client, .{}, .{});
+    const client_task = try scheduler.spawn(client, .{}, .{});
+    _ = try scheduler.spawn(server, .{client_task}, .{});
     try scheduler.run();
 }

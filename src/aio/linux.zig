@@ -62,27 +62,25 @@ pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode) aio.Completion
     return result;
 }
 
-pub fn immediate(comptime len: u16, work: anytype) aio.ImmediateError!aio.CompletionResult {
+pub fn immediate(comptime len: u16, work: anytype) aio.ImmediateError!u16 {
     var io = try uring_init(try std.math.ceilPowerOfTwo(u16, len));
     defer io.deinit();
     inline for (&work.ops, 0..) |*op, idx| try uring_queue(&io, op, idx);
     var num = try uring_submit(&io);
-    const submitted = num;
-    var result: aio.CompletionResult = .{};
+    var num_errors: u16 = 0;
     var cqes: [len]std.os.linux.io_uring_cqe = undefined;
     while (num > 0) {
         const n = try uring_copy_cqes(&io, &cqes, num);
         for (cqes[0..n]) |*cqe| {
             inline for (&work.ops, 0..) |*op, idx| if (idx == cqe.user_data) {
                 uring_handle_completion(op, cqe) catch {
-                    result.num_errors += 1;
+                    num_errors += 1;
                 };
             };
         }
         num -= n;
     }
-    result.num_completed = submitted - num;
-    return result;
+    return num_errors;
 }
 
 inline fn uring_init(n: u16) aio.InitError!std.os.linux.IoUring {

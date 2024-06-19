@@ -78,7 +78,8 @@ pub const Dynamic = struct {
 
 /// Completes a list of operations immediately, blocks until complete
 /// For error handling you must check the `out_error` field in the operation
-pub inline fn complete(operations: anytype) ImmediateError!CompletionResult {
+/// Returns the number of errors occured, 0 if there were no errors
+pub inline fn complete(operations: anytype) ImmediateError!u16 {
     const ti = @typeInfo(@TypeOf(operations));
     if (comptime ti == .Struct and ti.Struct.is_tuple) {
         if (comptime operations.len == 0) @compileError("no work to be done");
@@ -96,8 +97,7 @@ pub inline fn complete(operations: anytype) ImmediateError!CompletionResult {
 /// Completes a list of operations immediately, blocks until complete
 /// Returns `error.SomeOperationFailed` if any operation failed
 pub inline fn multi(operations: anytype) (ImmediateError || error{SomeOperationFailed})!void {
-    const res = try complete(operations);
-    if (res.num_errors > 0) return error.SomeOperationFailed;
+    if (try complete(operations) > 0) return error.SomeOperationFailed;
 }
 
 /// Completes a single operation immediately, blocks until complete
