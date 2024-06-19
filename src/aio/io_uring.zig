@@ -1,41 +1,26 @@
 const std = @import("std");
 const aio = @import("../aio.zig");
 const Operation = @import("ops.zig").Operation;
+const Pool = @import("common/types.zig").Pool;
+const posix = @import("common/posix.zig");
 
-pub const EventSource = struct {
-    fd: std.posix.fd_t,
-
-    pub inline fn init() !@This() {
-        return .{
-            .fd = std.posix.eventfd(0, std.os.linux.EFD.CLOEXEC) catch |err| return switch (err) {
-                error.SystemResources => error.SystemResources,
-                error.ProcessFdQuotaExceeded => error.ProcessQuotaExceeded,
-                error.SystemFdQuotaExceeded => error.SystemQuotaExceeded,
-                error.Unexpected => error.Unexpected,
-            },
-        };
+fn debug(comptime fmt: []const u8, args: anytype) void {
+    if (@import("builtin").is_test) {
+        std.debug.print("io_uring: " ++ fmt ++ "\n", args);
+    } else {
+        if (comptime !aio.options.debug) return;
+        const log = std.log.scoped(.io_uring);
+        log.debug(fmt, args);
     }
+}
 
-    pub inline fn deinit(self: *@This()) void {
-        std.posix.close(self.fd);
-        self.* = undefined;
-    }
-
-    pub inline fn notify(self: *@This()) void {
-        _ = std.posix.write(self.fd, &std.mem.toBytes(@as(u64, 1))) catch unreachable;
-    }
-
-    pub inline fn wait(self: *@This()) void {
-        var v: u64 = undefined;
-        _ = std.posix.read(self.fd, std.mem.asBytes(&v)) catch unreachable;
-    }
-};
+pub const EventSource = @import("common/eventfd.zig");
 
 io: std.os.linux.IoUring,
 ops: Pool(Operation.Union, u16),
 
-pub fn init(allocator: std.mem.Allocator, n: u16) aio.InitError!@This() {
-    const n2 = std.math.ceilPowerOfTwo(u16, n) catch return error.SystemQuotaExceeded;
+pub fn init(allocator: std.mem.Allocator, n: u16) aio.Error!@This() {
+    const n2 = std.math.ceilPowerOfTwo(u16, n) catch unreachable;
     var io = try uring_init(n2);
     errdefer io.deinit();
     const ops = try Pool(Operation.Union, u16).init(allocator, n2);
@@ -49,14 +34,14 @@ pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
     self.* = undefined;
 }
 
-inline fn queueOperation(self: *@This(), op: anytype) aio.QueueError!u16 {
+inline fn queueOperation(self: *@This(), op: anytype) aio.Error!u16 {
     const n = self.ops.next() orelse return error.OutOfMemory;
     try uring_queue(&self.io, op, n);
     const tag = @tagName(comptime Operation.tagFromPayloadType(@TypeOf(op.*)));
     return self.ops.add(@unionInit(Operation.Union, tag, op.*)) catch unreachable;
 }
 
-pub fn queue(self: *@This(), comptime len: u16, work: anytype) aio.QueueError!void {
+pub fn queue(self: *@This(), comptime len: u16, work: anytype) aio.Error!void {
     if (comptime len == 1) {
         _ = try self.queueOperation(&work.ops[0]);
     } else {
@@ -66,20 +51,22 @@ pub fn queue(self: *@This(), comptime len: u16, work: anytype) aio.QueueError!vo
     }
 }
 
-const NOP = std.math.maxInt(usize);
+pub const NOP = std.math.maxInt(u64);
 
-pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode) aio.CompletionError!aio.CompletionResult {
-    if ((!self.ops.empty() or self.io.sq_ready() > 0) and mode == .nonblocking) {
+pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode) aio.Error!aio.CompletionResult {
+    if (self.ops.empty()) return .{};
+    if (mode == .nonblocking) {
         _ = self.io.nop(NOP) catch |err| return switch (err) {
             error.SubmissionQueueFull => .{},
         };
     }
-    if (try uring_submit(&self.io) == 0) return .{};
+    _ = try uring_submit(&self.io);
     var result: aio.CompletionResult = .{};
-    var cqes: [64]std.os.linux.io_uring_cqe = undefined;
+    var cqes: [aio.options.io_uring_cqe_sz]std.os.linux.io_uring_cqe = undefined;
     const n = try uring_copy_cqes(&self.io, &cqes, 1);
     for (cqes[0..n]) |*cqe| {
         if (cqe.user_data == NOP) continue;
+        defer self.ops.remove(@intCast(cqe.user_data));
         switch (self.ops.get(@intCast(cqe.user_data)).*) {
             inline else => |op| uring_handle_completion(&op, cqe) catch {
                 result.num_errors += 1;
@@ -90,8 +77,8 @@ pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode) aio.Completion
     return result;
 }
 
-pub fn immediate(comptime len: u16, work: anytype) aio.ImmediateError!u16 {
-    var io = try uring_init(std.math.ceilPowerOfTwo(u16, len) catch return error.SystemQuotaExceeded);
+pub fn immediate(comptime len: u16, work: anytype) aio.Error!u16 {
+    var io = try uring_init(std.math.ceilPowerOfTwo(u16, len) catch unreachable);
     defer io.deinit();
     inline for (&work.ops, 0..) |*op, idx| try uring_queue(&io, op, idx);
     var num = try uring_submit(&io);
@@ -111,62 +98,32 @@ pub fn immediate(comptime len: u16, work: anytype) aio.ImmediateError!u16 {
     return num_errors;
 }
 
-inline fn uring_init(n: u16) aio.InitError!std.os.linux.IoUring {
+inline fn uring_init(n: u16) aio.Error!std.os.linux.IoUring {
     return std.os.linux.IoUring.init(n, 0) catch |err| switch (err) {
-        error.PermissionDenied, error.SystemResources, error.SystemOutdated => |e| e,
-        error.ProcessFdQuotaExceeded => error.ProcessQuotaExceeded,
-        error.SystemFdQuotaExceeded => error.SystemQuotaExceeded,
+        error.PermissionDenied,
+        error.SystemResources,
+        error.SystemOutdated,
+        error.ProcessFdQuotaExceeded,
+        error.SystemFdQuotaExceeded,
+        => |e| e,
         else => error.Unexpected,
     };
 }
 
-fn convertOpenFlags(flags: std.fs.File.OpenFlags) std.posix.O {
-    var os_flags: std.posix.O = .{
-        .ACCMODE = switch (flags.mode) {
-            .read_only => .RDONLY,
-            .write_only => .WRONLY,
-            .read_write => .RDWR,
-        },
-    };
-    if (@hasField(std.posix.O, "CLOEXEC")) os_flags.CLOEXEC = true;
-    if (@hasField(std.posix.O, "LARGEFILE")) os_flags.LARGEFILE = true;
-    if (@hasField(std.posix.O, "NOCTTY")) os_flags.NOCTTY = !flags.allow_ctty;
-
-    // Use the O locking flags if the os supports them to acquire the lock
-    // atomically.
-    const has_flock_open_flags = @hasField(std.posix.O, "EXLOCK");
-    if (has_flock_open_flags) {
-        // Note that the NONBLOCK flag is removed after the openat() call
-        // is successful.
-        switch (flags.lock) {
-            .none => {},
-            .shared => {
-                os_flags.SHLOCK = true;
-                os_flags.NONBLOCK = flags.lock_nonblocking;
-            },
-            .exclusive => {
-                os_flags.EXLOCK = true;
-                os_flags.NONBLOCK = flags.lock_nonblocking;
-            },
-        }
-    }
-    return os_flags;
-}
-
-inline fn uring_queue(io: *std.os.linux.IoUring, op: anytype, user_data: u64) aio.QueueError!void {
+inline fn uring_queue(io: *std.os.linux.IoUring, op: anytype, user_data: u64) aio.Error!void {
+    debug("queue: {}: {}", .{ user_data, comptime Operation.tagFromPayloadType(@TypeOf(op.*)) });
     const Trash = struct {
         var u_64: u64 align(1) = undefined;
     };
-    const RENAME_NOREPLACE = 1 << 0;
     var sqe = switch (comptime Operation.tagFromPayloadType(@TypeOf(op.*))) {
         .fsync => try io.fsync(user_data, op.file.handle, 0),
         .read => try io.read(user_data, op.file.handle, .{ .buffer = op.buffer }, op.offset),
         .write => try io.write(user_data, op.file.handle, op.buffer, op.offset),
-        .accept => try io.accept(user_data, op.socket, @ptrCast(op.addr), op.inout_addrlen, 0),
-        .connect => try io.connect(user_data, op.socket, @ptrCast(op.addr), op.addrlen),
+        .accept => try io.accept(user_data, op.socket, op.addr, op.inout_addrlen, 0),
+        .connect => try io.connect(user_data, op.socket, op.addr, op.addrlen),
         .recv => try io.recv(user_data, op.socket, .{ .buffer = op.buffer }, 0),
         .send => try io.send(user_data, op.socket, op.buffer, 0),
-        .open_at => try io.openat(user_data, op.dir.fd, op.path, convertOpenFlags(op.flags), 0),
+        .open_at => try io.openat(user_data, op.dir.fd, op.path, posix.convertOpenFlags(op.flags), 0),
         .close_file => try io.close(user_data, op.file.handle),
         .close_dir => try io.close(user_data, op.dir.fd),
         .timeout => blk: {
@@ -181,11 +138,10 @@ inline fn uring_queue(io: *std.os.linux.IoUring, op: anytype, user_data: u64) ai
                 .tv_sec = @intCast(op.ns / std.time.ns_per_s),
                 .tv_nsec = @intCast(op.ns % std.time.ns_per_s),
             };
-            if (op.out_expired) |expired| expired.* = false;
             break :blk try io.link_timeout(user_data, &ts, 0);
         },
         .cancel => try io.cancel(user_data, @intFromEnum(op.id), 0),
-        .rename_at => try io.renameat(user_data, op.old_dir.fd, op.old_path, op.new_dir.fd, op.new_path, RENAME_NOREPLACE),
+        .rename_at => try io.renameat(user_data, op.old_dir.fd, op.old_path, op.new_dir.fd, op.new_path, posix.RENAME_NOREPLACE),
         .unlink_at => try io.unlinkat(user_data, op.dir.fd, op.path, 0),
         .mkdir_at => try io.mkdirat(user_data, op.dir.fd, op.path, op.mode),
         .symlink_at => try io.symlinkat(user_data, op.target, op.dir.fd, op.link_path),
@@ -196,14 +152,18 @@ inline fn uring_queue(io: *std.os.linux.IoUring, op: anytype, user_data: u64) ai
         .wait_event_source => try io.read(user_data, op.source.native.fd, .{ .buffer = std.mem.asBytes(&Trash.u_64) }, 0),
         .close_event_source => try io.close(user_data, op.source.native.fd),
     };
-    if (op.link_next) sqe.flags |= std.os.linux.IOSQE_IO_LINK;
+    switch (op.link) {
+        .unlinked => {},
+        .soft => sqe.flags |= std.os.linux.IOSQE_IO_LINK,
+        .hard => sqe.flags |= std.os.linux.IOSQE_IO_HARDLINK,
+    }
     if (@hasField(@TypeOf(op.*), "out_id")) {
         if (op.out_id) |id| id.* = @enumFromInt(user_data);
     }
     if (op.out_error) |out_error| out_error.* = error.Success;
 }
 
-inline fn uring_submit(io: *std.os.linux.IoUring) aio.CompletionError!u16 {
+inline fn uring_submit(io: *std.os.linux.IoUring) aio.Error!u16 {
     while (true) {
         const n = io.submit() catch |err| switch (err) {
             error.FileDescriptorInvalid => unreachable,
@@ -211,14 +171,15 @@ inline fn uring_submit(io: *std.os.linux.IoUring) aio.CompletionError!u16 {
             error.BufferInvalid => unreachable,
             error.OpcodeNotSupported => unreachable,
             error.RingShuttingDown => unreachable,
+            error.SubmissionQueueEntryInvalid => unreachable,
             error.SignalInterrupt => continue,
-            error.CompletionQueueOvercommitted, error.SubmissionQueueEntryInvalid, error.Unexpected, error.SystemResources => |e| return e,
+            error.CompletionQueueOvercommitted, error.Unexpected, error.SystemResources => |e| return e,
         };
         return @intCast(n);
     }
 }
 
-inline fn uring_copy_cqes(io: *std.os.linux.IoUring, cqes: []std.os.linux.io_uring_cqe, len: u16) aio.CompletionError!u16 {
+inline fn uring_copy_cqes(io: *std.os.linux.IoUring, cqes: []std.os.linux.io_uring_cqe, len: u16) aio.Error!u16 {
     while (true) {
         const n = io.copy_cqes(cqes, len) catch |err| switch (err) {
             error.FileDescriptorInvalid => unreachable,
@@ -226,23 +187,13 @@ inline fn uring_copy_cqes(io: *std.os.linux.IoUring, cqes: []std.os.linux.io_uri
             error.BufferInvalid => unreachable,
             error.OpcodeNotSupported => unreachable,
             error.RingShuttingDown => unreachable,
+            error.SubmissionQueueEntryInvalid => unreachable,
             error.SignalInterrupt => continue,
-            error.CompletionQueueOvercommitted, error.SubmissionQueueEntryInvalid, error.Unexpected, error.SystemResources => |e| return e,
+            error.CompletionQueueOvercommitted, error.Unexpected, error.SystemResources => |e| return e,
         };
         return @intCast(n);
     }
     unreachable;
-}
-
-fn statusToTerm(status: u32) std.process.Child.Term {
-    return if (std.posix.W.IFEXITED(status))
-        .{ .Exited = std.posix.W.EXITSTATUS(status) }
-    else if (std.posix.W.IFSIGNALED(status))
-        .{ .Signal = std.posix.W.TERMSIG(status) }
-    else if (std.posix.W.IFSTOPPED(status))
-        .{ .Stopped = std.posix.W.STOPSIG(status) }
-    else
-        .{ .Unknown = status };
 }
 
 inline fn uring_handle_completion(op: anytype, cqe: *std.os.linux.io_uring_cqe) !void {
@@ -398,12 +349,8 @@ inline fn uring_handle_completion(op: anytype, cqe: *std.os.linux.io_uring_cqe) 
             },
             .link_timeout => switch (err) {
                 .SUCCESS, .INTR, .INVAL, .AGAIN => unreachable,
-                .TIME => blk: {
-                    if (op.out_expired) |expired| expired.* = true;
-                    break :blk error.Success;
-                },
-                .ALREADY => error.Success,
-                .CANCELED => error.OperationCanceled,
+                .TIME => error.Expired,
+                .ALREADY, .CANCELED => error.OperationCanceled,
                 else => unreachable,
             },
             .cancel => switch (err) {
@@ -510,9 +457,20 @@ inline fn uring_handle_completion(op: anytype, cqe: *std.os.linux.io_uring_cqe) 
                 else => std.posix.unexpectedErrno(err),
             },
         };
+
         if (op.out_error) |out_error| out_error.* = res;
-        if (res != error.Success) return error.OperationFailed;
+
+        if (res != error.Success) {
+            if ((comptime Operation.tagFromPayloadType(@TypeOf(op.*)) == .link_timeout) and res == error.OperationCanceled) {
+                // special case
+            } else {
+                debug("complete: {}: {} [FAIL] {}", .{ cqe.user_data, comptime Operation.tagFromPayloadType(@TypeOf(op.*)), res });
+                return error.OperationFailed;
+            }
+        }
     }
+
+    debug("complete: {}: {} [OK]", .{ cqe.user_data, comptime Operation.tagFromPayloadType(@TypeOf(op.*)) });
 
     switch (comptime Operation.tagFromPayloadType(@TypeOf(op.*))) {
         .fsync => {},
@@ -533,87 +491,8 @@ inline fn uring_handle_completion(op: anytype, cqe: *std.os.linux.io_uring_cqe) 
         .cancel => {},
         .rename_at, .unlink_at, .mkdir_at, .symlink_at => {},
         .child_exit => if (op.out_term) |term| {
-            term.* = statusToTerm(@intCast(op._.fields.common.second.sigchld.status));
+            term.* = posix.statusToTerm(@intCast(op._.fields.common.second.sigchld.status));
         },
         .socket => op.out_socket.* = cqe.res,
     }
-}
-
-pub fn Pool(T: type, SZ: type) type {
-    return struct {
-        pub const Node = union(enum) { free: ?SZ, used: T };
-        nodes: []Node,
-        free: ?SZ = null,
-        num_free: SZ = 0,
-        num_used: SZ = 0,
-
-        pub const Error = error{
-            OutOfMemory,
-        };
-
-        pub fn init(allocator: std.mem.Allocator, n: SZ) Error!@This() {
-            return .{ .nodes = try allocator.alloc(Node, n) };
-        }
-
-        pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
-            allocator.free(self.nodes);
-            self.* = undefined;
-        }
-
-        pub fn empty(self: *@This()) bool {
-            return self.num_used == self.num_free;
-        }
-
-        pub fn next(self: *@This()) ?SZ {
-            if (self.free) |fslot| return fslot;
-            if (self.num_used >= self.nodes.len) return null;
-            return self.num_used;
-        }
-
-        pub fn add(self: *@This(), item: T) Error!SZ {
-            if (self.free) |fslot| {
-                self.free = self.nodes[fslot].free;
-                self.nodes[fslot] = .{ .used = item };
-                self.num_free -= 1;
-                return fslot;
-            }
-            if (self.num_used >= self.nodes.len) return error.OutOfMemory;
-            self.nodes[self.num_used] = .{ .used = item };
-            defer self.num_used += 1;
-            return self.num_used;
-        }
-
-        pub fn remove(self: *@This(), slot: SZ) void {
-            if (self.free) |fslot| {
-                self.nodes[slot] = .{ .free = fslot };
-            } else {
-                self.nodes[slot] = .{ .free = null };
-            }
-            self.free = slot;
-            self.num_free += 1;
-        }
-
-        pub fn get(self: *@This(), slot: SZ) *T {
-            return &self.nodes[slot].used;
-        }
-
-        pub const Iterator = struct {
-            items: []Node,
-            index: SZ = 0,
-
-            pub fn next(self: *@This()) *T {
-                while (self.index < self.items.len) {
-                    defer self.index += 1;
-                    if (self.items[self.index] == .used) {
-                        return &self.items[self.index].used;
-                    }
-                }
-                return null;
-            }
-        };
-
-        pub fn iterator(self: *@This()) Iterator {
-            return .{ .items = self.nodes[0..self.num_used] };
-        }
-    };
 }

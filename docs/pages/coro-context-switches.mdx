@@ -10,10 +10,12 @@ coro.yield(SomeEnum.value);
 ```
 
 To continue running the task from where it left, you need to issue the same enum value to the following function.
-If the task currently isn't being yielded in the supplied state, the call is no-op.
+If you specify the third parameter as `.wait`, the current task will yield (or block if not a task) until the
+target task yields to that particural state. If instead third parameter is `.no_wait` then if the task currently
+isn't being yielded in the supplied state, the call is a no-op.
 
 ```zig
-coro.wakeupFromState(task, SomeEnum.value);
+coro.wakeupFromState(task, SomeEnum.value, .wait);
 ```
 
 This is the preferred way to handle the control flow between tasks.

@@ -24,12 +24,18 @@ link_next: bool = false,
 
 If `out_id` is set, the id of the operation will be stored into that address immediately after sucessful queue.
 The `id` can then be used in future operations to refer to this operation.
+
+
 If `out_error` is set, the error of the operation will be stored into that address, in case the operation failed.
 If there was no failure a `error.Success` will be stored in that address.
 `counter` can be used to set either decreasing or increasing counter.
 When operation completes it will either decrease or increase the `u16` stored at the address.
-`link_next` can be used to link the next operation into this operation.
+
+
+`link` can be used to link the next operation into this operation.
 When operations are linked, the next operation won't start until this operation has completed first.
+`soft` link will propagate failure to next operations in the link chain.
+`hard` link will not propagate failure, and the next operation starts normally.
 
 ### Fsync
 
@@ -144,13 +150,12 @@ ns: i128,
 ### LinkTimeout
 
 Timeout linked to a operation.
-The operation before must have set `link_next` to `true`.
+The operation before must have set `link` to either `soft` or `hard`.
 If the operation finishes before the timeout, then the timeout will be canceled.
 If the timeout finishes before the operation, then the operation will be canceled.
 
 ```zig
 ns: i128,
-out_expired: ?*bool = null,
 ```
 
 ### Cancel

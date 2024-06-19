@@ -3,7 +3,11 @@ const aio = @import("aio");
 const coro = @import("coro");
 const log = std.log.scoped(.coro_aio);
 
-pub const aio_coro_options: coro.Options = .{
+pub const aio_options: aio.Options = .{
+    .debug = false, // set to true to enable debug logs
+};
+
+pub const coro_options: coro.Options = .{
     .debug = false, // set to true to enable debug logs
 };
 
@@ -26,7 +30,7 @@ fn server(client_task: coro.Task) !void {
     try std.posix.bind(socket, &address.any, address.getOsSockLen());
     try std.posix.listen(socket, 128);
 
-    coro.wakeupFromState(client_task, Yield.server_ready);
+    coro.wakeupFromState(client_task, Yield.server_ready, .wait);
 
     var client_sock: std.posix.socket_t = undefined;
     try coro.io.single(aio.Accept{ .socket = socket, .out_socket = &client_sock });
@@ -34,16 +38,16 @@ fn server(client_task: coro.Task) !void {
     var buf: [1024]u8 = undefined;
     var len: usize = 0;
     try coro.io.multi(.{
-        aio.Send{ .socket = client_sock, .buffer = "hey ", .link_next = true },
-        aio.Send{ .socket = client_sock, .buffer = "I'm doing multiple IO ops at once ", .link_next = true },
-        aio.Send{ .socket = client_sock, .buffer = "how cool is that? ", .link_next = true },
+        aio.Send{ .socket = client_sock, .buffer = "hey ", .link = .soft },
+        aio.Send{ .socket = client_sock, .buffer = "I'm doing multiple IO ops at once ", .link = .soft },
+        aio.Send{ .socket = client_sock, .buffer = "how cool is that? ", .link = .soft },
         aio.Recv{ .socket = client_sock, .buffer = &buf, .out_read = &len },
     });
 
     log.warn("got reply from client: {s}", .{buf[0..len]});
     try coro.io.multi(.{
-        aio.Send{ .socket = client_sock, .buffer = "ok bye", .link_next = true },
-        aio.CloseSocket{ .socket = client_sock, .link_next = true },
+        aio.Send{ .socket = client_sock, .buffer = "ok bye", .link = .soft },
+        aio.CloseSocket{ .socket = client_sock, .link = .soft },
         aio.CloseSocket{ .socket = socket },
     });
 }
@@ -64,7 +68,6 @@ fn client() !void {
         .socket = socket,
         .addr = &address.any,
         .addrlen = address.getOsSockLen(),
-        .link_next = true,
     });
 
     while (true) {

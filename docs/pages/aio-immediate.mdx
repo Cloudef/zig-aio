@@ -29,13 +29,16 @@ var my_buffer: [1024]u8 = undefined;
 var my_len: usize = undefined;
 
 try aio.multi(.{
-    aio.Write{.file = f, .buffer = "contents", .link_next = true},
+    aio.Write{.file = f, .buffer = "contents", .link = .soft},
     aio.Read{.file = f, .buffer = &my_buffer, .out_read = &my_len},
 });
 ```
 
-The `.link_next` field of operation can be used to link the operation to the next operation.
+The `.link` field of operation can be used to link the operation to the next operation.
 When linking operations, the next operation won't start until this operation is complete.
+
+`soft` link will propagate failure to next operations in the link chain.
+`hard` link will not propagate failure, and the next operation starts normally.
 
 #### Using complete
 
@@ -51,7 +54,7 @@ var write_error: std.posix.WriteError = undefined;
 var read_error: std.posix.ReadError = undefined;
 
 const res = try aio.complete(.{
-    aio.Write{.file = f, .buffer = "contents", .out_error = &write_error, .link_next = true},
+    aio.Write{.file = f, .buffer = "contents", .out_error = &write_error, .link = .soft},
     aio.Read{.file = f, .buffer = &my_buffer, .out_error = &read_error, .out_read = &my_len},
 });
 

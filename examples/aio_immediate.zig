@@ -1,6 +1,6 @@
 const std = @import("std");
 const aio = @import("aio");
-const log = std.log.scoped(.aio_static);
+const log = std.log.scoped(.aio_immediate);
 
 pub fn main() !void {
     var f = try std.fs.cwd().openFile("flake.nix", .{});

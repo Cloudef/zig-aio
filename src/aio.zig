@@ -3,30 +3,32 @@
 //! On linux this is a very shim wrapper around `io_uring`, on other systems there might be more overhead
 
 const std = @import("std");
+const build_options = @import("build_options");
 
-pub const InitError = error{
+const root = @import("root");
+pub const options: Options = if (@hasDecl(root, "aio_options")) root.aio_options else .{};
+
+pub const Options = struct {
+    /// Enable debug logs and tracing
+    debug: bool = false,
+    /// Num threads for a thread pool, if a backend requires one
+    num_threads: ?u32 = null, // by default use the cpu core count
+    /// Completition event buffer size for the io_uring backend
+    io_uring_cqe_sz: u16 = 64,
+};
+
+pub const Error = error{
     OutOfMemory,
+    CompletionQueueOvercommitted,
+    SubmissionQueueFull,
+    NoDevice,
     PermissionDenied,
-    ProcessQuotaExceeded,
-    SystemQuotaExceeded,
+    ProcessFdQuotaExceeded,
+    SystemFdQuotaExceeded,
     SystemResources,
     SystemOutdated,
     Unexpected,
 };
-
-pub const QueueError = error{
-    OutOfMemory,
-    SubmissionQueueFull,
-};
-
-pub const CompletionError = error{
-    CompletionQueueOvercommitted,
-    SubmissionQueueEntryInvalid,
-    SystemResources,
-    Unexpected,
-};
-
-pub const ImmediateError = InitError || QueueError || CompletionError;
 
 pub const CompletionResult = struct {
     num_completed: u16 = 0,
@@ -37,7 +39,7 @@ pub const CompletionResult = struct {
 pub const Dynamic = struct {
     io: IO,
 
-    pub inline fn init(allocator: std.mem.Allocator, n: u16) InitError!@This() {
+    pub inline fn init(allocator: std.mem.Allocator, n: u16) Error!@This() {
         return .{ .io = try IO.init(allocator, n) };
     }
 
@@ -48,7 +50,7 @@ pub const Dynamic = struct {
 
     /// Queue operations for future completion
     /// The call is atomic, if any of the operations fail to queue, then the given operations are reverted
-    pub inline fn queue(self: *@This(), operations: anytype) QueueError!void {
+    pub inline fn queue(self: *@This(), operations: anytype) Error!void {
         const ti = @typeInfo(@TypeOf(operations));
         if (comptime ti == .Struct and ti.Struct.is_tuple) {
             var work = struct { ops: @TypeOf(operations) }{ .ops = operations };
@@ -70,7 +72,7 @@ pub const Dynamic = struct {
 
     /// Complete operations
     /// Returns the number of completed operations, `0` if no operations were completed
-    pub inline fn complete(self: *@This(), mode: CompletionMode) CompletionError!CompletionResult {
+    pub inline fn complete(self: *@This(), mode: CompletionMode) Error!CompletionResult {
         return self.io.complete(mode);
     }
 };
@@ -78,7 +80,7 @@ pub const Dynamic = struct {
 /// Completes a list of operations immediately, blocks until complete
 /// For error handling you must check the `out_error` field in the operation
 /// Returns the number of errors occured, 0 if there were no errors
-pub inline fn complete(operations: anytype) ImmediateError!u16 {
+pub inline fn complete(operations: anytype) Error!u16 {
     const ti = @typeInfo(@TypeOf(operations));
     if (comptime ti == .Struct and ti.Struct.is_tuple) {
         if (comptime operations.len == 0) @compileError("no work to be done");
@@ -95,12 +97,12 @@ pub inline fn complete(operations: anytype) ImmediateError!u16 {
 
 /// Completes a list of operations immediately, blocks until complete
 /// Returns `error.SomeOperationFailed` if any operation failed
-pub inline fn multi(operations: anytype) (ImmediateError || error{SomeOperationFailed})!void {
+pub inline fn multi(operations: anytype) (Error || error{SomeOperationFailed})!void {
     if (try complete(operations) > 0) return error.SomeOperationFailed;
 }
 
 /// Completes a single operation immediately, blocks until complete
-pub inline fn single(operation: anytype) (ImmediateError || @TypeOf(operation).Error)!void {
+pub inline fn single(operation: anytype) (Error || @TypeOf(operation).Error)!void {
     var op: @TypeOf(operation) = operation;
     var err: @TypeOf(operation).Error = error.Success;
     op.out_error = &err;
@@ -111,7 +113,14 @@ pub inline fn single(operation: anytype) (ImmediateError || @TypeOf(operation).E
 pub const EventSource = struct {
     native: IO.EventSource,
 
-    pub inline fn init() InitError!@This() {
+    pub const Error = error{
+        ProcessFdQuotaExceeded,
+        SystemFdQuotaExceeded,
+        SystemResources,
+        Unexpected,
+    };
+
+    pub inline fn init() @This().Error!@This() {
         return .{ .native = try IO.EventSource.init() };
     }
 
@@ -130,8 +139,11 @@ pub const EventSource = struct {
 };
 
 const IO = switch (@import("builtin").target.os.tag) {
-    .linux => @import("aio/linux.zig"),
-    else => @compileError("unsupported os"),
+    .linux => if (build_options.fallback)
+        @import("aio/fallback.zig")
+    else
+        @import("aio/io_uring.zig"),
+    else => @import("aio/fallback.zig"),
 };
 
 const ops = @import("aio/ops.zig");
@@ -201,7 +213,7 @@ test "Read" {
         defer f.close();
         try f.writeAll("foobar");
         try single(Read{ .file = f, .buffer = &buf, .out_read = &len });
-        try std.testing.expectEqual(len, "foobar".len);
+        try std.testing.expectEqual("foobar".len, len);
         try std.testing.expectEqualSlices(u8, "foobar", buf[0..len]);
     }
     {
@@ -223,7 +235,7 @@ test "Write" {
         var f = try tmp.dir.createFile("test", .{ .read = true });
         defer f.close();
         try single(Write{ .file = f, .buffer = "foobar", .out_written = &len });
-        try std.testing.expectEqual(len, "foobar".len);
+        try std.testing.expectEqual("foobar".len, len);
         const read = try f.readAll(&buf);
         try std.testing.expectEqualSlices(u8, "foobar", buf[0..read]);
     }
@@ -272,15 +284,48 @@ test "Timeout" {
 }
 
 test "LinkTimeout" {
-    var err: Timeout.Error = undefined;
-    var expired: bool = undefined;
-    const num_errors = try complete(.{
-        Timeout{ .ns = 2 * std.time.ns_per_s, .out_error = &err, .link_next = true },
-        LinkTimeout{ .ns = 1 * std.time.ns_per_s, .out_expired = &expired },
-    });
-    try std.testing.expectEqual(1, num_errors);
-    try std.testing.expectEqual(error.OperationCanceled, err);
-    try std.testing.expectEqual(true, expired);
+    {
+        var err: Timeout.Error = undefined;
+        var err2: LinkTimeout.Error = undefined;
+        const num_errors = try complete(.{
+            Timeout{ .ns = 2 * std.time.ns_per_s, .out_error = &err, .link = .soft },
+            LinkTimeout{ .ns = 1 * std.time.ns_per_s, .out_error = &err2 },
+        });
+        try std.testing.expectEqual(2, num_errors);
+        try std.testing.expectEqual(error.OperationCanceled, err);
+        try std.testing.expectEqual(error.Expired, err2);
+    }
+    {
+        const num_errors = try complete(.{
+            Timeout{ .ns = 2 * std.time.ns_per_s, .link = .soft },
+            LinkTimeout{ .ns = 1 * std.time.ns_per_s, .link = .soft },
+            Timeout{ .ns = 1 * std.time.ns_per_s, .link = .soft },
+        });
+        try std.testing.expectEqual(3, num_errors);
+    }
+    {
+        const num_errors = try complete(.{
+            Timeout{ .ns = 1 * std.time.ns_per_s, .link = .soft },
+            LinkTimeout{ .ns = 2 * std.time.ns_per_s },
+        });
+        try std.testing.expectEqual(0, num_errors);
+    }
+    {
+        const num_errors = try complete(.{
+            Timeout{ .ns = 1 * std.time.ns_per_s, .link = .soft },
+            LinkTimeout{ .ns = 2 * std.time.ns_per_s, .link = .soft },
+            Timeout{ .ns = 1 * std.time.ns_per_s, .link = .soft },
+        });
+        try std.testing.expectEqual(1, num_errors);
+    }
+    {
+        const num_errors = try complete(.{
+            Timeout{ .ns = 1 * std.time.ns_per_s, .link = .hard },
+            LinkTimeout{ .ns = 2 * std.time.ns_per_s, .link = .soft },
+            Timeout{ .ns = 1 * std.time.ns_per_s, .link = .soft },
+        });
+        try std.testing.expectEqual(0, num_errors);
+    }
 }
 
 test "Cancel" {
@@ -382,7 +427,7 @@ test "EventSource" {
     const source = try EventSource.init();
     try multi(.{
         NotifyEventSource{ .source = source },
-        WaitEventSource{ .source = source, .link_next = true },
+        WaitEventSource{ .source = source, .link = .hard },
         CloseEventSource{ .source = source },
     });
 }

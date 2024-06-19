@@ -6,6 +6,14 @@ const aio = @import("../aio.zig");
 
 pub const Id = enum(usize) { _ };
 
+pub const Link = enum {
+    unlinked,
+    /// If the operation fails the next operation in the chain will fail as well
+    soft,
+    /// If the operation fails, the failure is ignored and next operation is started regardless
+    hard,
+};
+
 // Counter that either increases or decreases a value in a given address
 // Reserved when using the coroutines API
 const Counter = union(enum) {
@@ -17,6 +25,7 @@ const Counter = union(enum) {
 const SharedError = error{
     Success,
     OperationCanceled,
+    Unexpected,
 };
 
 /// std.fs.File.sync
@@ -26,12 +35,12 @@ pub const Fsync = struct {
     out_id: ?*Id = null,
     out_error: ?*Error = null,
     counter: Counter = .nop,
-    link_next: bool = false,
+    link: Link = .unlinked,
 };
 
 /// std.fs.File.read
 pub const Read = struct {
-    pub const Error = std.fs.File.ReadError || SharedError;
+    pub const Error = std.posix.PReadError || SharedError;
     file: std.fs.File,
     buffer: []u8,
     offset: u64 = 0,
@@ -39,12 +48,12 @@ pub const Read = struct {
     out_id: ?*Id = null,
     out_error: ?*Error = null,
     counter: Counter = .nop,
-    link_next: bool = false,
+    link: Link = .unlinked,
 };
 
 /// std.fs.File.write
 pub const Write = struct {
-    pub const Error = std.fs.File.WriteError || SharedError;
+    pub const Error = std.posix.PWriteError || SharedError;
     file: std.fs.File,
     buffer: []const u8,
     offset: u64 = 0,
@@ -52,7 +61,7 @@ pub const Write = struct {
     out_id: ?*Id = null,
     out_error: ?*Error = null,
     counter: Counter = .nop,
-    link_next: bool = false,
+    link: Link = .unlinked,
 };
 
 /// std.posix.accept
@@ -65,7 +74,7 @@ pub const Accept = struct {
     out_id: ?*Id = null,
     out_error: ?*Error = null,
     counter: Counter = .nop,
-    link_next: bool = false,
+    link: Link = .unlinked,
 };
 
 /// std.posix.connect
@@ -77,7 +86,7 @@ pub const Connect = struct {
     out_id: ?*Id = null,
     out_error: ?*Error = null,
     counter: Counter = .nop,
-    link_next: bool = false,
+    link: Link = .unlinked,
 };
 
 /// std.posix.recv
@@ -89,7 +98,7 @@ pub const Recv = struct {
     out_id: ?*Id = null,
     out_error: ?*Error = null,
     counter: Counter = .nop,
-    link_next: bool = false,
+    link: Link = .unlinked,
 };
 
 /// std.posix.send
@@ -101,7 +110,7 @@ pub const Send = struct {
     out_id: ?*Id = null,
     out_error: ?*Error = null,
     counter: Counter = .nop,
-    link_next: bool = false,
+    link: Link = .unlinked,
 };
 
 // TODO: recvmsg, sendmsg
@@ -116,7 +125,7 @@ pub const OpenAt = struct {
     out_id: ?*Id = null,
     out_error: ?*Error = null,
     counter: Counter = .nop,
-    link_next: bool = false,
+    link: Link = .unlinked,
 };
 
 /// std.fs.File.close
@@ -126,7 +135,7 @@ pub const CloseFile = struct {
     out_id: ?*Id = null,
     out_error: ?*Error = null,
     counter: Counter = .nop,
-    link_next: bool = false,
+    link: Link = .unlinked,
 };
 
 /// std.fs.Dir.Close
@@ -136,7 +145,7 @@ pub const CloseDir = struct {
     out_id: ?*Id = null,
     out_error: ?*Error = null,
     counter: Counter = .nop,
-    link_next: bool = false,
+    link: Link = .unlinked,
 };
 
 /// std.time.Timer.start
@@ -146,20 +155,19 @@ pub const Timeout = struct {
     out_id: ?*Id = null,
     out_error: ?*Error = null,
     counter: Counter = .nop,
-    link_next: bool = false,
+    link: Link = .unlinked,
 };
 
 /// Timeout linked to a operation
-/// This must be linked last and the operation before must have set `link_next` to `true`
+/// This must be linked last and the operation before must have set `link` to either `soft` or `hard`
 /// If the operation finishes before the timeout the timeout will be canceled
 pub const LinkTimeout = struct {
-    pub const Error = SharedError;
+    pub const Error = error{Expired} || SharedError;
     ns: u128,
-    out_expired: ?*bool = null,
     out_id: ?*Id = null,
     out_error: ?*Error = null,
     counter: Counter = .nop,
-    link_next: bool = false,
+    link: Link = .unlinked,
 };
 
 /// Cancel a operation
@@ -168,7 +176,7 @@ pub const Cancel = struct {
     id: Id,
     out_error: ?*Error = null,
     counter: Counter = .nop,
-    link_next: bool = false,
+    link: Link = .unlinked,
 };
 
 /// std.fs.rename
@@ -181,7 +189,7 @@ pub const RenameAt = struct {
     out_id: ?*Id = null,
     out_error: ?*Error = null,
     counter: Counter = .nop,
-    link_next: bool = false,
+    link: Link = .unlinked,
 };
 
 /// std.fs.Dir.deleteFile
@@ -192,7 +200,7 @@ pub const UnlinkAt = struct {
     out_id: ?*Id = null,
     out_error: ?*Error = null,
     counter: Counter = .nop,
-    link_next: bool = false,
+    link: Link = .unlinked,
 };
 
 /// std.fs.Dir.makeDir
@@ -204,7 +212,7 @@ pub const MkDirAt = struct {
     out_id: ?*Id = null,
     out_error: ?*Error = null,
     counter: Counter = .nop,
-    link_next: bool = false,
+    link: Link = .unlinked,
 };
 
 /// std.fs.Dir.symlink
@@ -216,7 +224,7 @@ pub const SymlinkAt = struct {
     out_id: ?*Id = null,
     out_error: ?*Error = null,
     counter: Counter = .nop,
-    link_next: bool = false,
+    link: Link = .unlinked,
 };
 
 // TODO: linkat
@@ -227,13 +235,13 @@ pub const ChildExit = struct {
     child: std.process.Child.Id,
     out_term: ?*std.process.Child.Term = null,
     _: switch (builtin.target.os.tag) {
-        .linux => std.os.linux.siginfo_t,
-        else => @compileError("unsupported os"),
+        .windows => @compileError("unsupported os"),
+        else => std.posix.siginfo_t,
     } = undefined,
     out_id: ?*Id = null,
     out_error: ?*Error = null,
     counter: Counter = .nop,
-    link_next: bool = false,
+    link: Link = .unlinked,
 };
 
 /// std.posix.socket
@@ -249,7 +257,7 @@ pub const Socket = struct {
     out_id: ?*Id = null,
     out_error: ?*Error = null,
     counter: Counter = .nop,
-    link_next: bool = false,
+    link: Link = .unlinked,
 };
 
 /// std.posix.close
@@ -259,7 +267,7 @@ pub const CloseSocket = struct {
     out_id: ?*Id = null,
     out_error: ?*Error = null,
     counter: Counter = .nop,
-    link_next: bool = false,
+    link: Link = .unlinked,
 };
 
 pub const NotifyEventSource = struct {
@@ -267,7 +275,7 @@ pub const NotifyEventSource = struct {
     source: aio.EventSource,
     out_error: ?*Error = null,
     counter: Counter = .nop,
-    link_next: bool = false,
+    link: Link = .unlinked,
 };
 
 pub const WaitEventSource = struct {
@@ -275,7 +283,7 @@ pub const WaitEventSource = struct {
     source: aio.EventSource,
     out_error: ?*Error = null,
     counter: Counter = .nop,
-    link_next: bool = false,
+    link: Link = .unlinked,
 };
 
 pub const CloseEventSource = struct {
@@ -283,7 +291,7 @@ pub const CloseEventSource = struct {
     source: aio.EventSource,
     out_error: ?*Error = null,
     counter: Counter = .nop,
-    link_next: bool = false,
+    link: Link = .unlinked,
 };
 
 pub const Operation = enum {
@@ -362,5 +370,11 @@ pub const Operation = enum {
                 .decls = &.{},
             },
         });
+    };
+
+    pub const Error = blk: {
+        var set = error{};
+        for (Operation.map.values) |v| set = set || v.Error;
+        break :blk set;
     };
 };

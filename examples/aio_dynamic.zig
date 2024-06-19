@@ -30,9 +30,12 @@ pub fn main() !void {
         },
     });
 
-    const ret = try work.complete(.blocking);
+    var num_work: u16 = 2;
+    while (num_work > 0) {
+        const ret = try work.complete(.blocking);
+        num_work -= ret.num_completed;
+    }
 
     log.info("{s}", .{buf[0..len]});
     log.info("{s}", .{buf2[0..len2]});
-    log.info("{}", .{ret});
 }

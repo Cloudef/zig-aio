@@ -8,7 +8,7 @@ const aio = @import("aio");
 const Fiber = @import("coro/zefi.zig");
 
 const root = @import("root");
-pub const options: Options = if (@hasDecl(root, "aio_coro_options")) root.aio_coro_options else .{};
+pub const options: Options = if (@hasDecl(root, "coro_options")) root.coro_options else .{};
 
 pub const Options = struct {
     /// Enable coroutine debug logs and tracing
@@ -29,13 +29,17 @@ fn defaultErrorHandler(err: anyerror) void {
 }
 
 fn debug(comptime fmt: []const u8, args: anytype) void {
-    if (comptime !options.debug) return;
-    const log = std.log.scoped(.coro);
-    log.debug(fmt, args);
+    if (@import("builtin").is_test) {
+        std.debug.print("coro: " ++ fmt ++ "\n", args);
+    } else {
+        if (comptime !options.debug) return;
+        const log = std.log.scoped(.coro);
+        log.debug(fmt, args);
+    }
 }
 
 pub const io = struct {
-    inline fn privateComplete(operations: anytype, yield_state: YieldState) aio.ImmediateError!u16 {
+    inline fn privateComplete(operations: anytype, yield_state: YieldState) aio.Error!u16 {
         if (Fiber.current()) |fiber| {
             var task: *TaskState = @ptrFromInt(fiber.getUserDataPtr().*);
 
@@ -82,20 +86,20 @@ pub const io = struct {
     /// The IO operations can be cancelled by calling `wakeup`
     /// For error handling you must check the `out_error` field in the operation
     /// Returns the number of errors occured, 0 if there were no errors
-    pub inline fn complete(operations: anytype) aio.ImmediateError!u16 {
+    pub inline fn complete(operations: anytype) aio.Error!u16 {
         return privateComplete(operations, .io);
     }
 
     /// Completes a list of operations immediately, blocks until complete
     /// The IO operations can be cancelled by calling `wakeupFromIo`, or doing `aio.Cancel`
     /// Returns `error.SomeOperationFailed` if any operation failed
-    pub inline fn multi(operations: anytype) (aio.ImmediateError || error{SomeOperationFailed})!void {
+    pub inline fn multi(operations: anytype) (aio.Error || error{SomeOperationFailed})!void {
         if (try complete(operations) > 0) return error.SomeOperationFailed;
     }
 
     /// Completes a single operation immediately, blocks the coroutine until complete
     /// The IO operation can be cancelled by calling `wakeupFromIo`, or doing `aio.Cancel`
-    pub inline fn single(operation: anytype) (aio.ImmediateError || @TypeOf(operation).Error)!void {
+    pub inline fn single(operation: anytype) (aio.Error || @TypeOf(operation).Error)!void {
         var op: @TypeOf(operation) = operation;
         var err: @TypeOf(operation).Error = error.Success;
         op.out_error = &err;
@@ -109,29 +113,29 @@ pub inline fn yield(state: anytype) void {
     privateYield(@enumFromInt(std.meta.fields(YieldState).len + @intFromEnum(state)));
 }
 
+pub const WakeupMode = enum { no_wait, wait };
+
 /// Wakeups a task from a yielded state, no-op if `state` does not match the current yielding state
-pub inline fn wakeupFromState(task: Task, state: anytype) void {
+/// `mode` lets you select whether to `wait` for the state to change before trying to wake up or not
+pub inline fn wakeupFromState(task: Task, state: anytype, mode: WakeupMode) void {
     const node: *Scheduler.TaskNode = @ptrCast(task);
-    if (node.data.marked_for_reap) return;
-    privateWakeup(&node.data, @enumFromInt(std.meta.fields(YieldState).len + @intFromEnum(state)));
+    privateWakeup(&node.data, @enumFromInt(std.meta.fields(YieldState).len + @intFromEnum(state)), mode);
 }
 
 /// Wakeups a task from IO by canceling the current IO operations for that task
 pub inline fn wakeupFromIo(task: Task) void {
     const node: *Scheduler.TaskNode = @ptrCast(task);
-    if (node.data.marked_for_reap) return;
-    privateWakeup(&node.data, .io);
+    privateWakeup(&node.data, .io, .no_wait);
 }
 
 /// Wakeups a task regardless of the current yielding state
 pub inline fn wakeup(task: Task) void {
     const node: *Scheduler.TaskNode = @ptrCast(task);
-    if (node.data.marked_for_reap) return;
     // do not wakeup from io_cancel state as that can potentially lead to memory corruption
     if (node.data.yield_state == .io_cancel) return;
     // ditto for io_waiting_thread
     if (node.data.yield_state == .io_waiting_thread) return;
-    privateWakeup(&node.data, node.data.yield_state);
+    privateWakeup(&node.data, node.data.yield_state, .no_wait);
 }
 
 const YieldState = enum(u8) {
@@ -140,6 +144,14 @@ const YieldState = enum(u8) {
     io_waiting_thread, // cannot be canceled
     io_cancel,
     _, // fields after are reserved for custom use
+
+    pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        if (@intFromEnum(self) < std.meta.fields(@This()).len) {
+            try writer.writeAll(@tagName(self));
+        } else {
+            try writer.print("custom {}", .{@intFromEnum(self)});
+        }
+    }
 };
 
 inline fn privateYield(state: YieldState) void {
@@ -154,9 +166,17 @@ inline fn privateYield(state: YieldState) void {
     }
 }
 
-inline fn privateWakeup(task: *TaskState, state: YieldState) void {
+inline fn privateWakeup(task: *TaskState, state: YieldState, mode: WakeupMode) void {
+    if (mode == .wait) {
+        debug("waiting to wake up: {} when it yields {}", .{ task, mode });
+        while (task.yield_state != state and !task.marked_for_reap) {
+            // TODO: Could perhaps be better than a timer
+            io.single(aio.Timeout{ .ns = 16 * std.time.ns_per_ms }) catch continue;
+        }
+    }
+    if (task.marked_for_reap) return;
     if (task.yield_state != state) return;
-    debug("waking up from yield: {}", .{task});
+    debug("waking up: {}", .{task});
     task.yield_state = .not_yielding;
     task.fiber.switchTo();
 }
@@ -171,9 +191,9 @@ const TaskState = struct {
 
     pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         if (self.io_counter > 0) {
-            try writer.print("{x}: {s}, {} ops left", .{ @intFromPtr(self.fiber), @tagName(self.yield_state), self.io_counter });
+            try writer.print("{x}: {}, {} ops left", .{ @intFromPtr(self.fiber), self.yield_state, self.io_counter });
         } else {
-            try writer.print("{x}: {s}", .{ @intFromPtr(self.fiber), @tagName(self.yield_state) });
+            try writer.print("{x}: {}", .{ @intFromPtr(self.fiber), self.yield_state });
         }
     }
 
@@ -221,7 +241,7 @@ pub const Scheduler = struct {
     fn privateReap(self: *@This(), node: *TaskNode) bool {
         if (node.data.yield_state == .io or node.data.yield_state == .io_cancel) {
             debug("task is pending on io, reaping later: {}", .{node.data});
-            if (node.data.yield_state == .io) privateWakeup(&node.data, .io); // cancel io
+            if (node.data.yield_state == .io) privateWakeup(&node.data, .io, .no_wait); // cancel io
             node.data.marked_for_reap = true;
             self.pending_for_reap = true;
             return false; // still pending
@@ -303,7 +323,7 @@ pub const Scheduler = struct {
                 const next = node.next;
                 switch (node.data.yield_state) {
                     .io, .io_waiting_thread, .io_cancel => if (node.data.io_counter == 0) {
-                        privateWakeup(&node.data, node.data.yield_state);
+                        privateWakeup(&node.data, node.data.yield_state, .no_wait);
                     },
                     else => {},
                 }
@@ -367,7 +387,7 @@ pub const ThreadPool = struct {
         SystemQuotaExceeded,
         Unexpected,
         SomeOperationFailed,
-    } || aio.ImmediateError || aio.WaitEventSource.Error;
+    } || aio.Error || aio.WaitEventSource.Error;
 
     fn ReturnType(comptime Func: type) type {
         const base = @typeInfo(Func).Fn.return_type.?;
@@ -385,7 +405,7 @@ pub const ThreadPool = struct {
         try self.pool.spawn(entrypoint, .{ &source, func, &ret, args });
         var wait_err: aio.WaitEventSource.Error = error.Success;
         if (try io.privateComplete(.{
-            aio.WaitEventSource{ .source = source, .link_next = true, .out_error = &wait_err },
+            aio.WaitEventSource{ .source = source, .link = .soft, .out_error = &wait_err },
             aio.CloseEventSource{ .source = source },
         }, .io_waiting_thread) > 0) {
             if (wait_err != error.Success) {
@@ -421,15 +441,15 @@ test "ThreadPool" {
             const ret = try pool.yieldForCompletition(blocking, .{});
             try std.testing.expectEqual(69, ret);
             try std.testing.expectEqual(task1_done.*, false);
-            wakeupFromState(t1, Yield.task2_free);
+            wakeupFromState(t1, Yield.task2_free, .no_wait);
             try std.testing.expectEqual(task1_done.*, true);
         }
     };
+    var scheduler = try Scheduler.init(std.testing.allocator, .{});
+    defer scheduler.deinit();
     var pool: ThreadPool = .{};
     defer pool.deinit();
     try pool.start(std.testing.allocator, 0);
-    var scheduler = try Scheduler.init(std.testing.allocator, .{});
-    defer scheduler.deinit();
     var task1_done: bool = false;
     const task1 = try scheduler.spawn(Test.task1, .{&task1_done}, .{});
     _ = try scheduler.spawn(Test.task2, .{ task1, &pool, &task1_done }, .{});
