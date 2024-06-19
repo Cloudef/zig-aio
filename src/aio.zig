@@ -311,7 +311,7 @@ test "SymlinkAt" {
 
 test "ChildExit" {
     if (@import("builtin").target.os.tag != .linux) {
-        return error.SkipTest;
+        return error.SkipZigTest;
     }
     const pid = try std.posix.fork();
     if (pid == 0) {
