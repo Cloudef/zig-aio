@@ -110,7 +110,7 @@ pub const OpenAt = struct {
     pub const Error = std.fs.File.OpenError || SharedError;
     dir: std.fs.Dir,
     path: [*:0]const u8,
-    flags: std.fs.File.OpenFlags,
+    flags: std.fs.File.OpenFlags = .{},
     out_file: *std.fs.File,
     out_id: ?*Id = null,
     out_error: ?*Error = null,
@@ -119,9 +119,19 @@ pub const OpenAt = struct {
 };
 
 /// std.fs.File.close
-pub const Close = struct {
+pub const CloseFile = struct {
     pub const Error = SharedError;
     file: std.fs.File,
+    out_id: ?*Id = null,
+    out_error: ?*Error = null,
+    counter: Counter = .nop,
+    link_next: bool = false,
+};
+
+/// std.fs.Dir.Close
+pub const CloseDir = struct {
+    pub const Error = SharedError;
+    dir: std.fs.Dir,
     out_id: ?*Id = null,
     out_error: ?*Error = null,
     counter: Counter = .nop,
@@ -131,18 +141,8 @@ pub const Close = struct {
 /// std.time.Timer.start
 pub const Timeout = struct {
     pub const Error = SharedError;
-    ts: struct { sec: i64 = 0, nsec: i64 = 0 },
+    ns: u128,
     out_id: ?*Id = null,
-    out_error: ?*Error = null,
-    counter: Counter = .nop,
-    link_next: bool = false,
-};
-
-/// std.time.Timer.cancel (if it existed)
-/// XXX: Overlap with `Cancel`, is this even needed? (io_uring)
-pub const TimeoutRemove = struct {
-    pub const Error = error{ Success, InProgress, NotFound };
-    id: Id,
     out_error: ?*Error = null,
     counter: Counter = .nop,
     link_next: bool = false,
@@ -152,8 +152,8 @@ pub const TimeoutRemove = struct {
 /// This must be linked last and the operation before must have set `link_next` to `true`
 /// If the operation finishes before the timeout the timeout will be canceled
 pub const LinkTimeout = struct {
-    pub const Error = error{InProgress} || SharedError;
-    ts: struct { sec: i64 = 0, nsec: i64 = 0 },
+    pub const Error = SharedError;
+    ns: u128,
     out_expired: ?*bool = null,
     out_id: ?*Id = null,
     out_error: ?*Error = null,
@@ -270,9 +270,9 @@ pub const Operation = enum {
     recv,
     send,
     open_at,
-    close,
+    close_file,
+    close_dir,
     timeout,
-    timeout_remove,
     link_timeout,
     cancel,
     rename_at,
@@ -292,9 +292,9 @@ pub const Operation = enum {
         .recv = Recv,
         .send = Send,
         .open_at = OpenAt,
-        .close = Close,
+        .close_file = CloseFile,
+        .close_dir = CloseDir,
         .timeout = Timeout,
-        .timeout_remove = TimeoutRemove,
         .link_timeout = LinkTimeout,
         .cancel = Cancel,
         .rename_at = RenameAt,

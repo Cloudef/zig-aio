@@ -52,9 +52,11 @@ pub const Dynamic = struct {
     pub inline fn queue(self: *@This(), operations: anytype) QueueError!void {
         const ti = @typeInfo(@TypeOf(operations));
         if (comptime ti == .Struct and ti.Struct.is_tuple) {
-            return self.io.queue(operations.len, &struct { ops: @TypeOf(operations) }{ .ops = operations });
+            var work = struct { ops: @TypeOf(operations) }{ .ops = operations };
+            return self.io.queue(operations.len, &work);
         } else if (comptime ti == .Array) {
-            return self.io.queue(operations.len, &struct { ops: @TypeOf(operations) }{ .ops = operations });
+            var work = struct { ops: @TypeOf(operations) }{ .ops = operations };
+            return self.io.queue(operations.len, &work);
         } else {
             return self.io.queue(1, &struct { ops: @TypeOf(.{operations}) }{ .ops = .{operations} });
         }
@@ -79,9 +81,13 @@ pub const Dynamic = struct {
 pub inline fn complete(operations: anytype) ImmediateError!CompletionResult {
     const ti = @typeInfo(@TypeOf(operations));
     if (comptime ti == .Struct and ti.Struct.is_tuple) {
-        return IO.immediate(operations.len, &struct { ops: @TypeOf(operations) }{ .ops = operations });
+        if (comptime operations.len == 0) @compileError("no work to be done");
+        var work = struct { ops: @TypeOf(operations) }{ .ops = operations };
+        return IO.immediate(operations.len, &work);
     } else if (comptime ti == .Array) {
-        return IO.immediate(operations.len, &struct { ops: @TypeOf(operations) }{ .ops = operations });
+        if (comptime operations.len == 0) @compileError("no work to be done");
+        var work = struct { ops: @TypeOf(operations) }{ .ops = operations };
+        return IO.immediate(operations.len, &work);
     } else {
         @compileError("expected a tuple or array of operations");
     }
@@ -103,6 +109,11 @@ pub inline fn single(operation: anytype) (ImmediateError || OperationError)!void
     if (err != error.Success) return err;
 }
 
+const IO = switch (@import("builtin").target.os.tag) {
+    .linux => @import("aio/linux.zig"),
+    else => @compileError("unsupported os"),
+};
+
 const ops = @import("aio/ops.zig");
 pub const Id = ops.Id;
 pub const OperationError = ops.Operation.Error;
@@ -114,9 +125,9 @@ pub const Connect = ops.Connect;
 pub const Recv = ops.Recv;
 pub const Send = ops.Send;
 pub const OpenAt = ops.OpenAt;
-pub const Close = ops.Close;
+pub const CloseFile = ops.CloseFile;
+pub const CloseDir = ops.CloseDir;
 pub const Timeout = ops.Timeout;
-pub const TimeoutRemove = ops.TimeoutRemove;
 pub const LinkTimeout = ops.LinkTimeout;
 pub const Cancel = ops.Cancel;
 pub const RenameAt = ops.RenameAt;
@@ -127,7 +138,198 @@ pub const ChildExit = ops.ChildExit;
 pub const Socket = ops.Socket;
 pub const CloseSocket = ops.CloseSocket;
 
-const IO = switch (@import("builtin").target.os.tag) {
-    .linux => @import("aio/linux.zig"),
-    else => @compileError("unsupported os"),
-};
+test "Fsync" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var f = try tmp.dir.createFile("test", .{});
+    defer f.close();
+    try single(Fsync{ .file = f });
+}
+
+test "Read" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [64]u8 = undefined;
+    var len: usize = undefined;
+    {
+        var f = try tmp.dir.createFile("test", .{ .read = true });
+        defer f.close();
+        try f.writeAll("foobar");
+        try single(Read{ .file = f, .buffer = &buf, .out_read = &len });
+        try std.testing.expectEqual(len, "foobar".len);
+        try std.testing.expectEqualSlices(u8, "foobar", buf[0..len]);
+    }
+    {
+        var f = try tmp.dir.createFile("test", .{});
+        defer f.close();
+        try std.testing.expectError(
+            error.NotOpenForReading,
+            single(Read{ .file = f, .buffer = &buf, .out_read = &len }),
+        );
+    }
+}
+
+test "Write" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [64]u8 = undefined;
+    var len: usize = undefined;
+    {
+        var f = try tmp.dir.createFile("test", .{ .read = true });
+        defer f.close();
+        try single(Write{ .file = f, .buffer = "foobar", .out_written = &len });
+        try std.testing.expectEqual(len, "foobar".len);
+        const read = try f.readAll(&buf);
+        try std.testing.expectEqualSlices(u8, "foobar", buf[0..read]);
+    }
+    {
+        var f = try tmp.dir.openFile("test", .{});
+        defer f.close();
+        try std.testing.expectError(
+            error.NotOpenForWriting,
+            single(Write{ .file = f, .buffer = "foobar", .out_written = &len }),
+        );
+    }
+}
+
+test "OpenAt" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var f: std.fs.File = undefined;
+    try std.testing.expectError(
+        error.FileNotFound,
+        single(OpenAt{ .dir = tmp.dir, .path = "test", .out_file = &f }),
+    );
+    var f2 = try tmp.dir.createFile("test", .{});
+    f2.close();
+    try single(OpenAt{ .dir = tmp.dir, .path = "test", .out_file = &f });
+    f.close();
+}
+
+test "CloseFile" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const f = try tmp.dir.createFile("test", .{});
+    try single(CloseFile{ .file = f });
+}
+
+test "CloseDir" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const d = try tmp.dir.makeOpenPath("test", .{});
+    try single(CloseDir{ .dir = d });
+}
+
+test "Timeout" {
+    var timer = try std.time.Timer.start();
+    try single(Timeout{ .ns = 2 * std.time.ns_per_s });
+    try std.testing.expect(timer.lap() > std.time.ns_per_s);
+}
+
+test "LinkTimeout" {
+    var err: Timeout.Error = undefined;
+    var expired: bool = undefined;
+    const res = try complete(.{
+        Timeout{ .ns = 2 * std.time.ns_per_s, .out_error = &err, .link_next = true },
+        LinkTimeout{ .ns = 1 * std.time.ns_per_s, .out_expired = &expired },
+    });
+    try std.testing.expectEqual(2, res.num_completed);
+    try std.testing.expectEqual(1, res.num_errors);
+    try std.testing.expectEqual(error.OperationCanceled, err);
+    try std.testing.expectEqual(true, expired);
+}
+
+test "Cancel" {
+    var dynamic = try Dynamic.init(std.testing.allocator, 16);
+    defer dynamic.deinit(std.testing.allocator);
+    var timer = try std.time.Timer.start();
+    var id: Id = undefined;
+    var err: Timeout.Error = undefined;
+    try dynamic.queue(Timeout{ .ns = 2 * std.time.ns_per_s, .out_id = &id, .out_error = &err });
+    const tmp = try dynamic.complete(.nonblocking);
+    try std.testing.expectEqual(0, tmp.num_errors);
+    try std.testing.expectEqual(0, tmp.num_completed);
+    try dynamic.queue(Cancel{ .id = id });
+    const res = try dynamic.complete(.blocking);
+    try std.testing.expectEqual(1, res.num_errors);
+    try std.testing.expectEqual(2, res.num_completed);
+    try std.testing.expectEqual(error.OperationCanceled, err);
+    try std.testing.expect(timer.lap() < std.time.ns_per_s);
+}
+
+test "RenameAt" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try std.testing.expectError(
+        error.FileNotFound,
+        single(RenameAt{ .old_dir = tmp.dir, .old_path = "test", .new_dir = tmp.dir, .new_path = "new_test" }),
+    );
+    var f1 = try tmp.dir.createFile("test", .{});
+    f1.close();
+    try single(RenameAt{ .old_dir = tmp.dir, .old_path = "test", .new_dir = tmp.dir, .new_path = "new_test" });
+    try tmp.dir.access("new_test", .{});
+    try std.testing.expectError(error.FileNotFound, tmp.dir.access("test", .{}));
+    var f2 = try tmp.dir.createFile("test", .{});
+    f2.close();
+    try std.testing.expectError(error.PathAlreadyExists, single(RenameAt{ .old_dir = tmp.dir, .old_path = "test", .new_dir = tmp.dir, .new_path = "new_test" }));
+}
+
+test "UnlinkAt" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try std.testing.expectError(
+        error.FileNotFound,
+        single(UnlinkAt{ .dir = tmp.dir, .path = "test" }),
+    );
+    var f = try tmp.dir.createFile("test", .{});
+    f.close();
+    try single(UnlinkAt{ .dir = tmp.dir, .path = "test" });
+    try std.testing.expectError(error.FileNotFound, tmp.dir.access("test", .{}));
+}
+
+test "MkDirAt" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try single(MkDirAt{ .dir = tmp.dir, .path = "test" });
+    try tmp.dir.access("test", .{});
+    try std.testing.expectError(error.PathAlreadyExists, single(MkDirAt{ .dir = tmp.dir, .path = "test" }));
+}
+
+test "SymlinkAt" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try single(SymlinkAt{ .dir = tmp.dir, .target = "target", .link_path = "test" });
+    try std.testing.expectError(
+        error.FileNotFound,
+        tmp.dir.access("test", .{}),
+    );
+    var f = try tmp.dir.createFile("target", .{});
+    f.close();
+    try tmp.dir.access("test", .{});
+    try std.testing.expectError(error.PathAlreadyExists, single(SymlinkAt{ .dir = tmp.dir, .target = "target", .link_path = "test" }));
+}
+
+test "ChildExit" {
+    if (@import("builtin").target.os.tag != .linux) {
+        return error.SkipTest;
+    }
+    const pid = try std.posix.fork();
+    if (pid == 0) {
+        std.time.sleep(1 * std.time.ns_per_s);
+        std.posix.exit(69);
+    }
+    var term: std.process.Child.Term = undefined;
+    try single(ChildExit{ .child = pid, .out_term = &term });
+    try std.testing.expectEqual(69, term.Signal);
+}
+
+test "Socket" {
+    var socket: std.posix.socket_t = undefined;
+    try single(Socket{
+        .domain = std.posix.AF.INET,
+        .flags = std.posix.SOCK.STREAM | std.posix.SOCK.CLOEXEC,
+        .protocol = std.posix.IPPROTO.TCP,
+        .out_socket = &socket,
+    });
+    try single(CloseSocket{ .socket = socket });
+}
