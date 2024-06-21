@@ -448,8 +448,8 @@ test "ThreadPool" {
     var scheduler = try Scheduler.init(std.testing.allocator, .{});
     defer scheduler.deinit();
     var pool: ThreadPool = .{};
-    defer pool.deinit();
     try pool.start(std.testing.allocator, 0);
+    defer pool.deinit();
     var task1_done: bool = false;
     const task1 = try scheduler.spawn(Test.task1, .{&task1_done}, .{});
     _ = try scheduler.spawn(Test.task2, .{ task1, &pool, &task1_done }, .{});

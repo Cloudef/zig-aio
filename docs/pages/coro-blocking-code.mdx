@@ -23,8 +23,8 @@ var scheduler = try Scheduler.init(std.testing.allocator, .{});
 defer scheduler.deinit();
 
 var pool: ThreadPool = .{};
-defer pool.deinit(); // pool must always be destroyed before scheduler
 try pool.start(std.testing.allocator, 0);
+defer pool.deinit(); // pool must always be destroyed before scheduler
 
 _ = try scheduler.spawn(task, .{&pool}, .{});
 try scheduler.run();
