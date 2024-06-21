@@ -355,6 +355,12 @@ pub const Operation = enum {
         unreachable;
     }
 
+    pub const Types = blk: {
+        var types: []const type = &.{};
+        for (Operation.map.values) |v| types = types ++ .{v};
+        break :blk types;
+    };
+
     pub const Union = blk: {
         var fields: []const std.builtin.Type.UnionField = &.{};
         for (Operation.map.values, 0..) |v, idx| fields = fields ++ .{.{

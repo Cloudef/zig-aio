@@ -17,7 +17,7 @@ fn debug(comptime fmt: []const u8, args: anytype) void {
     }
 }
 
-pub const EventSource = @import("common/eventfd.zig");
+pub const EventSource = @import("common/EventFd.zig");
 
 efd: std.posix.fd_t,
 tpool: *std.Thread.Pool,
@@ -25,6 +25,10 @@ sq: Queue,
 pfd: FixedArrayList(std.posix.pollfd, u32),
 prev_id: ?u16 = null, // for linking operations
 completion_mutex: std.Thread.Mutex = .{}, // mutex for non thread safe functions
+
+pub fn isSupported(_: []const type) bool {
+    return true; // very optimistic :D
+}
 
 pub fn init(allocator: std.mem.Allocator, n: u16) aio.Error!@This() {
     const efd = try std.posix.eventfd(0, std.os.linux.EFD.NONBLOCK | std.os.linux.EFD.CLOEXEC);

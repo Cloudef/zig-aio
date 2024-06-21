@@ -3,21 +3,58 @@ const aio = @import("../aio.zig");
 const Operation = @import("ops.zig").Operation;
 const Pool = @import("common/types.zig").Pool;
 const posix = @import("common/posix.zig");
+const log = std.log.scoped(.io_uring);
 
 fn debug(comptime fmt: []const u8, args: anytype) void {
     if (@import("builtin").is_test) {
         std.debug.print("io_uring: " ++ fmt ++ "\n", args);
     } else {
         if (comptime !aio.options.debug) return;
-        const log = std.log.scoped(.io_uring);
         log.debug(fmt, args);
     }
 }
 
-pub const EventSource = @import("common/eventfd.zig");
+pub const EventSource = @import("common/EventFd.zig");
 
 io: std.os.linux.IoUring,
 ops: Pool(Operation.Union, u16),
+
+pub fn isSupported(op_types: []const type) bool {
+    var buf: ProbeOpsBuffer = undefined;
+    const probe = uring_probe_ops(&buf) catch return false;
+    inline for (op_types) |op_type| {
+        const io_uring_op = switch (Operation.tagFromPayloadType(op_type)) {
+            .fsync => std.os.linux.IORING_OP.FSYNC,
+            .read, .wait_event_source => std.os.linux.IORING_OP.READ,
+            .write, .notify_event_source => std.os.linux.IORING_OP.WRITE,
+            .accept => std.os.linux.IORING_OP.ACCEPT,
+            .connect => std.os.linux.IORING_OP.CONNECT,
+            .recv => std.os.linux.IORING_OP.RECV,
+            .send => std.os.linux.IORING_OP.SEND,
+            .open_at => std.os.linux.IORING_OP.OPENAT,
+            .close_file, .close_dir, .close_socket, .close_event_source => std.os.linux.IORING_OP.CLOSE,
+            .timeout => std.os.linux.IORING_OP.TIMEOUT,
+            .link_timeout => std.os.linux.IORING_OP.LINK_TIMEOUT,
+            .cancel => std.os.linux.IORING_OP.ASYNC_CANCEL,
+            .rename_at => std.os.linux.IORING_OP.RENAMEAT,
+            .unlink_at => std.os.linux.IORING_OP.UNLINKAT,
+            .mkdir_at => std.os.linux.IORING_OP.MKDIRAT,
+            .symlink_at => std.os.linux.IORING_OP.SYMLINKAT,
+            .child_exit => std.os.linux.IORING_OP.WAITID,
+            .socket => std.os.linux.IORING_OP.SOCKET,
+        };
+        const supported = blk: {
+            if (@intFromEnum(io_uring_op) > @intFromEnum(probe.last_op)) break :blk false;
+            if (probe.ops[@intFromEnum(io_uring_op)].flags & std.os.linux.IO_URING_OP_SUPPORTED == 0) break :blk false;
+            break :blk true;
+        };
+        if (!supported) {
+            log.warn("unsupported OP: {} => {s}", .{ op_type, @tagName(io_uring_op) });
+            return false;
+        }
+    }
+    return true;
+}
 
 pub fn init(allocator: std.mem.Allocator, n: u16) aio.Error!@This() {
     const n2 = std.math.ceilPowerOfTwo(u16, n) catch unreachable;
@@ -96,6 +133,26 @@ pub fn immediate(comptime len: u16, work: anytype) aio.Error!u16 {
         num -= n;
     }
     return num_errors;
+}
+
+const ProbeOpsBuffer = [@sizeOf(std.os.linux.io_uring_probe) + 256 * @sizeOf(std.os.linux.io_uring_probe_op)]u8;
+
+const ProbeOpsResult = struct {
+    last_op: std.os.linux.IORING_OP,
+    ops: []align(1) std.os.linux.io_uring_probe_op,
+};
+
+inline fn uring_probe_ops(mem: *ProbeOpsBuffer) !ProbeOpsResult {
+    var io = try std.os.linux.IoUring.init(2, 0);
+    defer io.deinit();
+    var fba = std.heap.FixedBufferAllocator.init(mem);
+    var pbuf = fba.allocator().alloc(u8, @sizeOf(std.os.linux.io_uring_probe) + 256 * @sizeOf(std.os.linux.io_uring_probe_op)) catch unreachable;
+    @memset(pbuf, 0);
+    const res = std.os.linux.io_uring_register(io.fd, .REGISTER_PROBE, pbuf.ptr, 256);
+    if (std.os.linux.E.init(res) != .SUCCESS) return error.Unexpected;
+    const probe = std.mem.bytesAsValue(std.os.linux.io_uring_probe, pbuf[0..@sizeOf(std.os.linux.io_uring_probe)]);
+    const ops = std.mem.bytesAsSlice(std.os.linux.io_uring_probe_op, pbuf[@sizeOf(std.os.linux.io_uring_probe)..]);
+    return .{ .last_op = probe.last_op, .ops = ops };
 }
 
 inline fn uring_init(n: u16) aio.Error!std.os.linux.IoUring {

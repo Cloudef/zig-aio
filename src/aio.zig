@@ -9,12 +9,23 @@ const root = @import("root");
 pub const options: Options = if (@hasDecl(root, "aio_options")) root.aio_options else .{};
 
 pub const Options = struct {
-    /// Enable debug logs and tracing
+    /// Enable debug logs and tracing.
     debug: bool = false,
-    /// Num threads for a thread pool, if a backend requires one
-    num_threads: ?u32 = null, // by default use the cpu core count
-    /// Completition event buffer size for the io_uring backend
+    /// Num threads for a thread pool, if a backend requires one.
+    /// By default use the cpu code count.
+    num_threads: ?u32 = null,
+    /// Completition event buffer size for the io_uring backend.
     io_uring_cqe_sz: u16 = 64,
+    /// Operations that the main backend must support.
+    /// If the operations are not supported by a main backend then a fallback backend will be used instead.
+    /// This is unused if fallback is disabled, in that case you should check for a support manually.
+    required_ops: []const type = @import("aio/ops.zig").Operation.Types,
+    /// Choose a fallback mode.
+    fallback: enum {
+        auto,
+        force,
+        disable,
+    } = if (build_options.fallback) .force else .auto,
 };
 
 pub const Error = error{
@@ -110,6 +121,11 @@ pub inline fn single(operation: anytype) (Error || @TypeOf(operation).Error)!voi
     if (err != error.Success) return err;
 }
 
+/// Checks if the current backend supports the operations
+pub inline fn isSupported(operations: []const type) bool {
+    return IO.isSupported(operations);
+}
+
 pub const EventSource = struct {
     native: IO.EventSource,
 
@@ -139,11 +155,8 @@ pub const EventSource = struct {
 };
 
 const IO = switch (@import("builtin").target.os.tag) {
-    .linux => if (build_options.fallback)
-        @import("aio/fallback.zig")
-    else
-        @import("aio/io_uring.zig"),
-    else => @import("aio/fallback.zig"),
+    .linux => @import("aio/linux.zig").IO,
+    else => @import("aio/Fallback.zig"),
 };
 
 const ops = @import("aio/ops.zig");
