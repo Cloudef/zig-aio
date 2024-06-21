@@ -132,10 +132,10 @@ pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode) aio.Error!aio.
 }
 
 pub fn immediate(comptime len: u16, work: anytype) aio.Error!u16 {
-    var mem: [len * 1024]u8 = undefined;
-    var fba = std.heap.FixedBufferAllocator.init(&mem);
-    var wrk = try init(fba.allocator(), len);
-    defer wrk.deinit(fba.allocator());
+    var sfb = std.heap.stackFallback(len * 1024, std.heap.page_allocator);
+    const allocator = sfb.get();
+    var wrk = try init(allocator, len);
+    defer wrk.deinit(allocator);
     try wrk.queue(len, work);
     var n: u16 = len;
     var num_errors: u16 = 0;
