@@ -11,6 +11,10 @@ pub const coro_options: coro.Options = .{
     .debug = false, // set to true to enable debug logs
 };
 
+pub const std_options: std.Options = .{
+    .log_level = .debug,
+};
+
 const Yield = enum {
     server_ready,
 };
