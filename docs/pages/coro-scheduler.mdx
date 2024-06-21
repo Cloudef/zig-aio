@@ -51,14 +51,14 @@ Call to `deinit` also reaps all tasks.
 
 ### Running
 
-The scheduler can process tasks and io one step a time with the tick method.
+The scheduler can process tasks and IO one step a time with the tick method.
 By running tick the scheduler will reap tasks that returned (dead tasks) and context switch back to the
 tasks in case they completed their IO operations.
 
 ```zig
-// if there are pending io operations, blocks until at least one completes
+// if there are pending IO operations, blocks until at least one completes
 try scheduler.tick(.blocking);
-// returns immediately regardless of the current io state
+// returns immediately regardless of the current IO state
 try scheduler.tick(.nonblocking);
 ```
 
