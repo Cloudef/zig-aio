@@ -17,9 +17,9 @@ fn debug(comptime fmt: []const u8, args: anytype) void {
     }
 }
 
-pub const EventSource = @import("common/EventFd.zig");
+pub const EventSource = posix.EventSource;
 
-efd: std.posix.fd_t,
+source: EventSource,
 tpool: *std.Thread.Pool,
 sq: Queue,
 pfd: FixedArrayList(std.posix.pollfd, u32),
@@ -31,8 +31,8 @@ pub fn isSupported(_: []const type) bool {
 }
 
 pub fn init(allocator: std.mem.Allocator, n: u16) aio.Error!@This() {
-    const efd = try std.posix.eventfd(0, std.os.linux.EFD.NONBLOCK | std.os.linux.EFD.CLOEXEC);
-    errdefer std.posix.close(efd);
+    var source = try EventSource.init();
+    errdefer source.deinit();
     var tpool = try allocator.create(std.Thread.Pool);
     tpool.init(.{ .allocator = allocator, .n_jobs = aio.options.num_threads }) catch |err| return switch (err) {
         error.LockedMemoryLimitExceeded, error.ThreadQuotaExceeded => error.SystemResources,
@@ -42,7 +42,7 @@ pub fn init(allocator: std.mem.Allocator, n: u16) aio.Error!@This() {
     errdefer sq.deinit(allocator);
     var pfd = try FixedArrayList(std.posix.pollfd, u32).init(allocator, n + 1);
     errdefer pfd.deinit(allocator);
-    return .{ .efd = efd, .tpool = tpool, .sq = sq, .pfd = pfd };
+    return .{ .source = source, .tpool = tpool, .sq = sq, .pfd = pfd };
 }
 
 pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
@@ -50,7 +50,7 @@ pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
     allocator.destroy(self.tpool);
     self.sq.deinit(allocator);
     self.pfd.deinit(allocator);
-    std.posix.close(self.efd);
+    self.source.deinit();
     self.* = undefined;
 }
 
@@ -73,7 +73,10 @@ pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode) aio.Error!aio.
     if (!try self.submitThreadSafe()) return .{};
     defer self.pfd.reset();
 
-    // TODO: use kqueue and epoll instead
+    // I was thinking if we should use epoll/kqueue if available
+    // The pros is that we don't have to iterated the self.pfd.items
+    // However, the self.pfd.items changes frequently so we have to keep re-registering fds anyways
+    // Poll is pretty much anywhere, so poll it is. This is fallback backend anyways.
     _ = std.posix.poll(self.pfd.items[0..self.pfd.len], if (mode == .blocking) -1 else 0) catch |err| return switch (err) {
         error.NetworkSubsystemFailed => unreachable,
         else => |e| e,
@@ -82,37 +85,15 @@ pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode) aio.Error!aio.
     self.completion_mutex.lock();
     defer self.completion_mutex.unlock();
 
-    var num_errors: u16 = 0;
-    var num_completed: u16 = 0;
+    var res: aio.CompletionResult = .{};
     for (self.pfd.items[0..self.pfd.len]) |pfd| {
         if (pfd.revents == 0) continue;
         std.debug.assert(pfd.revents & std.posix.POLL.NVAL == 0);
-        if (pfd.fd == self.efd) {
+        if (pfd.fd == self.source.fd) {
             std.debug.assert(pfd.revents & std.posix.POLL.ERR == 0);
             std.debug.assert(pfd.revents & std.posix.POLL.HUP == 0);
-            var trash: u64 align(1) = undefined;
-            _ = std.posix.read(self.efd, std.mem.asBytes(&trash)) catch {};
-            defer self.sq.finished.reset();
-            var last_len: u16 = 0;
-            while (last_len != self.sq.finished.len) {
-                const start_idx = last_len;
-                last_len = self.sq.finished.len;
-                for (self.sq.finished.items[start_idx..self.sq.finished.len]) |res| {
-                    if (res.failure != error.Success) {
-                        debug("complete: {}: {} [FAIL] {}", .{ res.id, std.meta.activeTag(self.sq.ops.nodes[res.id].used), res.failure });
-                    } else {
-                        debug("complete: {}: {} [OK]", .{ res.id, std.meta.activeTag(self.sq.ops.nodes[res.id].used) });
-                    }
-                    defer self.sq.remove(res.id);
-                    if (self.sq.ops.nodes[res.id].used == .link_timeout and res.failure == error.OperationCanceled) {
-                        // special case
-                    } else {
-                        num_errors += @intFromBool(res.failure != error.Success);
-                    }
-                    uopUnwrapCall(&self.sq.ops.nodes[res.id].used, completitionNotThreadSafe, .{ self, res });
-                }
-            }
-            num_completed = self.sq.finished.len;
+            self.source.wait();
+            res = self.handleFinishedNotThreadSafe();
         } else {
             var iter = self.sq.ops.iterator();
             while (iter.next()) |e| if (pfd.fd == self.sq.readiness[e.k].fd) {
@@ -128,7 +109,7 @@ pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode) aio.Error!aio.
         }
     }
 
-    return .{ .num_completed = num_completed, .num_errors = num_errors };
+    return res;
 }
 
 pub fn immediate(comptime len: u16, work: anytype) aio.Error!u16 {
@@ -241,7 +222,7 @@ fn finishNotThreadSafe(self: *@This(), id: u16, failure: Operation.Error) void {
     self.sq.started.unset(id);
     self.sq.pending.unset(id);
     self.sq.finish(.{ .id = id, .failure = failure });
-    _ = std.posix.write(self.efd, &std.mem.toBytes(@as(u64, 1))) catch unreachable;
+    self.source.notify();
 }
 
 fn cancelNotThreadSafe(self: *@This(), id: u16) enum { in_progress, not_found, ok } {
@@ -334,7 +315,7 @@ fn submitThreadSafe(self: *@This()) !bool {
     defer self.completion_mutex.unlock();
     if (self.sq.ops.empty()) return false;
     defer self.prev_id = null;
-    self.pfd.add(.{ .fd = self.efd, .events = std.posix.POLL.IN, .revents = 0 }) catch unreachable;
+    self.pfd.add(.{ .fd = self.source.fd, .events = std.posix.POLL.IN, .revents = 0 }) catch unreachable;
     var iter = self.sq.ops.iterator();
     while (iter.next()) |e| {
         if (!self.sq.started.isSet(e.k)) {
@@ -380,6 +361,31 @@ fn completitionNotThreadSafe(op: anytype, self: *@This(), res: Queue.Result) voi
             self.sq.link_lock.unset(self.sq.next[res.id]);
         }
     }
+}
+
+fn handleFinishedNotThreadSafe(self: *@This()) aio.CompletionResult {
+    defer self.sq.finished.reset();
+    var num_errors: u16 = 0;
+    var last_len: u16 = 0;
+    while (last_len != self.sq.finished.len) {
+        const start_idx = last_len;
+        last_len = self.sq.finished.len;
+        for (self.sq.finished.items[start_idx..self.sq.finished.len]) |res| {
+            if (res.failure != error.Success) {
+                debug("complete: {}: {} [FAIL] {}", .{ res.id, std.meta.activeTag(self.sq.ops.nodes[res.id].used), res.failure });
+            } else {
+                debug("complete: {}: {} [OK]", .{ res.id, std.meta.activeTag(self.sq.ops.nodes[res.id].used) });
+            }
+            defer self.sq.remove(res.id);
+            if (self.sq.ops.nodes[res.id].used == .link_timeout and res.failure == error.OperationCanceled) {
+                // special case
+            } else {
+                num_errors += @intFromBool(res.failure != error.Success);
+            }
+            uopUnwrapCall(&self.sq.ops.nodes[res.id].used, completitionNotThreadSafe, .{ self, res });
+        }
+    }
+    return .{ .num_completed = self.sq.finished.len, .num_errors = num_errors };
 }
 
 fn uopUnwrapCall(uop: *Operation.Union, comptime func: anytype, args: anytype) @typeInfo(@TypeOf(func)).Fn.return_type.? {

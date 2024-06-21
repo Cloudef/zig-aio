@@ -235,7 +235,7 @@ pub const ChildExit = struct {
     child: std.process.Child.Id,
     out_term: ?*std.process.Child.Term = null,
     _: switch (builtin.target.os.tag) {
-        .windows => @compileError("unsupported os"),
+        .windows => @compileError("unsupported"),
         else => std.posix.siginfo_t,
     } = undefined,
     out_id: ?*Id = null,

@@ -1,5 +1,60 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const Operation = @import("../ops.zig").Operation;
+
+pub const EventSource = struct {
+    fd: std.posix.fd_t,
+
+    pub inline fn init() !@This() {
+        if (comptime @hasDecl(std.posix.system, "eventfd")) {
+            return .{
+                .fd = try std.posix.eventfd(0, std.os.linux.EFD.CLOEXEC),
+            };
+        } else if (comptime @hasDecl(std.posix.system, "kqueue")) {
+            return .{
+                .fd = try std.posix.kqueue(),
+            };
+        } else {
+            @compileError("unsupported");
+        }
+    }
+
+    pub inline fn deinit(self: *@This()) void {
+        std.posix.close(self.fd);
+        self.* = undefined;
+    }
+
+    pub inline fn notify(self: *@This()) void {
+        if (comptime @hasDecl(std.posix.system, "eventfd")) {
+            _ = std.posix.write(self.fd, &std.mem.toBytes(@as(u64, 1))) catch unreachable;
+        } else if (comptime @hasDecl(std.posix.system, "kqueue")) {
+            _ = std.posix.kevent(self.fd, &.{.{
+                .ident = @intCast(self.fd),
+                .filter = std.posix.system.EVFILT_USER,
+                .flags = std.posix.system.EV_ADD | std.posix.system.EV_ENABLE | std.posix.system.EV_ONESHOT,
+                .fflags = std.posix.system.NOTE_TRIGGER,
+                .data = 0,
+                .udata = 0,
+            }}, &.{}, null) catch unreachable;
+        } else {
+            unreachable;
+        }
+    }
+
+    pub inline fn wait(self: *@This()) void {
+        if (comptime @hasDecl(std.posix.system, "eventfd")) {
+            var v: u64 = undefined;
+            _ = std.posix.read(self.fd, std.mem.asBytes(&v)) catch unreachable;
+        } else if (comptime @hasDecl(std.posix.system, "kqueue")) {
+            var pfds: [1]std.posix.pollfd = .{.{ .fd = self.fd, .events = std.posix.POLL.IN, .revents = 0 }};
+            _ = std.posix.poll(&pfds, -1) catch unreachable;
+            var ev: [1]std.posix.Kevent = undefined;
+            _ = std.posix.kevent(self.fd, &.{}, &ev, null) catch unreachable;
+        } else {
+            unreachable;
+        }
+    }
+};
 
 pub const RENAME_NOREPLACE = 1 << 0;
 
@@ -48,7 +103,6 @@ pub inline fn statusToTerm(status: u32) std.process.Child.Term {
 }
 
 pub inline fn perform(op: anytype) Operation.Error!void {
-    var u_64: u64 align(1) = undefined;
     switch (comptime Operation.tagFromPayloadType(@TypeOf(op.*))) {
         .fsync => _ = try std.posix.fsync(op.file.handle),
         .read => op.out_read.* = try std.posix.pread(op.file.handle, op.buffer, op.offset),
@@ -96,16 +150,20 @@ pub inline fn perform(op: anytype) Operation.Error!void {
         .mkdir_at => _ = try std.posix.mkdiratZ(op.dir.fd, op.path, op.mode),
         .symlink_at => _ = try std.posix.symlinkatZ(op.target, op.dir.fd, op.link_path),
         .child_exit => {
-            _ = std.posix.system.waitid(.PID, op.child, @constCast(&op._), std.posix.W.EXITED);
-            if (op.out_term) |term| {
-                term.* = statusToTerm(@intCast(op._.fields.common.second.sigchld.status));
+            if (@hasDecl(std.posix.system, "waitid")) {
+                _ = std.posix.system.waitid(.PID, op.child, @constCast(&op._), std.posix.W.EXITED);
+                if (op.out_term) |term| {
+                    term.* = statusToTerm(@intCast(op._.fields.common.second.sigchld.status));
+                }
+            } else {
+                @panic("unsupported");
             }
         },
         .socket => op.out_socket.* = try std.posix.socket(op.domain, op.flags, op.protocol),
         .close_socket => std.posix.close(op.socket),
-        .notify_event_source => _ = std.posix.write(op.source.native.fd, &std.mem.toBytes(@as(u64, 1))) catch unreachable,
-        .wait_event_source => _ = std.posix.read(op.source.native.fd, std.mem.asBytes(&u_64)) catch unreachable,
-        .close_event_source => std.posix.close(op.source.native.fd),
+        .notify_event_source => op.source.notify(),
+        .wait_event_source => op.source.wait(),
+        .close_event_source => op.source.deinit(),
         // this function is meant for execution on a thread, it makes no sense to execute these on a thread
         .timeout, .link_timeout, .cancel => unreachable,
     }
@@ -134,25 +192,33 @@ pub inline fn openReadiness(op: anytype) OpenReadinessError!Readiness {
         .send => .{ .fd = op.socket, .mode = .out },
         .open_at, .close_file, .close_dir, .close_socket => .{},
         .timeout, .link_timeout => blk: {
-            const fd = std.posix.timerfd_create(std.posix.CLOCK.MONOTONIC, .{ .CLOEXEC = true, .NONBLOCK = true }) catch |err| return switch (err) {
-                error.AccessDenied => unreachable,
-                else => |e| e,
-            };
-            break :blk .{ .fd = fd, .mode = .in };
+            if (comptime @hasDecl(std.posix.system, "timerfd_create")) {
+                const fd = std.posix.timerfd_create(std.posix.CLOCK.MONOTONIC, .{ .CLOEXEC = true, .NONBLOCK = true }) catch |err| return switch (err) {
+                    error.AccessDenied => unreachable,
+                    else => |e| e,
+                };
+                break :blk .{ .fd = fd, .mode = .in };
+            } else {
+                @panic("unsupported");
+            }
         },
         .cancel, .rename_at, .unlink_at, .mkdir_at, .symlink_at => .{},
         .child_exit => blk: {
-            const res = std.posix.system.pidfd_open(op.child, @as(usize, 1 << @bitOffsetOf(std.posix.O, "NONBLOCK")));
-            const e = std.posix.errno(res);
-            if (e != .SUCCESS) return switch (e) {
-                .INVAL, .SRCH => unreachable,
-                .MFILE => error.ProcessFdQuotaExceeded,
-                .NFILE => error.SystemFdQuotaExceeded,
-                .NODEV => error.NoDevice,
-                .NOMEM => error.SystemResources,
-                else => std.posix.unexpectedErrno(e),
-            };
-            break :blk .{ .fd = @intCast(res), .mode = .in };
+            if (comptime @hasDecl(std.posix.system, "pidfd_open")) {
+                const res = std.posix.system.pidfd_open(op.child, @as(usize, 1 << @bitOffsetOf(std.posix.O, "NONBLOCK")));
+                const e = std.posix.errno(res);
+                if (e != .SUCCESS) return switch (e) {
+                    .INVAL, .SRCH => unreachable,
+                    .MFILE => error.ProcessFdQuotaExceeded,
+                    .NFILE => error.SystemFdQuotaExceeded,
+                    .NODEV => error.NoDevice,
+                    .NOMEM => error.SystemResources,
+                    else => std.posix.unexpectedErrno(e),
+                };
+                break :blk .{ .fd = @intCast(res), .mode = .in };
+            } else {
+                @panic("unsupported");
+            }
         },
         .wait_event_source => .{ .fd = op.source.native.fd, .mode = .in },
         .notify_event_source => .{ .fd = op.source.native.fd, .mode = .out },
@@ -163,20 +229,24 @@ pub inline fn openReadiness(op: anytype) OpenReadinessError!Readiness {
 pub inline fn armReadiness(op: anytype, readiness: Readiness) error{Unexpected}!void {
     switch (comptime Operation.tagFromPayloadType(@TypeOf(op.*))) {
         .timeout, .link_timeout => {
-            const ts: std.os.linux.itimerspec = .{
-                .it_value = .{
-                    .tv_sec = @intCast(op.ns / std.time.ns_per_s),
-                    .tv_nsec = @intCast(op.ns % std.time.ns_per_s),
-                },
-                .it_interval = .{
-                    .tv_sec = 0,
-                    .tv_nsec = 0,
-                },
-            };
-            _ = std.posix.timerfd_settime(readiness.fd, .{}, &ts, null) catch |err| return switch (err) {
-                error.Canceled, error.InvalidHandle => unreachable,
-                error.Unexpected => |e| e,
-            };
+            if (comptime @hasDecl(std.posix.system, "timerfd_create")) {
+                const ts: std.os.linux.itimerspec = .{
+                    .it_value = .{
+                        .tv_sec = @intCast(op.ns / std.time.ns_per_s),
+                        .tv_nsec = @intCast(op.ns % std.time.ns_per_s),
+                    },
+                    .it_interval = .{
+                        .tv_sec = 0,
+                        .tv_nsec = 0,
+                    },
+                };
+                _ = std.posix.timerfd_settime(readiness.fd, .{}, &ts, null) catch |err| return switch (err) {
+                    error.Canceled, error.InvalidHandle => unreachable,
+                    error.Unexpected => |e| e,
+                };
+            } else {
+                @panic("unsupported");
+            }
         },
         .fsync, .read, .write => {},
         .socket, .accept, .connect, .recv, .send => {},

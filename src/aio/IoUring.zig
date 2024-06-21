@@ -14,7 +14,7 @@ fn debug(comptime fmt: []const u8, args: anytype) void {
     }
 }
 
-pub const EventSource = @import("common/EventFd.zig");
+pub const EventSource = posix.EventSource;
 
 io: std.os.linux.IoUring,
 ops: Pool(Operation.Union, u16),
