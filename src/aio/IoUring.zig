@@ -170,7 +170,11 @@ inline fn uring_init_inner(n: u16, flags: u32) !std.os.linux.IoUring {
 
 inline fn uring_init(n: u16) aio.Error!std.os.linux.IoUring {
     const flags: []const u32 = &.{
-        std.os.linux.IORING_SETUP_SINGLE_ISSUER | std.os.linux.IORING_SETUP_DEFER_TASKRUN, // 6.1
+        // Disabled for now, this seems to increase syscalls a bit
+        // However, it may still be beneficial from latency perspective
+        // I need to play this with more later, and if there's no single answer
+        // then it might be better to be exposed as a tunable.
+        // std.os.linux.IORING_SETUP_SINGLE_ISSUER | std.os.linux.IORING_SETUP_DEFER_TASKRUN, // 6.1
         std.os.linux.IORING_SETUP_SINGLE_ISSUER | std.os.linux.IORING_SETUP_COOP_TASKRUN, // 6.0
         std.os.linux.IORING_SETUP_COOP_TASKRUN, // 5.9
         0, // 5.4

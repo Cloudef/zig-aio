@@ -91,6 +91,8 @@ fn client() !void {
 }
 
 pub fn main() !void {
+    // var mem: [4096 * 1024]u8 = undefined;
+    // var fba = std.heap.FixedBufferAllocator.init(&mem);
     var gpa: std.heap.GeneralPurposeAllocator(.{}) = .{};
     defer _ = gpa.deinit();
     var scheduler = try coro.Scheduler.init(gpa.allocator(), .{});

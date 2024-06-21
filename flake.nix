@@ -73,22 +73,22 @@
       ```
       % time     seconds  usecs/call     calls    errors syscall
       ------ ----------- ----------- --------- --------- ------------------
-       45.31    0.000087          14         6           io_uring_enter
-       24.48    0.000047          23         2           io_uring_setup
-        9.38    0.000018           4         4           mmap
-        6.77    0.000013           3         4           munmap
-        5.73    0.000011           5         2           close
-        2.60    0.000005           5         1           bind
-        2.08    0.000004           4         1           listen
-        1.56    0.000003           1         2           setsockopt
-        1.56    0.000003           3         1           io_uring_register
-        0.52    0.000001           1         1           gettid
+        0.00    0.000000           0         2           close
+        0.00    0.000000           0         4           mmap
+        0.00    0.000000           0         4           munmap
         0.00    0.000000           0         5           rt_sigaction
+        0.00    0.000000           0         1           bind
+        0.00    0.000000           0         1           listen
+        0.00    0.000000           0         2           setsockopt
         0.00    0.000000           0         1           execve
         0.00    0.000000           0         1           arch_prctl
+        0.00    0.000000           0         1           gettid
         0.00    0.000000           0         2           prlimit64
+        0.00    0.000000           0         2           io_uring_setup
+        0.00    0.000000           0         6           io_uring_enter
+        0.00    0.000000           0         1           io_uring_register
       ------ ----------- ----------- --------- --------- ------------------
-      100.00    0.000192           5        33           total
+      100.00    0.000000           0        33           total
       ```
       EOF
       '');
