@@ -152,7 +152,7 @@ inline fn uring_probe_ops(mem: *ProbeOpsBuffer) !ProbeOpsResult {
     if (std.os.linux.E.init(res) != .SUCCESS) return error.Unexpected;
     const probe = std.mem.bytesAsValue(std.os.linux.io_uring_probe, pbuf[0..@sizeOf(std.os.linux.io_uring_probe)]);
     const ops = std.mem.bytesAsSlice(std.os.linux.io_uring_probe_op, pbuf[@sizeOf(std.os.linux.io_uring_probe)..]);
-    return .{ .last_op = probe.last_op, .ops = ops };
+    return .{ .last_op = probe.last_op, .ops = ops[0..probe.ops_len] };
 }
 
 inline fn uring_init(n: u16) aio.Error!std.os.linux.IoUring {
