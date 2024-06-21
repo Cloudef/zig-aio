@@ -323,6 +323,9 @@ fn startNotThreadSafe(self: *@This(), id: u16) !void {
     // we need to start linked timeout immediately as well if there's one
     if (self.sq.next[id] != id and self.sq.ops.nodes[self.sq.next[id]].used == .link_timeout) {
         self.sq.link_lock.unset(self.sq.next[id]);
+        if (!self.sq.started.isSet(self.sq.next[id])) {
+            try self.startNotThreadSafe(self.sq.next[id]);
+        }
     }
 }
 
