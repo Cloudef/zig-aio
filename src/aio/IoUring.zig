@@ -143,7 +143,7 @@ const ProbeOpsResult = struct {
 };
 
 inline fn uring_probe_ops(mem: *ProbeOpsBuffer) !ProbeOpsResult {
-    var io = try std.os.linux.IoUring.init(2, 0);
+    var io = try uring_init(2);
     defer io.deinit();
     var fba = std.heap.FixedBufferAllocator.init(mem);
     var pbuf = fba.allocator().alloc(u8, @sizeOf(std.os.linux.io_uring_probe) + 256 * @sizeOf(std.os.linux.io_uring_probe_op)) catch unreachable;
@@ -155,16 +155,33 @@ inline fn uring_probe_ops(mem: *ProbeOpsBuffer) !ProbeOpsResult {
     return .{ .last_op = probe.last_op, .ops = ops[0..probe.ops_len] };
 }
 
-inline fn uring_init(n: u16) aio.Error!std.os.linux.IoUring {
-    return std.os.linux.IoUring.init(n, 0) catch |err| switch (err) {
+inline fn uring_init_inner(n: u16, flags: u32) !std.os.linux.IoUring {
+    return std.os.linux.IoUring.init(n, flags) catch |err| switch (err) {
         error.PermissionDenied,
         error.SystemResources,
         error.SystemOutdated,
         error.ProcessFdQuotaExceeded,
         error.SystemFdQuotaExceeded,
         => |e| e,
+        error.ArgumentsInvalid => error.ArgumentsInvalid,
         else => error.Unexpected,
     };
+}
+
+inline fn uring_init(n: u16) aio.Error!std.os.linux.IoUring {
+    const flags: []const u32 = &.{
+        std.os.linux.IORING_SETUP_SINGLE_ISSUER | std.os.linux.IORING_SETUP_DEFER_TASKRUN, // 6.1
+        std.os.linux.IORING_SETUP_SINGLE_ISSUER | std.os.linux.IORING_SETUP_COOP_TASKRUN, // 6.0
+        std.os.linux.IORING_SETUP_COOP_TASKRUN, // 5.9
+        0, // 5.4
+    };
+    for (flags) |f| {
+        return uring_init_inner(n, f) catch |err| switch (err) {
+            error.ArgumentsInvalid => continue,
+            else => |e| return e,
+        };
+    }
+    return error.SystemOutdated;
 }
 
 inline fn uring_queue(io: *std.os.linux.IoUring, op: anytype, user_data: u64) aio.Error!void {

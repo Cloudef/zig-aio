@@ -86,6 +86,18 @@ pub const Dynamic = struct {
     pub inline fn complete(self: *@This(), mode: CompletionMode) Error!CompletionResult {
         return self.io.complete(mode);
     }
+
+    /// Block until all opreations are complete
+    /// Returns the number of errors occured, 0 if there were no errors
+    pub inline fn completeAll(self: *@This()) Error!u16 {
+        var num_errors: u16 = 0;
+        while (true) {
+            const res = try self.io.complete(.blocking);
+            num_errors += res.num_errors;
+            if (res.num_completed == 0) break;
+        }
+        return num_errors;
+    }
 };
 
 /// Completes a list of operations immediately, blocks until complete
@@ -352,9 +364,8 @@ test "Cancel" {
     try std.testing.expectEqual(0, tmp.num_errors);
     try std.testing.expectEqual(0, tmp.num_completed);
     try dynamic.queue(Cancel{ .id = id });
-    const res = try dynamic.complete(.blocking);
-    try std.testing.expectEqual(1, res.num_errors);
-    try std.testing.expectEqual(2, res.num_completed);
+    const num_errors = try dynamic.completeAll();
+    try std.testing.expectEqual(1, num_errors);
     try std.testing.expectEqual(error.OperationCanceled, err);
     try std.testing.expect(timer.lap() < std.time.ns_per_s);
 }

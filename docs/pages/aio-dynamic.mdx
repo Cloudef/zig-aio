@@ -47,3 +47,10 @@ const res = try work.complete(.blocking);
 // returns immediately
 const res = try work.complete(.nonblocking);
 ```
+
+To complete all operations within the dynamic instance, use `completeAll`.
+This blocks until all the operations are complete and returns the number of errors, if any.
+
+```zig
+const num_errors = try work.completeAll();
+```
