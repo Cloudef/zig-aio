@@ -1,0 +1,21 @@
+name: pr
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  pr:
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+        matrix:
+            os: [ubuntu-latest, macos-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+      - run: |
+          nix run .#test
+          nix run .#readme

@@ -23,7 +23,10 @@
       apps.build = env.app [] "zig build \"$@\"";
 
       # nix run .#test
-      apps.test = env.app [] "zig build test -- \"$@\"";
+      apps.test = env.app [] ''
+        zig build test
+        zig build test -Dfallback=true
+      '';
 
       # nix run .#docs
       apps.docs = env.app [] "zig build docs -- \"$@\"";

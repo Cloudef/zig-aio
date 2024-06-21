@@ -1,0 +1,23 @@
+name: automation
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  automation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+      - run: |
+          nix run .#test
+          nix run .#readme > README.md
+      - uses: test-room-7/action-update-file@v1.8.0
+        with:
+          branch: ${{ github.head_ref || github.ref_name }}
+          file-path: |
+            README.md
+          commit-msg: Automatic update
+          github-token: ${{ secrets.GITHUB_TOKEN }}
