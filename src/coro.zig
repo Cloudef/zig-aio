@@ -58,15 +58,17 @@ pub const io = struct {
                 op.out_error = @ptrCast(&s.err);
             }
 
-            try task.io.queue(work.ops);
+            try task.scheduler.io.queue(work.ops);
             task.io_counter = operations.len;
+            task.scheduler.tasks_waiting_io.append(&task.io_link);
+            defer task.scheduler.tasks_waiting_io.remove(&task.io_link);
             privateYield(yield_state);
 
             if (task.io_counter > 0) {
                 // woken up for io cancelation
                 var cancels: [operations.len]aio.Cancel = undefined;
                 inline for (&cancels, &state) |*op, *s| op.* = .{ .id = s.id };
-                try task.io.queue(cancels);
+                try task.scheduler.io.queue(cancels);
                 privateYield(.io_cancel);
             }
 
@@ -118,31 +120,33 @@ pub const WakeupMode = enum { no_wait, wait };
 /// Wakeups a task from a yielded state, no-op if `state` does not match the current yielding state
 /// `mode` lets you select whether to `wait` for the state to change before trying to wake up or not
 pub inline fn wakeupFromState(task: Task, state: anytype, mode: WakeupMode) void {
-    const node: *Scheduler.TaskNode = @ptrCast(task);
-    privateWakeup(&node.data, @enumFromInt(std.meta.fields(YieldState).len + @intFromEnum(state)), mode);
+    const node: *Scheduler.Tasks.Node = @ptrCast(task);
+    node.data.cast().wakeup(@enumFromInt(std.meta.fields(YieldState).len + @intFromEnum(state)), mode);
 }
 
 /// Wakeups a task from IO by canceling the current IO operations for that task
 pub inline fn wakeupFromIo(task: Task) void {
-    const node: *Scheduler.TaskNode = @ptrCast(task);
-    privateWakeup(&node.data, .io, .no_wait);
+    const node: *Scheduler.Tasks.Node = @ptrCast(task);
+    node.data.cast().wakeup(.io, .no_wait);
 }
 
 /// Wakeups a task regardless of the current yielding state
 pub inline fn wakeup(task: Task) void {
-    const node: *Scheduler.TaskNode = @ptrCast(task);
+    const node: *Scheduler.Tasks.Node = @ptrCast(task);
+    const state = node.data.cast();
     // do not wakeup from io_cancel state as that can potentially lead to memory corruption
-    if (node.data.yield_state == .io_cancel) return;
+    if (state.yield_state == .io_cancel) return;
     // ditto for io_waiting_thread
-    if (node.data.yield_state == .io_waiting_thread) return;
-    privateWakeup(&node.data, node.data.yield_state, .no_wait);
+    if (state.yield_state == .io_waiting_thread) return;
+    state.wakeup(state.yield_state, .no_wait);
 }
 
 const YieldState = enum(u8) {
-    not_yielding,
-    io,
+    not_yielding, // task is running
+    waiting_for_yield, // waiting for another task to change yield state
+    io, // waiting for io
     io_waiting_thread, // cannot be canceled
-    io_cancel,
+    io_cancel, // cannot be canceled
     _, // fields after are reserved for custom use
 
     pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
@@ -159,6 +163,10 @@ inline fn privateYield(state: YieldState) void {
         var task: *TaskState = @ptrFromInt(fiber.getUserDataPtr().*);
         std.debug.assert(task.yield_state == .not_yielding);
         task.yield_state = state;
+        // wake up waiters
+        while (task.waiters.popFirst()) |node| {
+            node.data.cast().wakeup(.waiting_for_yield, .no_wait);
+        }
         debug("yielding: {}", .{task});
         Fiber.yield();
     } else {
@@ -166,28 +174,18 @@ inline fn privateYield(state: YieldState) void {
     }
 }
 
-inline fn privateWakeup(task: *TaskState, state: YieldState, mode: WakeupMode) void {
-    if (mode == .wait) {
-        debug("waiting to wake up: {} when it yields {}", .{ task, mode });
-        while (task.yield_state != state and !task.marked_for_reap) {
-            // TODO: Could perhaps be better than a timer
-            io.single(aio.Timeout{ .ns = 16 * std.time.ns_per_ms }) catch continue;
-        }
-    }
-    if (task.marked_for_reap) return;
-    if (task.yield_state != state) return;
-    debug("waking up: {}", .{task});
-    task.yield_state = .not_yielding;
-    task.fiber.switchTo();
-}
-
 const TaskState = struct {
+    const Waiters = std.SinglyLinkedList(Link(TaskState, "waiter_link", .single));
     fiber: *Fiber,
     stack: ?Fiber.Stack = null,
     marked_for_reap: bool = false,
-    io: *aio.Dynamic,
-    io_counter: u16 = 0,
     yield_state: YieldState = .not_yielding,
+    scheduler: *Scheduler,
+    io_counter: u16 = 0,
+    waiters: Waiters = .{},
+    waiter_link: Waiters.Node = .{ .data = .{} },
+    io_link: Scheduler.IoTasks.Node = .{ .data = .{} },
+    link: Scheduler.Tasks.Node = .{ .data = .{} },
 
     pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         if (self.io_counter > 0) {
@@ -199,23 +197,53 @@ const TaskState = struct {
 
     fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
         // we can only safely deinit the task when it is not doing IO
-        // otherwise for example io_uring might write to invalid memory address
-        std.debug.assert(self.yield_state != .io and self.yield_state != .io_waiting_thread and self.yield_state != .io_cancel);
+        // otherwise for example io_uring might write tok a invalid memory address
+        debug("deinit: {}", .{self});
+        std.debug.assert(self.isReapable());
         if (self.stack) |stack| allocator.free(stack);
-        self.* = undefined;
+        // stack is now gone, doing anything after this with TaskState is ub
+    }
+
+    inline fn wakeup(self: *TaskState, state: YieldState, mode: WakeupMode) void {
+        if (mode == .wait) {
+            debug("waiting to wake up: {} when it yields {}", .{ self, mode });
+            while (self.yield_state != state and !self.marked_for_reap) {
+                if (Fiber.current()) |fiber| {
+                    var task: *TaskState = @ptrFromInt(fiber.getUserDataPtr().*);
+                    self.waiters.prepend(&task.waiter_link);
+                    privateYield(.waiting_for_yield);
+                } else {
+                    // Not a task, spin up the CPU
+                    io.single(aio.Timeout{ .ns = 16 * std.time.ns_per_ms }) catch continue;
+                }
+            }
+        }
+        if (self.marked_for_reap) return;
+        if (self.yield_state != state) return;
+        debug("waking up: {}", .{self});
+        self.yield_state = .not_yielding;
+        self.fiber.switchTo();
+    }
+
+    inline fn isReapable(self: *TaskState) bool {
+        return switch (self.yield_state) {
+            .io, .io_waiting_thread, .io_cancel => false,
+            else => true,
+        };
     }
 };
 
-pub const Task = *align(@alignOf(Scheduler.TaskNode)) anyopaque;
+pub const Task = *Scheduler.Tasks.Node;
 
 /// Runtime for asynchronous IO tasks
 pub const Scheduler = struct {
+    const Tasks = std.DoublyLinkedList(Link(TaskState, "link", .double));
+    const IoTasks = std.DoublyLinkedList(Link(TaskState, "io_link", .double));
     allocator: std.mem.Allocator,
     io: aio.Dynamic,
-    tasks: std.DoublyLinkedList(TaskState) = .{},
-    pending_for_reap: bool = false,
-
-    const TaskNode = std.DoublyLinkedList(TaskState).Node;
+    tasks: Tasks = .{},
+    tasks_pending_reap: Tasks = .{},
+    tasks_waiting_io: IoTasks = .{},
 
     pub const InitOptions = struct {
         /// This is a hint, the implementation makes the final call
@@ -230,57 +258,72 @@ pub const Scheduler = struct {
     }
 
     pub fn reapAll(self: *@This()) void {
-        var maybe_node = self.tasks.first;
-        while (maybe_node) |node| {
-            node.data.marked_for_reap = true;
-            maybe_node = node.next;
+        while (self.tasks.pop()) |node| {
+            node.data.cast().marked_for_reap = true;
+            self.privateReap(node);
         }
-        self.pending_for_reap = true;
     }
 
-    fn privateReap(self: *@This(), node: *TaskNode) bool {
-        if (node.data.yield_state == .io or node.data.yield_state == .io_cancel) {
-            debug("task is pending on io, reaping later: {}", .{node.data});
-            if (node.data.yield_state == .io) privateWakeup(&node.data, .io, .no_wait); // cancel io
-            node.data.marked_for_reap = true;
-            self.pending_for_reap = true;
-            return false; // still pending
+    fn privateReap(self: *@This(), node: *Tasks.Node) void {
+        var task = node.data.cast();
+        if (!task.isReapable()) {
+            if (task.yield_state == .io) {
+                debug("task is pending on io, reaping later: {}", .{task});
+                task.wakeup(.io, .no_wait); // cancel io
+            }
+            task.marked_for_reap = true;
+            self.tasks_pending_reap.append(node);
+            return; // still pending
         }
-        debug("reaping: {}", .{node.data});
-        self.tasks.remove(node);
-        node.data.deinit(self.allocator);
-        self.allocator.destroy(node);
-        return true;
+        if (task.marked_for_reap) self.tasks_pending_reap.remove(node);
+        task.deinit(self.allocator);
     }
 
-    pub fn reap(self: *@This(), task: Task) void {
-        const node: *TaskNode = @ptrCast(task);
-        _ = self.privateReap(node);
+    pub fn reap(self: *@This(), node: Task) void {
+        self.tasks.remove(@ptrCast(node));
+        self.privateReap(@ptrCast(node));
     }
 
     pub fn deinit(self: *@This()) void {
         // destroy io backend first to make sure we can destroy the tasks safely
         self.io.deinit(self.allocator);
-        while (self.tasks.pop()) |node| {
-            // modify the yield state to avoid state consistency assert in deinit
-            // it's okay to deinit now since the io backend is dead
-            node.data.yield_state = .not_yielding;
-            node.data.deinit(self.allocator);
-            self.allocator.destroy(node);
+        inline for (&.{ &self.tasks, &self.tasks_pending_reap }) |list| {
+            while (list.pop()) |node| {
+                var task = node.data.cast();
+                // modify the yield state to avoid state consistency assert in deinit
+                // it's okay to deinit now since the io backend is dead
+                // if using thread pool, it is error to deinit scheduler before thread
+                // pool is deinited, so we don't have to wait for those tasks either
+                task.yield_state = .not_yielding;
+                task.deinit(self.allocator);
+            }
         }
         self.* = undefined;
     }
 
-    inline fn entrypoint(self: *@This(), comptime func: anytype, args: anytype) void {
+    inline fn entrypoint(self: *@This(), stack: Fiber.Stack, comptime func: anytype, args: anytype) void {
+        var state: TaskState = .{
+            .fiber = Fiber.current().?,
+            .scheduler = self,
+            .stack = stack,
+        };
+        state.fiber.getUserDataPtr().* = @intFromPtr(&state);
+        self.tasks.append(&state.link);
+        debug("spawned: {}", .{state});
+
         if (@typeInfo(@typeInfo(@TypeOf(func)).Fn.return_type.?) == .ErrorUnion) {
             @call(.auto, func, args) catch |err| options.error_handler(err);
         } else {
             @call(.auto, func, args);
         }
-        var task: *TaskState = @ptrFromInt(Fiber.current().?.getUserDataPtr().*);
-        task.marked_for_reap = true;
-        self.pending_for_reap = true;
-        debug("finished: {}", .{task});
+
+        debug("finished: {}", .{state});
+        self.tasks.remove(&state.link);
+        if (state.stack) |_| {
+            // stack is managed, it needs to be cleaned outside
+            state.marked_for_reap = true;
+            self.tasks_pending_reap.append(&state.link);
+        }
     }
 
     pub const SpawnError = error{OutOfMemory} || Fiber.Error;
@@ -299,31 +342,21 @@ pub const Scheduler = struct {
             .managed => |sz| try self.allocator.alignedAlloc(u8, Fiber.stack_alignment, sz),
         };
         errdefer if (opts.stack == .managed) self.allocator.free(stack);
-        var fiber = try Fiber.init(stack, 0, entrypoint, .{ self, func, args });
-        const node = try self.allocator.create(TaskNode);
-        errdefer self.allocator.destroy(node);
-        node.* = .{ .data = .{
-            .fiber = fiber,
-            .stack = if (opts.stack == .managed) stack else null,
-            .io = &self.io,
-        } };
-        fiber.getUserDataPtr().* = @intFromPtr(&node.data);
-        self.tasks.append(node);
-        errdefer self.tasks.remove(node);
-        debug("spawned: {}", .{node.data});
+        var fiber = try Fiber.init(stack, 0, entrypoint, .{ self, stack, func, args });
         fiber.switchTo();
-        return node;
+        return self.tasks.last.?;
     }
 
     fn tickIo(self: *@This(), mode: aio.Dynamic.CompletionMode) !void {
         const res = try self.io.complete(mode);
         if (res.num_completed > 0) {
-            var maybe_node = self.tasks.first;
+            var maybe_node = self.tasks_waiting_io.first;
             while (maybe_node) |node| {
                 const next = node.next;
-                switch (node.data.yield_state) {
-                    .io, .io_waiting_thread, .io_cancel => if (node.data.io_counter == 0) {
-                        privateWakeup(&node.data, node.data.yield_state, .no_wait);
+                var task = node.data.cast();
+                switch (task.yield_state) {
+                    .io, .io_waiting_thread, .io_cancel => if (task.io_counter == 0) {
+                        task.wakeup(task.yield_state, .no_wait);
                     },
                     else => {},
                 }
@@ -335,27 +368,19 @@ pub const Scheduler = struct {
     /// Processes pending IO and reaps dead tasks
     pub fn tick(self: *@This(), mode: aio.Dynamic.CompletionMode) !void {
         try self.tickIo(mode);
-        if (self.pending_for_reap) {
-            var num_unreaped: usize = 0;
-            var maybe_node = self.tasks.first;
-            while (maybe_node) |node| {
-                const next = node.next;
-                if (node.data.marked_for_reap) {
-                    if (!self.privateReap(node)) {
-                        num_unreaped += 1;
-                    }
-                }
-                maybe_node = next;
-            }
-            if (num_unreaped == 0) {
-                self.pending_for_reap = false;
-            }
+        var maybe_node = self.tasks_pending_reap.first;
+        while (maybe_node) |node| {
+            const next = node.next;
+            self.privateReap(node);
+            maybe_node = next;
         }
     }
 
     /// Run until all tasks are dead
     pub fn run(self: *@This()) !void {
-        while (self.tasks.len > 0) try self.tick(.blocking);
+        while (self.tasks.len + self.tasks_pending_reap.len > 0) {
+            try self.tick(.blocking);
+        }
     }
 };
 
@@ -458,4 +483,25 @@ test "ThreadPool" {
     _ = try scheduler.spawn(Test.task2, .{ task1, &pool, &task1_done }, .{});
     for (0..10) |_| _ = try scheduler.spawn(Test.task3, .{&pool}, .{});
     try scheduler.run();
+}
+
+fn Link(comptime T: type, comptime field: []const u8, comptime container: enum { single, double }) type {
+    return struct {
+        pub fn format(self: *@This(), comptime fmt: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
+            return self.cast().format(self, fmt, opts, writer);
+        }
+
+        inline fn cast(self: *@This()) *T {
+            switch (container) {
+                .single => {
+                    const node: *std.SinglyLinkedList(@This()).Node = @alignCast(@fieldParentPtr("data", self));
+                    return @fieldParentPtr(field, node);
+                },
+                .double => {
+                    const node: *std.DoublyLinkedList(@This()).Node = @alignCast(@fieldParentPtr("data", self));
+                    return @fieldParentPtr(field, node);
+                },
+            }
+        }
+    };
 }
