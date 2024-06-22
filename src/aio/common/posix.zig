@@ -134,9 +134,17 @@ pub inline fn statusToTerm(status: u32) std.process.Child.Term {
 pub inline fn perform(op: anytype, readiness: Readiness) Operation.Error!void {
     switch (comptime Operation.tagFromPayloadType(@TypeOf(op.*))) {
         .fsync => _ = try std.posix.fsync(op.file.handle),
-        .read => op.out_read.* = try std.posix.pread(op.file.handle, op.buffer, op.offset),
+        .read => {
+            op.out_read.* = std.posix.pread(op.file.handle, op.buffer, op.offset) catch |err| switch (err) {
+                error.Unseekable => try std.posix.read(op.file.handle, op.buffer),
+                else => |e| return e,
+            };
+        },
         .write => {
-            const written = try std.posix.pwrite(op.file.handle, op.buffer, op.offset);
+            const written = std.posix.pwrite(op.file.handle, op.buffer, op.offset) catch |err| switch (err) {
+                error.Unseekable => try std.posix.write(op.file.handle, op.buffer),
+                else => |e| return e,
+            };
             if (op.out_written) |w| w.* = written;
         },
         .accept => op.out_socket.* = try std.posix.accept(op.socket, op.addr, op.inout_addrlen, 0),
