@@ -131,7 +131,7 @@ pub inline fn statusToTerm(status: u32) std.process.Child.Term {
         .{ .Unknown = status };
 }
 
-pub inline fn perform(op: anytype) Operation.Error!void {
+pub inline fn perform(op: anytype, readiness: Readiness) Operation.Error!void {
     switch (comptime Operation.tagFromPayloadType(@TypeOf(op.*))) {
         .fsync => _ = try std.posix.fsync(op.file.handle),
         .read => op.out_read.* = try std.posix.pread(op.file.handle, op.buffer, op.offset),
@@ -190,14 +190,9 @@ pub inline fn perform(op: anytype) Operation.Error!void {
         .mkdir_at => _ = try std.posix.mkdiratZ(op.dir.fd, op.path, op.mode),
         .symlink_at => _ = try std.posix.symlinkatZ(op.target, op.dir.fd, op.link_path),
         .child_exit => {
-            if (@hasDecl(std.posix.system, "waitid")) {
-                _ = std.posix.system.waitid(.PID, op.child, @constCast(&op._), std.posix.W.EXITED);
-                if (op.out_term) |term| {
-                    term.* = statusToTerm(@intCast(op._.fields.common.second.sigchld.status));
-                }
-            } else {
-                @panic("unsupported");
-            }
+            _ = readiness; // TODO: prefer pidfd_wait on linux
+            const res = std.posix.waitpid(op.child, std.posix.W.NOHANG);
+            if (op.out_term) |term| term.* = statusToTerm(res.status);
         },
         .socket => op.out_socket.* = try std.posix.socket(op.domain, op.flags, op.protocol),
         .close_socket => std.posix.close(op.socket),
@@ -258,6 +253,23 @@ pub inline fn openReadiness(op: anytype) OpenReadinessError!Readiness {
                     else => std.posix.unexpectedErrno(e),
                 };
                 break :blk .{ .fd = @intCast(res), .mode = .in };
+            } else if (comptime @hasDecl(std.posix.system, "kqueue")) {
+                const fd = try std.posix.kqueue();
+                _ = std.posix.kevent(fd, &.{.{
+                    .ident = @intCast(op.child),
+                    .filter = std.posix.system.EVFILT_PROC,
+                    .flags = std.posix.system.EV_ADD | std.posix.system.EV_ENABLE | std.posix.system.EV_ONESHOT,
+                    .fflags = std.posix.system.NOTE_EXIT,
+                    .data = 0,
+                    .udata = 0,
+                }}, &.{}, null) catch |err| return switch (err) {
+                    error.EventNotFound => unreachable,
+                    error.ProcessNotFound => unreachable,
+                    error.AccessDenied => unreachable,
+                    error.SystemResources => |e| e,
+                    else => error.Unexpected,
+                };
+                break :blk .{ .fd = fd, .mode = .in };
             } else {
                 @panic("unsupported");
             }

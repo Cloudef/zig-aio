@@ -423,9 +423,6 @@ test "SymlinkAt" {
 }
 
 test "ChildExit" {
-    if (@import("builtin").target.os.tag != .linux) {
-        return error.SkipZigTest;
-    }
     const pid = try std.posix.fork();
     if (pid == 0) {
         std.time.sleep(1 * std.time.ns_per_s);
@@ -433,7 +430,13 @@ test "ChildExit" {
     }
     var term: std.process.Child.Term = undefined;
     try single(ChildExit{ .child = pid, .out_term = &term });
-    try std.testing.expectEqual(69, term.Signal);
+    if (term == .Signal) {
+        try std.testing.expectEqual(69, term.Signal);
+    } else if (term == .Exited) {
+        try std.testing.expectEqual(69, term.Exited);
+    } else {
+        unreachable;
+    }
 }
 
 test "Socket" {

@@ -239,7 +239,7 @@ fn cancelNotThreadSafe(self: *@This(), id: u16) enum { in_progress, not_found, o
 
 fn onThreadExecutor(self: *@This(), id: u16) void {
     var failure: Operation.Error = error.Success;
-    uopUnwrapCall(&self.sq.ops.nodes[id].used, posix.perform, .{}) catch |err| {
+    uopUnwrapCall(&self.sq.ops.nodes[id].used, posix.perform, .{self.sq.readiness[id]}) catch |err| {
         failure = err;
     };
     self.completion_mutex.lock();
