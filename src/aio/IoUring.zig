@@ -14,49 +14,54 @@ fn debug(comptime fmt: []const u8, args: anytype) void {
     }
 }
 
+const Supported = struct {
+    var once = std.once(do_once);
+    var waitid: bool = false;
+
+    fn do_once() void {
+        waitid = uring_is_supported(&.{std.os.linux.IORING_OP.WAITID});
+        if (!waitid) log.warn("aio.ChildExit: fallback with pidfd", .{});
+    }
+
+    pub inline fn query() void {
+        once.call();
+    }
+};
+
 pub const EventSource = posix.EventSource;
 
 io: std.os.linux.IoUring,
 ops: Pool(Operation.Union, u16),
 
-pub fn isSupported(op_types: []const type) bool {
-    var buf: ProbeOpsBuffer = undefined;
-    const probe = uring_probe_ops(&buf) catch return false;
-    inline for (op_types) |op_type| {
-        const io_uring_op = switch (Operation.tagFromPayloadType(op_type)) {
-            .fsync => std.os.linux.IORING_OP.FSYNC,
-            .read, .wait_event_source => std.os.linux.IORING_OP.READ,
-            .write, .notify_event_source => std.os.linux.IORING_OP.WRITE,
-            .accept => std.os.linux.IORING_OP.ACCEPT,
-            .connect => std.os.linux.IORING_OP.CONNECT,
-            .recv => std.os.linux.IORING_OP.RECV,
-            .send => std.os.linux.IORING_OP.SEND,
-            .open_at => std.os.linux.IORING_OP.OPENAT,
-            .close_file, .close_dir, .close_socket, .close_event_source => std.os.linux.IORING_OP.CLOSE,
-            .timeout => std.os.linux.IORING_OP.TIMEOUT,
-            .link_timeout => std.os.linux.IORING_OP.LINK_TIMEOUT,
-            .cancel => std.os.linux.IORING_OP.ASYNC_CANCEL,
-            .rename_at => std.os.linux.IORING_OP.RENAMEAT,
-            .unlink_at => std.os.linux.IORING_OP.UNLINKAT,
-            .mkdir_at => std.os.linux.IORING_OP.MKDIRAT,
-            .symlink_at => std.os.linux.IORING_OP.SYMLINKAT,
-            .child_exit => std.os.linux.IORING_OP.WAITID,
-            .socket => std.os.linux.IORING_OP.SOCKET,
+pub inline fn isSupported(op_types: []const type) bool {
+    var ops: [op_types.len]std.os.linux.IORING_OP = undefined;
+    inline for (op_types, &ops) |op_type, *op| {
+        op.* = switch (Operation.tagFromPayloadType(op_type)) {
+            .fsync => std.os.linux.IORING_OP.FSYNC, // 5.4
+            .read, .wait_event_source => std.os.linux.IORING_OP.READ, // 5.6
+            .write, .notify_event_source => std.os.linux.IORING_OP.WRITE, // 5.6
+            .accept => std.os.linux.IORING_OP.ACCEPT, // 5.5
+            .connect => std.os.linux.IORING_OP.CONNECT, // 5.5
+            .recv => std.os.linux.IORING_OP.RECV, // 5.6
+            .send => std.os.linux.IORING_OP.SEND, // 5.6
+            .open_at => std.os.linux.IORING_OP.OPENAT, // 5.15
+            .close_file, .close_dir, .close_socket, .close_event_source => std.os.linux.IORING_OP.CLOSE, // 5.15
+            .timeout => std.os.linux.IORING_OP.TIMEOUT, // 5.4
+            .link_timeout => std.os.linux.IORING_OP.LINK_TIMEOUT, // 5.5
+            .cancel => std.os.linux.IORING_OP.ASYNC_CANCEL, // 5.5
+            .rename_at => std.os.linux.IORING_OP.RENAMEAT, // 5.11
+            .unlink_at => std.os.linux.IORING_OP.UNLINKAT, // 5.11
+            .mkdir_at => std.os.linux.IORING_OP.MKDIRAT, // 5.15
+            .symlink_at => std.os.linux.IORING_OP.SYMLINKAT, // 5.15
+            .child_exit => std.os.linux.IORING_OP.POLL_ADD, // 5.13 (uses waitid if available)
+            .socket => std.os.linux.IORING_OP.SOCKET, // 5.19
         };
-        const supported = blk: {
-            if (@intFromEnum(io_uring_op) > @intFromEnum(probe.last_op)) break :blk false;
-            if (probe.ops[@intFromEnum(io_uring_op)].flags & std.os.linux.IO_URING_OP_SUPPORTED == 0) break :blk false;
-            break :blk true;
-        };
-        if (!supported) {
-            log.warn("unsupported OP: {} => {s}", .{ op_type, @tagName(io_uring_op) });
-            return false;
-        }
     }
-    return true;
+    return uring_is_supported(&ops);
 }
 
 pub fn init(allocator: std.mem.Allocator, n: u16) aio.Error!@This() {
+    Supported.query();
     const n2 = std.math.ceilPowerOfTwo(u16, n) catch unreachable;
     var io = try uring_init(n2);
     errdefer io.deinit();
@@ -105,7 +110,7 @@ pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode) aio.Error!aio.
         if (cqe.user_data == NOP) continue;
         defer self.ops.remove(@intCast(cqe.user_data));
         switch (self.ops.get(@intCast(cqe.user_data)).*) {
-            inline else => |op| uring_handle_completion(&op, cqe) catch {
+            inline else => |*op| uring_handle_completion(op, cqe) catch {
                 result.num_errors += 1;
             },
         }
@@ -115,6 +120,7 @@ pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode) aio.Error!aio.
 }
 
 pub fn immediate(comptime len: u16, work: anytype) aio.Error!u16 {
+    Supported.query();
     var io = try uring_init(std.math.ceilPowerOfTwo(u16, len) catch unreachable);
     defer io.deinit();
     inline for (&work.ops, 0..) |*op, idx| try uring_queue(&io, op, idx);
@@ -153,6 +159,23 @@ inline fn uring_probe_ops(mem: *ProbeOpsBuffer) !ProbeOpsResult {
     const probe = std.mem.bytesAsValue(std.os.linux.io_uring_probe, pbuf[0..@sizeOf(std.os.linux.io_uring_probe)]);
     const ops = std.mem.bytesAsSlice(std.os.linux.io_uring_probe_op, pbuf[@sizeOf(std.os.linux.io_uring_probe)..]);
     return .{ .last_op = probe.last_op, .ops = ops[0..probe.ops_len] };
+}
+
+inline fn uring_is_supported(ops: []const std.os.linux.IORING_OP) bool {
+    var buf: ProbeOpsBuffer = undefined;
+    const probe = uring_probe_ops(&buf) catch return false;
+    for (ops) |op| {
+        const supported = blk: {
+            if (@intFromEnum(op) > @intFromEnum(probe.last_op)) break :blk false;
+            if (probe.ops[@intFromEnum(op)].flags & std.os.linux.IO_URING_OP_SUPPORTED == 0) break :blk false;
+            break :blk true;
+        };
+        if (!supported) {
+            log.warn("unsupported OP: {s}", .{@tagName(op)});
+            return false;
+        }
+    }
+    return true;
 }
 
 inline fn uring_init_inner(n: u16, flags: u32) !std.os.linux.IoUring {
@@ -223,7 +246,16 @@ inline fn uring_queue(io: *std.os.linux.IoUring, op: anytype, user_data: u64) ai
         .unlink_at => try io.unlinkat(user_data, op.dir.fd, op.path, 0),
         .mkdir_at => try io.mkdirat(user_data, op.dir.fd, op.path, op.mode),
         .symlink_at => try io.symlinkat(user_data, op.target, op.dir.fd, op.link_path),
-        .child_exit => try io.waitid(user_data, .PID, op.child, @constCast(&op._), std.posix.W.EXITED, 0),
+        .child_exit => blk: {
+            if (Supported.waitid) {
+                op._ = .{ .siginfo = undefined };
+                break :blk try io.waitid(user_data, .PID, op.child, @constCast(&op._.siginfo), std.posix.W.EXITED, 0);
+            } else {
+                const readiness = try posix.openReadiness(op);
+                op._ = .{ .fd = readiness.fd };
+                break :blk try io.poll_add(user_data, readiness.fd, std.posix.POLL.IN);
+            }
+        },
         .socket => try io.socket(user_data, op.domain, op.flags, op.protocol, 0),
         .close_socket => try io.close(user_data, op.socket),
         .notify_event_source => try io.write(user_data, op.source.native.fd, &std.mem.toBytes(@as(u64, 1)), 0),
@@ -280,6 +312,10 @@ inline fn uring_handle_completion(op: anytype, cqe: *std.os.linux.io_uring_cqe) 
         .inc => |c| c.* += 1,
         .nop => {},
     }
+
+    defer if (comptime @TypeOf(op.*) == aio.ChildExit) {
+        if (!Supported.waitid) posix.closeReadiness(op, .{ .fd = op._.fd, .mode = .in });
+    };
 
     const err = cqe.err();
     if (err != .SUCCESS) {
@@ -568,8 +604,12 @@ inline fn uring_handle_completion(op: anytype, cqe: *std.os.linux.io_uring_cqe) 
         .timeout, .link_timeout => {},
         .cancel => {},
         .rename_at, .unlink_at, .mkdir_at, .symlink_at => {},
-        .child_exit => if (op.out_term) |term| {
-            term.* = posix.statusToTerm(@intCast(op._.fields.common.second.sigchld.status));
+        .child_exit => {
+            if (Supported.waitid) {
+                if (op.out_term) |term| term.* = posix.statusToTerm(@intCast(op._.siginfo.fields.common.second.sigchld.status));
+            } else {
+                try posix.perform(op, .{ .fd = op._.fd, .mode = .in });
+            }
         },
         .socket => op.out_socket.* = cqe.res,
     }

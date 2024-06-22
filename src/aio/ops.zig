@@ -235,7 +235,12 @@ pub const ChildExit = struct {
     child: std.process.Child.Id,
     out_term: ?*std.process.Child.Term = null,
     _: switch (builtin.target.os.tag) {
-        .linux => std.posix.siginfo_t, // only required for io_uring
+        .linux => union {
+            // only required for io_uring
+            siginfo: std.posix.siginfo_t,
+            // soft-fallback when IORING_OP_WAITID is not available (requires kernel 6.5)
+            fd: std.posix.fd_t,
+        },
         else => void,
     } = undefined,
     out_id: ?*Id = null,

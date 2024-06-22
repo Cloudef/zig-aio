@@ -2,6 +2,9 @@ const std = @import("std");
 const builtin = @import("builtin");
 const Operation = @import("../ops.zig").Operation;
 
+pub const RENAME_NOREPLACE = 1 << 0;
+pub const PIDFD_NONBLOCK = @as(usize, 1 << @bitOffsetOf(std.posix.O, "NONBLOCK"));
+
 pub const EventSource = struct {
     fd: std.posix.fd_t,
 
@@ -84,8 +87,6 @@ pub const EventSource = struct {
         }
     }
 };
-
-pub const RENAME_NOREPLACE = 1 << 0;
 
 pub fn convertOpenFlags(flags: std.fs.File.OpenFlags) std.posix.O {
     var os_flags: std.posix.O = .{
@@ -198,9 +199,14 @@ pub inline fn perform(op: anytype, readiness: Readiness) Operation.Error!void {
         .mkdir_at => _ = try std.posix.mkdiratZ(op.dir.fd, op.path, op.mode),
         .symlink_at => _ = try std.posix.symlinkatZ(op.target, op.dir.fd, op.link_path),
         .child_exit => {
-            _ = readiness; // TODO: prefer pidfd_wait on linux
-            const res = std.posix.waitpid(op.child, std.posix.W.NOHANG);
-            if (op.out_term) |term| term.* = statusToTerm(res.status);
+            if (@hasDecl(std.posix.system, "waitid")) {
+                var siginfo: std.posix.siginfo_t = undefined;
+                _ = std.posix.system.waitid(.PIDFD, readiness.fd, &siginfo, std.posix.W.EXITED | std.posix.W.NOHANG);
+                if (op.out_term) |term| term.* = statusToTerm(@intCast(siginfo.fields.common.second.sigchld.status));
+            } else {
+                const res = std.posix.waitpid(op.child, std.posix.W.NOHANG);
+                if (op.out_term) |term| term.* = statusToTerm(res.status);
+            }
         },
         .socket => op.out_socket.* = try std.posix.socket(op.domain, op.flags, op.protocol),
         .close_socket => std.posix.close(op.socket),
@@ -250,7 +256,7 @@ pub inline fn openReadiness(op: anytype) OpenReadinessError!Readiness {
         .cancel, .rename_at, .unlink_at, .mkdir_at, .symlink_at => .{},
         .child_exit => blk: {
             if (comptime @hasDecl(std.posix.system, "pidfd_open")) {
-                const res = std.posix.system.pidfd_open(op.child, @as(usize, 1 << @bitOffsetOf(std.posix.O, "NONBLOCK")));
+                const res = std.posix.system.pidfd_open(op.child, PIDFD_NONBLOCK);
                 const e = std.posix.errno(res);
                 if (e != .SUCCESS) return switch (e) {
                     .INVAL, .SRCH => unreachable,
