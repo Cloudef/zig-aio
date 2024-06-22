@@ -68,7 +68,7 @@
       ## Example
 
       ```zig
-      $(cat examples/aio_immediate.zig)
+      $(cat examples/coro.zig)
       ```
 
       ## Perf
