@@ -150,30 +150,41 @@ pub inline fn perform(op: anytype) Operation.Error!void {
         .close_file => std.posix.close(op.file.handle),
         .close_dir => std.posix.close(op.dir.fd),
         .rename_at => {
-            const res = std.os.linux.renameat2(op.old_dir.fd, op.old_path, op.new_dir.fd, op.new_path, RENAME_NOREPLACE);
-            const e = std.posix.errno(res);
-            if (e != .SUCCESS) return switch (e) {
-                .SUCCESS, .INTR, .INVAL, .AGAIN => unreachable,
-                .CANCELED => error.OperationCanceled,
-                .ACCES => error.AccessDenied,
-                .PERM => error.AccessDenied,
-                .BUSY => error.FileBusy,
-                .DQUOT => error.DiskQuota,
-                .FAULT => unreachable,
-                .ISDIR => error.IsDir,
-                .LOOP => error.SymLinkLoop,
-                .MLINK => error.LinkQuotaExceeded,
-                .NAMETOOLONG => error.NameTooLong,
-                .NOENT => error.FileNotFound,
-                .NOTDIR => error.NotDir,
-                .NOMEM => error.SystemResources,
-                .NOSPC => error.NoSpaceLeft,
-                .EXIST => error.PathAlreadyExists,
-                .NOTEMPTY => error.PathAlreadyExists,
-                .ROFS => error.ReadOnlyFileSystem,
-                .XDEV => error.RenameAcrossMountPoints,
-                else => std.posix.unexpectedErrno(e),
-            };
+            if (@hasDecl(std.posix.system, "renameat2")) {
+                const res = std.posix.system.renameat2(op.old_dir.fd, op.old_path, op.new_dir.fd, op.new_path, RENAME_NOREPLACE);
+                const e = std.posix.errno(res);
+                if (e != .SUCCESS) return switch (e) {
+                    .SUCCESS, .INTR, .INVAL, .AGAIN => unreachable,
+                    .CANCELED => error.OperationCanceled,
+                    .ACCES => error.AccessDenied,
+                    .PERM => error.AccessDenied,
+                    .BUSY => error.FileBusy,
+                    .DQUOT => error.DiskQuota,
+                    .FAULT => unreachable,
+                    .ISDIR => error.IsDir,
+                    .LOOP => error.SymLinkLoop,
+                    .MLINK => error.LinkQuotaExceeded,
+                    .NAMETOOLONG => error.NameTooLong,
+                    .NOENT => error.FileNotFound,
+                    .NOTDIR => error.NotDir,
+                    .NOMEM => error.SystemResources,
+                    .NOSPC => error.NoSpaceLeft,
+                    .EXIST => error.PathAlreadyExists,
+                    .NOTEMPTY => error.PathAlreadyExists,
+                    .ROFS => error.ReadOnlyFileSystem,
+                    .XDEV => error.RenameAcrossMountPoints,
+                    else => std.posix.unexpectedErrno(e),
+                };
+            } else {
+                // this is racy :(
+                if (op.new_dir.accessZ(op.new_path, .{})) {
+                    return error.PathAlreadyExists;
+                } else |err| switch (err) {
+                    error.FileNotFound => {}, // ok
+                    else => |e| return e,
+                }
+                try std.posix.renameatZ(op.old_dir.fd, op.old_path, op.new_dir.fd, op.new_path);
+            }
         },
         .unlink_at => _ = try std.posix.unlinkatZ(op.dir.fd, op.path, 0),
         .mkdir_at => _ = try std.posix.mkdiratZ(op.dir.fd, op.path, op.mode),
