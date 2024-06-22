@@ -422,6 +422,7 @@ test "Wakeup" {
 pub const ThreadPool = struct {
     pool: std.Thread.Pool = undefined,
     source: aio.EventSource = undefined,
+    num_tasks: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
 
     /// Spin up the pool, `allocator` is used to allocate the tasks
     /// If `num_jobs` is zero, the thread count for the current CPU is used
@@ -437,15 +438,11 @@ pub const ThreadPool = struct {
         self.* = undefined;
     }
 
-    const Sync = struct {
-        source: aio.EventSource,
-        completed: bool = false,
-    };
-
-    inline fn entrypoint(sync: *Sync, comptime func: anytype, ret: anytype, args: anytype) void {
+    inline fn entrypoint(self: *@This(), completed: *bool, comptime func: anytype, ret: anytype, args: anytype) void {
         ret.* = @call(.auto, func, args);
-        sync.completed = true;
-        sync.source.notify();
+        completed.* = true;
+        const n = self.num_tasks.load(.acquire);
+        for (0..n) |_| self.source.notify();
     }
 
     const Error = error{SomeOperationFailed} || aio.Error || aio.EventSource.Error || aio.WaitEventSource.Error;
@@ -460,18 +457,20 @@ pub const ThreadPool = struct {
 
     /// Yield until `func` finishes on another thread
     pub fn yieldForCompletition(self: *@This(), func: anytype, args: anytype) ReturnType(@TypeOf(func)) {
-        var sync: Sync = .{ .source = self.source };
+        var completed: bool = false;
         var ret: @typeInfo(@TypeOf(func)).Fn.return_type.? = undefined;
-        try self.pool.spawn(entrypoint, .{ &sync, func, &ret, args });
+        _ = self.num_tasks.fetchAdd(1, .monotonic);
+        defer _ = self.num_tasks.fetchSub(1, .release);
+        try self.pool.spawn(entrypoint, .{ self, &completed, func, &ret, args });
         var wait_err: aio.WaitEventSource.Error = error.Success;
-        while (!sync.completed) {
+        while (!completed) {
             if (try io.privateComplete(.{
-                aio.WaitEventSource{ .source = sync.source, .link = .soft, .out_error = &wait_err },
+                aio.WaitEventSource{ .source = self.source, .link = .soft, .out_error = &wait_err },
             }, .io_waiting_thread) > 0) {
                 // it's possible to end up here if aio implementation ran out of resources
                 // in case of io_uring the application managed to fill up the submission queue
                 // normally this should not happen, but as to not crash the program do a blocking wait
-                sync.source.wait();
+                self.source.wait();
             }
         }
         return ret;

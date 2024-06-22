@@ -7,6 +7,7 @@ pub const PIDFD_NONBLOCK = @as(usize, 1 << @bitOffsetOf(std.posix.O, "NONBLOCK")
 
 pub const EventSource = struct {
     fd: std.posix.fd_t,
+    counter: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
 
     pub inline fn init() !@This() {
         if (comptime @hasDecl(std.posix.system, "eventfd")) {
@@ -33,7 +34,7 @@ pub const EventSource = struct {
                 _ = std.posix.write(self.fd, &std.mem.toBytes(@as(u64, 1))) catch continue;
             } else if (comptime @hasDecl(std.posix.system, "kqueue")) {
                 _ = std.posix.kevent(self.fd, &.{.{
-                    .ident = @intCast(self.fd),
+                    .ident = self.counter.fetchAdd(1, .monotonic),
                     .filter = std.posix.system.EVFILT_USER,
                     .flags = std.posix.system.EV_ADD | std.posix.system.EV_ENABLE | std.posix.system.EV_ONESHOT,
                     .fflags = std.posix.system.NOTE_TRIGGER,
