@@ -380,14 +380,7 @@ pub const ThreadPool = struct {
         source.notify();
     }
 
-    const Error = error{
-        OutOfMemory,
-        SystemResources,
-        ProcessQuotaExceeded,
-        SystemQuotaExceeded,
-        Unexpected,
-        SomeOperationFailed,
-    } || aio.Error || aio.WaitEventSource.Error;
+    const Error = error{SomeOperationFailed} || aio.Error || aio.EventSource.Error || aio.WaitEventSource.Error;
 
     fn ReturnType(comptime Func: type) type {
         const base = @typeInfo(Func).Fn.return_type.?;

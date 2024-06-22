@@ -25,33 +25,37 @@ pub const EventSource = struct {
     }
 
     pub inline fn notify(self: *@This()) void {
-        if (comptime @hasDecl(std.posix.system, "eventfd")) {
-            _ = std.posix.write(self.fd, &std.mem.toBytes(@as(u64, 1))) catch unreachable;
-        } else if (comptime @hasDecl(std.posix.system, "kqueue")) {
-            _ = std.posix.kevent(self.fd, &.{.{
-                .ident = @intCast(self.fd),
-                .filter = std.posix.system.EVFILT_USER,
-                .flags = std.posix.system.EV_ADD | std.posix.system.EV_ENABLE | std.posix.system.EV_ONESHOT,
-                .fflags = std.posix.system.NOTE_TRIGGER,
-                .data = 0,
-                .udata = 0,
-            }}, &.{}, null) catch unreachable;
-        } else {
-            unreachable;
+        while (true) {
+            if (comptime @hasDecl(std.posix.system, "eventfd")) {
+                _ = std.posix.write(self.fd, &std.mem.toBytes(@as(u64, 1))) catch continue;
+            } else if (comptime @hasDecl(std.posix.system, "kqueue")) {
+                _ = std.posix.kevent(self.fd, &.{.{
+                    .ident = @intCast(self.fd),
+                    .filter = std.posix.system.EVFILT_USER,
+                    .flags = std.posix.system.EV_ADD | std.posix.system.EV_ENABLE | std.posix.system.EV_ONESHOT,
+                    .fflags = std.posix.system.NOTE_TRIGGER,
+                    .data = 0,
+                    .udata = 0,
+                }}, &.{}, null) catch continue;
+            } else {
+                unreachable;
+            }
+            break;
         }
     }
 
     pub inline fn wait(self: *@This()) void {
-        if (comptime @hasDecl(std.posix.system, "eventfd")) {
-            var v: u64 = undefined;
-            _ = std.posix.read(self.fd, std.mem.asBytes(&v)) catch unreachable;
-        } else if (comptime @hasDecl(std.posix.system, "kqueue")) {
-            var pfds: [1]std.posix.pollfd = .{.{ .fd = self.fd, .events = std.posix.POLL.IN, .revents = 0 }};
-            _ = std.posix.poll(&pfds, -1) catch unreachable;
-            var ev: [1]std.posix.Kevent = undefined;
-            _ = std.posix.kevent(self.fd, &.{}, &ev, null) catch unreachable;
-        } else {
-            unreachable;
+        while (true) {
+            if (comptime @hasDecl(std.posix.system, "eventfd")) {
+                var v: u64 = undefined;
+                _ = std.posix.read(self.fd, std.mem.asBytes(&v)) catch continue;
+            } else if (comptime @hasDecl(std.posix.system, "kqueue")) {
+                var ev: [1]std.posix.Kevent = undefined;
+                _ = std.posix.kevent(self.fd, &.{}, &ev, null) catch continue;
+            } else {
+                unreachable;
+            }
+            break;
         }
     }
 };
