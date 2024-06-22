@@ -44,6 +44,16 @@ pub const EventSource = struct {
         }
     }
 
+    inline fn notifyReadiness(self: *@This()) Readiness {
+        if (comptime @hasDecl(std.posix.system, "eventfd")) {
+            return .{ .fd = self.fd, .mode = .out };
+        } else if (comptime @hasDecl(std.posix.system, "kqueue")) {
+            return .{};
+        } else {
+            unreachable;
+        }
+    }
+
     pub inline fn wait(self: *@This()) void {
         while (true) {
             if (comptime @hasDecl(std.posix.system, "eventfd")) {
@@ -61,6 +71,16 @@ pub const EventSource = struct {
                 unreachable;
             }
             break;
+        }
+    }
+
+    inline fn waitReadiness(self: *@This()) Readiness {
+        if (comptime @hasDecl(std.posix.system, "eventfd")) {
+            return .{ .fd = self.fd, .mode = .in };
+        } else if (comptime @hasDecl(std.posix.system, "kqueue")) {
+            return .{ .fd = self.fd, .mode = .in };
+        } else {
+            unreachable;
         }
     }
 };
@@ -231,8 +251,8 @@ pub inline fn openReadiness(op: anytype) OpenReadinessError!Readiness {
                 @panic("unsupported");
             }
         },
-        .wait_event_source => .{ .fd = op.source.native.fd, .mode = .in },
-        .notify_event_source => .{ .fd = op.source.native.fd, .mode = .out },
+        .wait_event_source => op.source.native.waitReadiness(),
+        .notify_event_source => op.source.native.notifyReadiness(),
         .close_event_source => .{},
     };
 }
