@@ -178,7 +178,7 @@ fn privateYield(state: YieldState) void {
         std.debug.assert(task.yield_state == .not_yielding);
         task.yield_state = state;
         debug("yielding: {}", .{task});
-        if (@intFromEnum(state) >= std.meta.fields(YieldState).len and task.waiters.first != null) {
+        if (@intFromEnum(state) >= std.meta.fields(YieldState).len and (task.waiters.first != null or task.scheduler_is_waiting)) {
             task.scheduler.io.queue(aio.Nop{
                 .ident = @intFromEnum(YieldState.waiting_for_yield),
                 .userdata = @intFromPtr(task),
@@ -198,6 +198,7 @@ const TaskState = struct {
     yield_state: YieldState = .not_yielding,
     scheduler: *Scheduler,
     io_counter: u16 = 0,
+    scheduler_is_waiting: bool = false,
     waiters: Waiters = .{},
     waiter_link: Waiters.Node = .{ .data = .{} },
     link: Scheduler.Tasks.Node = .{ .data = .{} },
@@ -228,8 +229,10 @@ const TaskState = struct {
                     self.waiters.prepend(&task.waiter_link);
                     privateYield(.waiting_for_yield);
                 } else {
-                    // Not a task, spin up the CPU
-                    io.single(aio.Timeout{ .ns = 16 * std.time.ns_per_ms }) catch continue;
+                    std.debug.assert(!self.scheduler_is_waiting); // deadlock
+                    self.scheduler_is_waiting = true;
+                    self.scheduler.tick(.blocking) catch @panic("unrecovable");
+                    self.scheduler_is_waiting = false;
                 }
             }
         }
@@ -263,7 +266,7 @@ pub const Scheduler = struct {
         io_queue_entries: u16 = options.io_queue_entries,
     };
 
-    pub fn init(allocator: std.mem.Allocator, opts: InitOptions) !@This() {
+    pub fn init(allocator: std.mem.Allocator, opts: InitOptions) aio.Error!@This() {
         var work = try aio.Dynamic.init(allocator, opts.io_queue_entries);
         work.callback = ioComplete;
         return .{ .allocator = allocator, .io = work };
@@ -380,7 +383,7 @@ pub const Scheduler = struct {
     }
 
     /// Processes pending IO and reaps dead tasks
-    pub fn tick(self: *@This(), mode: aio.Dynamic.CompletionMode) !void {
+    pub fn tick(self: *@This(), mode: aio.Dynamic.CompletionMode) aio.Error!void {
         _ = try self.io.complete(mode);
         var maybe_node = self.tasks_pending_reap.first;
         while (maybe_node) |node| {
@@ -391,12 +394,29 @@ pub const Scheduler = struct {
     }
 
     /// Run until all tasks are dead
-    pub fn run(self: *@This()) !void {
+    pub fn run(self: *@This()) aio.Error!void {
         while (self.tasks.len > 0 or self.tasks_pending_reap.len > 0) {
             try self.tick(.blocking);
         }
     }
 };
+
+test "Wakeup" {
+    const Yield = enum {
+        wakeup_plz,
+    };
+    const Test = struct {
+        fn task() !void {
+            try io.single(aio.Timeout{ .ns = 1 });
+            yield(Yield.wakeup_plz);
+        }
+    };
+    var scheduler = try Scheduler.init(std.testing.allocator, .{});
+    defer scheduler.deinit();
+    const task = try scheduler.spawn(Test.task, .{}, .{});
+    wakeupFromState(task, Yield.wakeup_plz, .wait);
+    try scheduler.run();
+}
 
 /// Synchronizes blocking tasks on a thread pool
 pub const ThreadPool = struct {
