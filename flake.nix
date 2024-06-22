@@ -24,8 +24,12 @@
 
       # nix run .#test
       apps.test = env.app [] ''
+        echo "zig build test"
         zig build test
-        zig build test -Dfallback=true
+        if [[ "$(uname)" == "Linux" ]]; then
+          echo "zig build test -Dfallback=true"
+          zig build test -Dfallback=true
+        fi
       '';
 
       # nix run .#docs
