@@ -19,7 +19,7 @@ defer work.deinit(std.heap.page_allocator);
 ### Queuing operations
 
 It is possible to queue either single or multiple operations just like with the immediate api.
-The call to queue is atomic, if the call fails, none of the operations will be actually performed.
+The call to queue is atomic, if the call fails, none of the operations will be actually queued.
 
 ```zig
 // Multiple operations
