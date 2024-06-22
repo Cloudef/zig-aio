@@ -362,22 +362,31 @@ pub const Scheduler = struct {
 /// Synchronizes blocking tasks on a thread pool
 pub const ThreadPool = struct {
     pool: std.Thread.Pool = undefined,
+    source: aio.EventSource = undefined,
 
     /// Spin up the pool, `allocator` is used to allocate the tasks
     /// If `num_jobs` is zero, the thread count for the current CPU is used
     pub fn start(self: *@This(), allocator: std.mem.Allocator, num_jobs: u32) !void {
-        self.* = .{ .pool = .{ .allocator = undefined, .threads = undefined } };
+        self.* = .{ .pool = .{ .allocator = undefined, .threads = undefined }, .source = try aio.EventSource.init() };
+        errdefer self.source.deinit();
         try self.pool.init(.{ .allocator = allocator, .n_jobs = if (num_jobs == 0) null else num_jobs });
     }
 
     pub fn deinit(self: *@This()) void {
         self.pool.deinit();
+        self.source.deinit();
         self.* = undefined;
     }
 
-    inline fn entrypoint(source: *aio.EventSource, comptime func: anytype, ret: anytype, args: anytype) void {
+    const Sync = struct {
+        source: aio.EventSource,
+        completed: bool = false,
+    };
+
+    inline fn entrypoint(sync: *Sync, comptime func: anytype, ret: anytype, args: anytype) void {
         ret.* = @call(.auto, func, args);
-        source.notify();
+        sync.completed = true;
+        sync.source.notify();
     }
 
     const Error = error{SomeOperationFailed} || aio.Error || aio.EventSource.Error || aio.WaitEventSource.Error;
@@ -392,23 +401,19 @@ pub const ThreadPool = struct {
 
     /// Yield until `func` finishes on another thread
     pub fn yieldForCompletition(self: *@This(), func: anytype, args: anytype) ReturnType(@TypeOf(func)) {
+        var sync: Sync = .{ .source = self.source };
         var ret: @typeInfo(@TypeOf(func)).Fn.return_type.? = undefined;
-        var source = try aio.EventSource.init();
-        errdefer source.deinit();
-        try self.pool.spawn(entrypoint, .{ &source, func, &ret, args });
+        try self.pool.spawn(entrypoint, .{ &sync, func, &ret, args });
         var wait_err: aio.WaitEventSource.Error = error.Success;
-        if (try io.privateComplete(.{
-            aio.WaitEventSource{ .source = source, .link = .soft, .out_error = &wait_err },
-            aio.CloseEventSource{ .source = source },
-        }, .io_waiting_thread) > 0) {
-            if (wait_err != error.Success) {
+        while (!sync.completed) {
+            if (try io.privateComplete(.{
+                aio.WaitEventSource{ .source = sync.source, .link = .soft, .out_error = &wait_err },
+            }, .io_waiting_thread) > 0) {
                 // it's possible to end up here if aio implementation ran out of resources
                 // in case of io_uring the application managed to fill up the submission queue
                 // normally this should not happen, but as to not crash the program do a blocking wait
-                source.wait();
+                sync.source.wait();
             }
-            // close manually
-            source.deinit();
         }
         return ret;
     }
@@ -437,6 +442,11 @@ test "ThreadPool" {
             wakeupFromState(t1, Yield.task2_free, .no_wait);
             try std.testing.expectEqual(task1_done.*, true);
         }
+
+        fn task3(pool: *ThreadPool) !void {
+            const ret = try pool.yieldForCompletition(blocking, .{});
+            try std.testing.expectEqual(69, ret);
+        }
     };
     var scheduler = try Scheduler.init(std.testing.allocator, .{});
     defer scheduler.deinit();
@@ -446,5 +456,6 @@ test "ThreadPool" {
     var task1_done: bool = false;
     const task1 = try scheduler.spawn(Test.task1, .{&task1_done}, .{});
     _ = try scheduler.spawn(Test.task2, .{ task1, &pool, &task1_done }, .{});
+    for (0..10) |_| _ = try scheduler.spawn(Test.task3, .{&pool}, .{});
     try scheduler.run();
 }
