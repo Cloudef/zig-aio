@@ -14,14 +14,6 @@ pub const Link = enum {
     hard,
 };
 
-// Counter that either increases or decreases a value in a given address
-// Reserved when using the coroutines API
-const Counter = union(enum) {
-    inc: *u16,
-    dec: *u16,
-    nop: void,
-};
-
 const SharedError = error{
     Success,
     OperationCanceled,
@@ -34,8 +26,8 @@ pub const Fsync = struct {
     file: std.fs.File,
     out_id: ?*Id = null,
     out_error: ?*Error = null,
-    counter: Counter = .nop,
     link: Link = .unlinked,
+    userdata: usize = 0,
 };
 
 /// std.fs.File.read
@@ -47,8 +39,8 @@ pub const Read = struct {
     out_read: *usize,
     out_id: ?*Id = null,
     out_error: ?*Error = null,
-    counter: Counter = .nop,
     link: Link = .unlinked,
+    userdata: usize = 0,
 };
 
 /// std.fs.File.write
@@ -60,8 +52,8 @@ pub const Write = struct {
     out_written: ?*usize = null,
     out_id: ?*Id = null,
     out_error: ?*Error = null,
-    counter: Counter = .nop,
     link: Link = .unlinked,
+    userdata: usize = 0,
 };
 
 /// std.posix.accept
@@ -73,8 +65,8 @@ pub const Accept = struct {
     out_socket: *std.posix.socket_t,
     out_id: ?*Id = null,
     out_error: ?*Error = null,
-    counter: Counter = .nop,
     link: Link = .unlinked,
+    userdata: usize = 0,
 };
 
 /// std.posix.connect
@@ -85,8 +77,8 @@ pub const Connect = struct {
     addrlen: std.posix.socklen_t,
     out_id: ?*Id = null,
     out_error: ?*Error = null,
-    counter: Counter = .nop,
     link: Link = .unlinked,
+    userdata: usize = 0,
 };
 
 /// std.posix.recv
@@ -97,8 +89,8 @@ pub const Recv = struct {
     out_read: *usize,
     out_id: ?*Id = null,
     out_error: ?*Error = null,
-    counter: Counter = .nop,
     link: Link = .unlinked,
+    userdata: usize = 0,
 };
 
 /// std.posix.send
@@ -109,8 +101,8 @@ pub const Send = struct {
     out_written: ?*usize = null,
     out_id: ?*Id = null,
     out_error: ?*Error = null,
-    counter: Counter = .nop,
     link: Link = .unlinked,
+    userdata: usize = 0,
 };
 
 // TODO: recvmsg, sendmsg
@@ -124,8 +116,8 @@ pub const OpenAt = struct {
     out_file: *std.fs.File,
     out_id: ?*Id = null,
     out_error: ?*Error = null,
-    counter: Counter = .nop,
     link: Link = .unlinked,
+    userdata: usize = 0,
 };
 
 /// std.fs.File.close
@@ -134,8 +126,8 @@ pub const CloseFile = struct {
     file: std.fs.File,
     out_id: ?*Id = null,
     out_error: ?*Error = null,
-    counter: Counter = .nop,
     link: Link = .unlinked,
+    userdata: usize = 0,
 };
 
 /// std.fs.Dir.Close
@@ -144,8 +136,8 @@ pub const CloseDir = struct {
     dir: std.fs.Dir,
     out_id: ?*Id = null,
     out_error: ?*Error = null,
-    counter: Counter = .nop,
     link: Link = .unlinked,
+    userdata: usize = 0,
 };
 
 /// std.time.Timer.start
@@ -154,8 +146,8 @@ pub const Timeout = struct {
     ns: u128,
     out_id: ?*Id = null,
     out_error: ?*Error = null,
-    counter: Counter = .nop,
     link: Link = .unlinked,
+    userdata: usize = 0,
 };
 
 /// Timeout linked to a operation
@@ -166,8 +158,8 @@ pub const LinkTimeout = struct {
     ns: u128,
     out_id: ?*Id = null,
     out_error: ?*Error = null,
-    counter: Counter = .nop,
     link: Link = .unlinked,
+    userdata: usize = 0,
 };
 
 /// Cancel a operation
@@ -175,8 +167,8 @@ pub const Cancel = struct {
     pub const Error = error{ Success, InProgress, NotFound };
     id: Id,
     out_error: ?*Error = null,
-    counter: Counter = .nop,
     link: Link = .unlinked,
+    userdata: usize = 0,
 };
 
 /// std.fs.rename
@@ -188,8 +180,8 @@ pub const RenameAt = struct {
     new_path: [*:0]const u8,
     out_id: ?*Id = null,
     out_error: ?*Error = null,
-    counter: Counter = .nop,
     link: Link = .unlinked,
+    userdata: usize = 0,
 };
 
 /// std.fs.Dir.deleteFile
@@ -199,8 +191,8 @@ pub const UnlinkAt = struct {
     path: [*:0]const u8,
     out_id: ?*Id = null,
     out_error: ?*Error = null,
-    counter: Counter = .nop,
     link: Link = .unlinked,
+    userdata: usize = 0,
 };
 
 /// std.fs.Dir.makeDir
@@ -211,8 +203,8 @@ pub const MkDirAt = struct {
     mode: u32 = std.fs.Dir.default_mode,
     out_id: ?*Id = null,
     out_error: ?*Error = null,
-    counter: Counter = .nop,
     link: Link = .unlinked,
+    userdata: usize = 0,
 };
 
 /// std.fs.Dir.symlink
@@ -223,8 +215,8 @@ pub const SymlinkAt = struct {
     link_path: [*:0]const u8,
     out_id: ?*Id = null,
     out_error: ?*Error = null,
-    counter: Counter = .nop,
     link: Link = .unlinked,
+    userdata: usize = 0,
 };
 
 // TODO: linkat
@@ -245,8 +237,8 @@ pub const ChildExit = struct {
     } = undefined,
     out_id: ?*Id = null,
     out_error: ?*Error = null,
-    counter: Counter = .nop,
     link: Link = .unlinked,
+    userdata: usize = 0,
 };
 
 /// std.posix.socket
@@ -261,8 +253,8 @@ pub const Socket = struct {
     out_socket: *std.posix.socket_t,
     out_id: ?*Id = null,
     out_error: ?*Error = null,
-    counter: Counter = .nop,
     link: Link = .unlinked,
+    userdata: usize = 0,
 };
 
 /// std.posix.close
@@ -271,32 +263,32 @@ pub const CloseSocket = struct {
     socket: std.posix.socket_t,
     out_id: ?*Id = null,
     out_error: ?*Error = null,
-    counter: Counter = .nop,
     link: Link = .unlinked,
+    userdata: usize = 0,
 };
 
 pub const NotifyEventSource = struct {
     pub const Error = SharedError;
     source: aio.EventSource,
     out_error: ?*Error = null,
-    counter: Counter = .nop,
     link: Link = .unlinked,
+    userdata: usize = 0,
 };
 
 pub const WaitEventSource = struct {
     pub const Error = SharedError;
     source: aio.EventSource,
     out_error: ?*Error = null,
-    counter: Counter = .nop,
     link: Link = .unlinked,
+    userdata: usize = 0,
 };
 
 pub const CloseEventSource = struct {
     pub const Error = SharedError;
     source: aio.EventSource,
     out_error: ?*Error = null,
-    counter: Counter = .nop,
     link: Link = .unlinked,
+    userdata: usize = 0,
 };
 
 pub const Operation = enum {

@@ -60,9 +60,9 @@ const FallbackSupport = union(enum) {
         };
     }
 
-    pub inline fn complete(self: *@This(), work: anytype) aio.Error!aio.CompletionResult {
+    pub inline fn complete(self: *@This(), work: anytype, cb: ?aio.Dynamic.Callback) aio.Error!aio.CompletionResult {
         return switch (self.*) {
-            inline else => |*io| io.complete(work),
+            inline else => |*io| io.complete(work, cb),
         };
     }
 

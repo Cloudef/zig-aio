@@ -95,7 +95,7 @@ pub fn queue(self: *@This(), comptime len: u16, work: anytype) aio.Error!void {
 
 pub const NOP = std.math.maxInt(u64);
 
-pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode) aio.Error!aio.CompletionResult {
+pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode, cb: ?aio.Dynamic.Callback) aio.Error!aio.CompletionResult {
     if (self.ops.empty()) return .{};
     if (mode == .nonblocking) {
         _ = self.io.nop(NOP) catch |err| return switch (err) {
@@ -109,11 +109,13 @@ pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode) aio.Error!aio.
     for (cqes[0..n]) |*cqe| {
         if (cqe.user_data == NOP) continue;
         defer self.ops.remove(@intCast(cqe.user_data));
-        switch (self.ops.get(@intCast(cqe.user_data)).*) {
+        const uop = self.ops.get(@intCast(cqe.user_data));
+        switch (uop.*) {
             inline else => |*op| uring_handle_completion(op, cqe) catch {
                 result.num_errors += 1;
             },
         }
+        if (cb) |f| f(uop);
     }
     result.num_completed = n - @intFromBool(mode == .nonblocking);
     return result;
@@ -307,12 +309,6 @@ inline fn uring_copy_cqes(io: *std.os.linux.IoUring, cqes: []std.os.linux.io_uri
 }
 
 inline fn uring_handle_completion(op: anytype, cqe: *std.os.linux.io_uring_cqe) !void {
-    switch (op.counter) {
-        .dec => |c| c.* -= 1,
-        .inc => |c| c.* += 1,
-        .nop => {},
-    }
-
     defer if (comptime @TypeOf(op.*) == aio.ChildExit) {
         if (!Supported.waitid) posix.closeReadiness(op, .{ .fd = op._.fd, .mode = .in });
     };

@@ -48,7 +48,11 @@ pub const CompletionResult = struct {
 
 /// Queue operations dynamically and complete them on demand
 pub const Dynamic = struct {
+    pub const Uop = ops.Operation.Union;
+    pub const Callback = *const fn (uop: *Uop) void;
     io: IO,
+    /// Used by coro implementation
+    callback: ?Callback = null,
 
     pub inline fn init(allocator: std.mem.Allocator, n: u16) Error!@This() {
         return .{ .io = try IO.init(allocator, n) };
@@ -84,7 +88,7 @@ pub const Dynamic = struct {
     /// Complete operations
     /// Returns the number of completed operations, `0` if no operations were completed
     pub inline fn complete(self: *@This(), mode: CompletionMode) Error!CompletionResult {
-        return self.io.complete(mode);
+        return self.io.complete(mode, self.callback);
     }
 
     /// Block until all opreations are complete
@@ -92,7 +96,7 @@ pub const Dynamic = struct {
     pub inline fn completeAll(self: *@This()) Error!u16 {
         var num_errors: u16 = 0;
         while (true) {
-            const res = try self.io.complete(.blocking);
+            const res = try self.io.complete(.blocking, self.callback);
             num_errors += res.num_errors;
             if (res.num_completed == 0) break;
         }
@@ -205,19 +209,15 @@ test "shared outputs" {
     var id1: Id = @enumFromInt(69);
     var id2: Id = undefined;
     var id3: Id = undefined;
-    var counter1: u16 = 0;
-    var counter2: u16 = 2;
     try multi(.{
-        Fsync{ .file = f, .out_id = &id1, .counter = .{ .inc = &counter1 } },
-        Fsync{ .file = f, .out_id = &id2, .counter = .{ .inc = &counter1 } },
-        Fsync{ .file = f, .out_id = &id3, .counter = .{ .dec = &counter2 } },
+        Fsync{ .file = f, .out_id = &id1 },
+        Fsync{ .file = f, .out_id = &id2 },
+        Fsync{ .file = f, .out_id = &id3 },
     });
     try std.testing.expect(id1 != @as(Id, @enumFromInt(69)));
     try std.testing.expect(id1 != id2);
     try std.testing.expect(id1 != id3);
     try std.testing.expect(id2 != id3);
-    try std.testing.expect(counter1 == 2);
-    try std.testing.expect(counter2 == 1);
 }
 
 test "Fsync" {

@@ -43,11 +43,17 @@ pub const io = struct {
         if (Fiber.current()) |fiber| {
             var task: *TaskState = @ptrFromInt(fiber.getUserDataPtr().*);
 
-            const State = struct { old_err: ?*anyerror, old_id: ?*aio.Id, id: aio.Id, err: anyerror };
+            const State = struct {
+                old_userdata: usize,
+                old_err: ?*anyerror,
+                old_id: ?*aio.Id,
+                id: aio.Id,
+                err: anyerror,
+            };
+
             var state: [operations.len]State = undefined;
             var work = struct { ops: @TypeOf(operations) }{ .ops = operations };
             inline for (&work.ops, &state) |*op, *s| {
-                op.counter = .{ .dec = &task.io_counter };
                 if (@hasDecl(@TypeOf(op.*), "out_id")) {
                     s.old_id = op.out_id;
                     op.out_id = &s.id;
@@ -56,12 +62,12 @@ pub const io = struct {
                 }
                 s.old_err = op.out_error;
                 op.out_error = @ptrCast(&s.err);
+                s.old_userdata = op.userdata;
+                op.userdata = @intFromPtr(task);
             }
 
             try task.scheduler.io.queue(work.ops);
             task.io_counter = operations.len;
-            task.scheduler.tasks_waiting_io.append(&task.io_link);
-            defer task.scheduler.tasks_waiting_io.remove(&task.io_link);
             privateYield(yield_state);
 
             if (task.io_counter > 0) {
@@ -73,10 +79,11 @@ pub const io = struct {
             }
 
             var num_errors: u16 = 0;
-            inline for (&state) |*s| {
+            inline for (&work.ops, &state) |*op, *s| {
                 num_errors += @intFromBool(s.err != error.Success);
                 if (s.old_err) |p| p.* = s.err;
                 if (s.old_id) |p| p.* = s.id;
+                op.userdata = s.old_userdata;
             }
             return num_errors;
         } else {
@@ -184,7 +191,6 @@ const TaskState = struct {
     io_counter: u16 = 0,
     waiters: Waiters = .{},
     waiter_link: Waiters.Node = .{ .data = .{} },
-    io_link: Scheduler.IoTasks.Node = .{ .data = .{} },
     link: Scheduler.Tasks.Node = .{ .data = .{} },
 
     pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
@@ -238,12 +244,10 @@ pub const Task = *Scheduler.Tasks.Node;
 /// Runtime for asynchronous IO tasks
 pub const Scheduler = struct {
     const Tasks = std.DoublyLinkedList(Link(TaskState, "link", .double));
-    const IoTasks = std.DoublyLinkedList(Link(TaskState, "io_link", .double));
     allocator: std.mem.Allocator,
     io: aio.Dynamic,
     tasks: Tasks = .{},
     tasks_pending_reap: Tasks = .{},
-    tasks_waiting_io: IoTasks = .{},
 
     pub const InitOptions = struct {
         /// This is a hint, the implementation makes the final call
@@ -251,10 +255,9 @@ pub const Scheduler = struct {
     };
 
     pub fn init(allocator: std.mem.Allocator, opts: InitOptions) !@This() {
-        return .{
-            .allocator = allocator,
-            .io = try aio.Dynamic.init(allocator, opts.io_queue_entries),
-        };
+        var work = try aio.Dynamic.init(allocator, opts.io_queue_entries);
+        work.callback = ioComplete;
+        return .{ .allocator = allocator, .io = work };
     }
 
     pub fn reapAll(self: *@This()) void {
@@ -347,27 +350,21 @@ pub const Scheduler = struct {
         return self.tasks.last.?;
     }
 
-    fn tickIo(self: *@This(), mode: aio.Dynamic.CompletionMode) !void {
-        const res = try self.io.complete(mode);
-        if (res.num_completed > 0) {
-            var maybe_node = self.tasks_waiting_io.first;
-            while (maybe_node) |node| {
-                const next = node.next;
-                var task = node.data.cast();
-                switch (task.yield_state) {
-                    .io, .io_waiting_thread, .io_cancel => if (task.io_counter == 0) {
-                        task.wakeup(task.yield_state, .no_wait);
-                    },
-                    else => {},
+    fn ioComplete(uop: *aio.Dynamic.Uop) void {
+        switch (uop.*) {
+            inline else => |*op| {
+                var task: *TaskState = @ptrFromInt(op.userdata);
+                task.io_counter -= 1;
+                if (task.io_counter == 0) {
+                    task.wakeup(task.yield_state, .no_wait);
                 }
-                maybe_node = next;
-            }
+            },
         }
     }
 
     /// Processes pending IO and reaps dead tasks
     pub fn tick(self: *@This(), mode: aio.Dynamic.CompletionMode) !void {
-        try self.tickIo(mode);
+        _ = try self.io.complete(mode);
         var maybe_node = self.tasks_pending_reap.first;
         while (maybe_node) |node| {
             const next = node.next;

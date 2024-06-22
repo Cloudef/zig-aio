@@ -69,7 +69,7 @@ pub fn queue(self: *@This(), comptime len: u16, work: anytype) aio.Error!void {
     }
 }
 
-pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode) aio.Error!aio.CompletionResult {
+pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode, cb: ?aio.Dynamic.Callback) aio.Error!aio.CompletionResult {
     if (!try self.submitThreadSafe()) return .{};
     defer self.pfd.reset();
 
@@ -93,7 +93,7 @@ pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode) aio.Error!aio.
             std.debug.assert(pfd.revents & std.posix.POLL.ERR == 0);
             std.debug.assert(pfd.revents & std.posix.POLL.HUP == 0);
             self.source.wait();
-            res = self.handleFinishedNotThreadSafe();
+            res = self.handleFinishedNotThreadSafe(cb);
         } else {
             var iter = self.sq.ops.iterator();
             while (iter.next()) |e| if (pfd.fd == self.sq.readiness[e.k].fd) {
@@ -121,7 +121,7 @@ pub fn immediate(comptime len: u16, work: anytype) aio.Error!u16 {
     var n: u16 = len;
     var num_errors: u16 = 0;
     while (n > 0) {
-        const res = try wrk.complete(.blocking);
+        const res = try wrk.complete(.blocking, null);
         n -= res.num_completed;
         num_errors += res.num_errors;
     }
@@ -338,12 +338,6 @@ fn submitThreadSafe(self: *@This()) !bool {
 }
 
 fn completitionNotThreadSafe(op: anytype, self: *@This(), res: Queue.Result) void {
-    switch (op.counter) {
-        .dec => |c| c.* -= 1,
-        .inc => |c| c.* += 1,
-        .nop => {},
-    }
-
     if (@hasField(@TypeOf(op.*), "out_id")) {
         if (op.out_error) |err| err.* = @errorCast(res.failure);
     }
@@ -363,7 +357,7 @@ fn completitionNotThreadSafe(op: anytype, self: *@This(), res: Queue.Result) voi
     }
 }
 
-fn handleFinishedNotThreadSafe(self: *@This()) aio.CompletionResult {
+fn handleFinishedNotThreadSafe(self: *@This(), cb: ?aio.Dynamic.Callback) aio.CompletionResult {
     defer self.sq.finished.reset();
     var num_errors: u16 = 0;
     var last_len: u16 = 0;
@@ -383,6 +377,7 @@ fn handleFinishedNotThreadSafe(self: *@This()) aio.CompletionResult {
                 num_errors += @intFromBool(res.failure != error.Success);
             }
             uopUnwrapCall(&self.sq.ops.nodes[res.id].used, completitionNotThreadSafe, .{ self, res });
+            if (cb) |f| f(&self.sq.ops.nodes[res.id].used);
         }
     }
     return .{ .num_completed = self.sq.finished.len, .num_errors = num_errors };
