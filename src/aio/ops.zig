@@ -275,7 +275,7 @@ pub const CloseSocket = struct {
 
 pub const NotifyEventSource = struct {
     pub const Error = SharedError;
-    source: aio.EventSource,
+    source: *aio.EventSource,
     out_id: ?*Id = null,
     out_error: ?*Error = null,
     link: Link = .unlinked,

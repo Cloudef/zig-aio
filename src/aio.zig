@@ -476,9 +476,9 @@ test "Socket" {
 }
 
 test "EventSource" {
-    const source = try EventSource.init();
+    var source = try EventSource.init();
     try multi(.{
-        NotifyEventSource{ .source = source },
+        NotifyEventSource{ .source = &source },
         WaitEventSource{ .source = source, .link = .hard },
         CloseEventSource{ .source = source },
     });
