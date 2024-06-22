@@ -11,7 +11,7 @@ pub const EventSource = struct {
     pub inline fn init() !@This() {
         if (comptime @hasDecl(std.posix.system, "eventfd")) {
             return .{
-                .fd = try std.posix.eventfd(0, std.os.linux.EFD.CLOEXEC),
+                .fd = try std.posix.eventfd(0, std.os.linux.EFD.CLOEXEC | std.os.linux.EFD.SEMAPHORE),
             };
         } else if (comptime @hasDecl(std.posix.system, "kqueue")) {
             return .{
