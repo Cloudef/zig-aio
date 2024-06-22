@@ -21,3 +21,12 @@ jobs:
             README.md
           commit-msg: Automatic update
           github-token: ${{ secrets.GITHUB_TOKEN }}
+  macos-test:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+      - run: |
+          nix run .#test
+          nix run .#readme
