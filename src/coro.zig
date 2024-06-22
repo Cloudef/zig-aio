@@ -54,14 +54,19 @@ pub const io = struct {
             var state: [operations.len]State = undefined;
             var work = struct { ops: @TypeOf(operations) }{ .ops = operations };
             inline for (&work.ops, &state) |*op, *s| {
+                s.err = error.Success;
                 if (@hasDecl(@TypeOf(op.*), "out_id")) {
                     s.old_id = op.out_id;
                     op.out_id = &s.id;
                 } else {
                     s.old_id = null;
                 }
-                s.old_err = op.out_error;
-                op.out_error = @ptrCast(&s.err);
+                if (@hasDecl(@TypeOf(op.*), "out_error")) {
+                    s.old_err = op.out_error;
+                    op.out_error = @ptrCast(&s.err);
+                } else {
+                    s.old_err = null;
+                }
                 s.old_userdata = op.userdata;
                 op.userdata = @intFromPtr(task);
             }
@@ -73,7 +78,7 @@ pub const io = struct {
             if (task.io_counter > 0) {
                 // woken up for io cancelation
                 var cancels: [operations.len]aio.Cancel = undefined;
-                inline for (&cancels, &state) |*op, *s| op.* = .{ .id = s.id };
+                inline for (&cancels, &state) |*op, *s| op.* = .{ .id = s.id, .userdata = @intFromPtr(task) };
                 try task.scheduler.io.queue(cancels);
                 privateYield(.io_cancel);
             }
@@ -111,7 +116,9 @@ pub const io = struct {
     pub inline fn single(operation: anytype) (aio.Error || @TypeOf(operation).Error)!void {
         var op: @TypeOf(operation) = operation;
         var err: @TypeOf(operation).Error = error.Success;
-        op.out_error = &err;
+        if (@hasField(@TypeOf(op), "out_error")) {
+            op.out_error = &err;
+        }
         _ = try complete(.{op});
         if (err != error.Success) return err;
     }
@@ -165,16 +172,18 @@ const YieldState = enum(u8) {
     }
 };
 
-inline fn privateYield(state: YieldState) void {
+fn privateYield(state: YieldState) void {
     if (Fiber.current()) |fiber| {
         var task: *TaskState = @ptrFromInt(fiber.getUserDataPtr().*);
         std.debug.assert(task.yield_state == .not_yielding);
         task.yield_state = state;
-        // wake up waiters
-        while (task.waiters.popFirst()) |node| {
-            node.data.cast().wakeup(.waiting_for_yield, .no_wait);
-        }
         debug("yielding: {}", .{task});
+        if (@intFromEnum(state) >= std.meta.fields(YieldState).len and task.waiters.first != null) {
+            task.scheduler.io.queue(aio.Nop{
+                .ident = @intFromEnum(YieldState.waiting_for_yield),
+                .userdata = @intFromPtr(task),
+            }) catch @panic("cannot yield, the submission queue is full");
+        }
         Fiber.yield();
     } else {
         unreachable; // yield can only be used from a task
@@ -210,9 +219,9 @@ const TaskState = struct {
         // stack is now gone, doing anything after this with TaskState is ub
     }
 
-    inline fn wakeup(self: *TaskState, state: YieldState, mode: WakeupMode) void {
+    fn wakeup(self: *TaskState, state: YieldState, mode: WakeupMode) void {
         if (mode == .wait) {
-            debug("waiting to wake up: {} when it yields {}", .{ self, mode });
+            debug("waiting to wake up: {} when it yields {}", .{ self, state });
             while (self.yield_state != state and !self.marked_for_reap) {
                 if (Fiber.current()) |fiber| {
                     var task: *TaskState = @ptrFromInt(fiber.getUserDataPtr().*);
@@ -350,13 +359,21 @@ pub const Scheduler = struct {
         return self.tasks.last.?;
     }
 
-    fn ioComplete(uop: *aio.Dynamic.Uop) void {
-        switch (uop.*) {
+    fn ioComplete(uop: aio.Dynamic.Uop) void {
+        switch (uop) {
             inline else => |*op| {
+                std.debug.assert(op.userdata != 0);
                 var task: *TaskState = @ptrFromInt(op.userdata);
-                task.io_counter -= 1;
-                if (task.io_counter == 0) {
-                    task.wakeup(task.yield_state, .no_wait);
+                if (@TypeOf(op.*) == aio.Nop) {
+                    std.debug.assert(op.ident == @intFromEnum(YieldState.waiting_for_yield));
+                    while (task.waiters.popFirst()) |waiter| {
+                        waiter.data.cast().wakeup(.waiting_for_yield, .no_wait);
+                    }
+                } else {
+                    task.io_counter -= 1;
+                    if (task.io_counter == 0) {
+                        task.wakeup(task.yield_state, .no_wait);
+                    }
                 }
             },
         }

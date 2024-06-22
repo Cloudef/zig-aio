@@ -37,6 +37,7 @@ pub inline fn isSupported(op_types: []const type) bool {
     var ops: [op_types.len]std.os.linux.IORING_OP = undefined;
     inline for (op_types, &ops) |op_type, *op| {
         op.* = switch (Operation.tagFromPayloadType(op_type)) {
+            .nop => std.os.linux.IORING_OP.NOP,
             .fsync => std.os.linux.IORING_OP.FSYNC, // 5.4
             .read, .wait_event_source => std.os.linux.IORING_OP.READ, // 5.6
             .write, .notify_event_source => std.os.linux.IORING_OP.WRITE, // 5.6
@@ -115,7 +116,7 @@ pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode, cb: ?aio.Dynam
                 result.num_errors += 1;
             },
         }
-        if (cb) |f| f(uop);
+        if (cb) |f| f(uop.*);
     }
     result.num_completed = n - @intFromBool(mode == .nonblocking);
     return result;
@@ -219,6 +220,7 @@ inline fn uring_queue(io: *std.os.linux.IoUring, op: anytype, user_data: u64) ai
         var u_64: u64 align(1) = undefined;
     };
     var sqe = switch (comptime Operation.tagFromPayloadType(@TypeOf(op.*))) {
+        .nop => try io.nop(user_data),
         .fsync => try io.fsync(user_data, op.file.handle, 0),
         .read => try io.read(user_data, op.file.handle, .{ .buffer = op.buffer }, op.offset),
         .write => try io.write(user_data, op.file.handle, op.buffer, op.offset),
@@ -269,10 +271,12 @@ inline fn uring_queue(io: *std.os.linux.IoUring, op: anytype, user_data: u64) ai
         .soft => sqe.flags |= std.os.linux.IOSQE_IO_LINK,
         .hard => sqe.flags |= std.os.linux.IOSQE_IO_HARDLINK,
     }
-    if (@hasField(@TypeOf(op.*), "out_id")) {
+    if (comptime @hasField(@TypeOf(op.*), "out_id")) {
         if (op.out_id) |id| id.* = @enumFromInt(user_data);
     }
-    if (op.out_error) |out_error| out_error.* = error.Success;
+    if (comptime @hasField(@TypeOf(op.*), "out_error")) {
+        if (op.out_error) |out_error| out_error.* = error.Success;
+    }
 }
 
 inline fn uring_submit(io: *std.os.linux.IoUring) aio.Error!u16 {
@@ -316,6 +320,7 @@ inline fn uring_handle_completion(op: anytype, cqe: *std.os.linux.io_uring_cqe) 
     const err = cqe.err();
     if (err != .SUCCESS) {
         const res: @TypeOf(op.*).Error = switch (comptime Operation.tagFromPayloadType(@TypeOf(op.*))) {
+            .nop => unreachable,
             .fsync => switch (err) {
                 .SUCCESS, .INTR, .INVAL, .FAULT, .AGAIN, .ROFS => unreachable,
                 .BADF => unreachable, // not a file
@@ -568,7 +573,9 @@ inline fn uring_handle_completion(op: anytype, cqe: *std.os.linux.io_uring_cqe) 
             },
         };
 
-        if (op.out_error) |out_error| out_error.* = res;
+        if (comptime @hasField(@TypeOf(op.*), "out_error")) {
+            if (op.out_error) |out_error| out_error.* = res;
+        }
 
         if (res != error.Success) {
             if ((comptime Operation.tagFromPayloadType(@TypeOf(op.*)) == .link_timeout) and res == error.OperationCanceled) {
@@ -583,6 +590,7 @@ inline fn uring_handle_completion(op: anytype, cqe: *std.os.linux.io_uring_cqe) 
     debug("complete: {}: {} [OK]", .{ cqe.user_data, comptime Operation.tagFromPayloadType(@TypeOf(op.*)) });
 
     switch (comptime Operation.tagFromPayloadType(@TypeOf(op.*))) {
+        .nop => {},
         .fsync => {},
         .read => op.out_read.* = @intCast(cqe.res),
         .write => if (op.out_written) |w| {

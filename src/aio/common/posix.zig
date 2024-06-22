@@ -214,7 +214,7 @@ pub inline fn perform(op: anytype, readiness: Readiness) Operation.Error!void {
         .wait_event_source => op.source.wait(),
         .close_event_source => op.source.deinit(),
         // this function is meant for execution on a thread, it makes no sense to execute these on a thread
-        .timeout, .link_timeout, .cancel => unreachable,
+        .nop, .timeout, .link_timeout, .cancel => unreachable,
     }
 }
 
@@ -233,6 +233,7 @@ pub const OpenReadinessError = error{
 
 pub inline fn openReadiness(op: anytype) OpenReadinessError!Readiness {
     return switch (comptime Operation.tagFromPayloadType(@TypeOf(op.*))) {
+        .nop => .{},
         .fsync => .{},
         .write => .{ .fd = op.file.handle, .mode = .out },
         .read => .{ .fd = op.file.handle, .mode = .in },
@@ -336,6 +337,7 @@ pub inline fn armReadiness(op: anytype, readiness: Readiness) ArmReadinessError!
                 @panic("unsupported");
             }
         },
+        .nop => {},
         .fsync, .read, .write => {},
         .socket, .accept, .connect, .recv, .send => {},
         .open_at, .close_file, .close_dir, .close_socket => {},
@@ -348,6 +350,7 @@ pub inline fn armReadiness(op: anytype, readiness: Readiness) ArmReadinessError!
 pub inline fn closeReadiness(op: anytype, readiness: Readiness) void {
     const needs_close = switch (comptime Operation.tagFromPayloadType(@TypeOf(op.*))) {
         .timeout, .link_timeout, .child_exit => true,
+        .nop => false,
         .fsync, .read, .write => false,
         .socket, .accept, .connect, .recv, .send => false,
         .open_at, .close_file, .close_dir, .close_socket => false,

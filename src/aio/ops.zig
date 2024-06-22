@@ -2,8 +2,6 @@ const std = @import("std");
 const builtin = @import("builtin");
 const aio = @import("../aio.zig");
 
-// Virtual linked actions are possible with `nop` under io_uring :thinking:
-
 pub const Id = enum(usize) { _ };
 
 pub const Link = enum {
@@ -18,6 +16,14 @@ const SharedError = error{
     Success,
     OperationCanceled,
     Unexpected,
+};
+
+/// Can be used to wakeup the backend, custom notifications, etc...
+pub const Nop = struct {
+    pub const Error = error{Success};
+    ident: usize,
+    link: Link = .unlinked,
+    userdata: usize = 0,
 };
 
 /// std.fs.File.sync
@@ -270,6 +276,7 @@ pub const CloseSocket = struct {
 pub const NotifyEventSource = struct {
     pub const Error = SharedError;
     source: aio.EventSource,
+    out_id: ?*Id = null,
     out_error: ?*Error = null,
     link: Link = .unlinked,
     userdata: usize = 0,
@@ -278,6 +285,7 @@ pub const NotifyEventSource = struct {
 pub const WaitEventSource = struct {
     pub const Error = SharedError;
     source: aio.EventSource,
+    out_id: ?*Id = null,
     out_error: ?*Error = null,
     link: Link = .unlinked,
     userdata: usize = 0,
@@ -286,12 +294,14 @@ pub const WaitEventSource = struct {
 pub const CloseEventSource = struct {
     pub const Error = SharedError;
     source: aio.EventSource,
+    out_id: ?*Id = null,
     out_error: ?*Error = null,
     link: Link = .unlinked,
     userdata: usize = 0,
 };
 
 pub const Operation = enum {
+    nop,
     fsync,
     read,
     write,
@@ -317,6 +327,7 @@ pub const Operation = enum {
     close_event_source,
 
     pub const map = std.enums.EnumMap(@This(), type).init(.{
+        .nop = Nop,
         .fsync = Fsync,
         .read = Read,
         .write = Write,

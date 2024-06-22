@@ -32,8 +32,6 @@ pub const Stack = []align(stack_alignment) u8;
 pub const Error = error{
     /// The stack space provided to the fiber is not large enough to contain required metadata.
     StackTooSmall,
-    /// The stack space provided to the fiber is too big to be tracked by getStack().
-    StackTooLarge,
 };
 
 /// Intrusively allocates a Fiber object (and auxiliary data) inside (specifically, and the end of) the given stack memory.
@@ -69,17 +67,6 @@ threadlocal var tls_state: ?*State = null;
 /// Get the currently running fiber of the caller, if any.
 pub inline fn current() ?*Fiber {
     return @ptrCast(tls_state);
-}
-
-/// Given a fiber, return the stack memory used to initialize it.
-/// Calling getStack() on a fiber which has completed is unspecified behavior.
-pub fn getStack(fiber: *Fiber) Stack {
-    const state: *State = @ptrCast(@alignCast(fiber));
-    const state_offset: usize = @intCast(state.offset);
-    const stack_end = @intFromPtr(state) + state_offset;
-    const stack_base = stack_end - (state.offset >> @bitSizeOf(u8));
-    const base: [*]align(stack_alignment) u8 = @ptrFromInt(stack_base);
-    return base[0..(stack_end - stack_base)];
 }
 
 /// Given a fiber, return the user_data used to initialize it.
@@ -121,19 +108,16 @@ const State = extern struct {
     caller_context: *anyopaque,
     stack_context: *anyopaque,
     user_data: usize,
-    offset: usize,
 
     fn init(stack: Stack, user_data: usize, args_size: usize, entry_point: *const fn () callconv(.C) noreturn) Error!*State {
         const stack_base = @intFromPtr(stack.ptr);
         const stack_end = @intFromPtr(stack.ptr + stack.len);
-        if (stack.len > (std.math.maxInt(usize) >> @bitSizeOf(u8))) return error.StackTooLarge;
 
         // Push the State onto the state.
         var stack_ptr = std.mem.alignBackward(usize, stack_end - @sizeOf(State), stack_alignment);
         if (stack_ptr < stack_base) return error.StackTooSmall;
 
         const state: *State = @ptrFromInt(stack_ptr);
-        const end_offset = stack_end - stack_ptr;
 
         // Push enough bytes for the args onto the stack.
         stack_ptr = std.mem.alignBackward(usize, stack_ptr - args_size, stack_alignment);
@@ -152,7 +136,6 @@ const State = extern struct {
             .caller_context = undefined,
             .stack_context = @ptrFromInt(stack_ptr),
             .user_data = user_data,
-            .offset = (stack.len << @bitSizeOf(u8)) | end_offset,
         };
 
         return state;

@@ -49,7 +49,7 @@ pub const CompletionResult = struct {
 /// Queue operations dynamically and complete them on demand
 pub const Dynamic = struct {
     pub const Uop = ops.Operation.Union;
-    pub const Callback = *const fn (uop: *Uop) void;
+    pub const Callback = *const fn (uop: Uop) void;
     io: IO,
     /// Used by coro implementation
     callback: ?Callback = null,
@@ -68,13 +68,16 @@ pub const Dynamic = struct {
     pub inline fn queue(self: *@This(), operations: anytype) Error!void {
         const ti = @typeInfo(@TypeOf(operations));
         if (comptime ti == .Struct and ti.Struct.is_tuple) {
+            if (comptime operations.len == 0) @compileError("no work to be done");
             var work = struct { ops: @TypeOf(operations) }{ .ops = operations };
             return self.io.queue(operations.len, &work);
         } else if (comptime ti == .Array) {
+            if (comptime operations.len == 0) @compileError("no work to be done");
             var work = struct { ops: @TypeOf(operations) }{ .ops = operations };
             return self.io.queue(operations.len, &work);
         } else {
-            return self.io.queue(1, &struct { ops: @TypeOf(.{operations}) }{ .ops = .{operations} });
+            var work = struct { ops: @TypeOf(.{operations}) }{ .ops = .{operations} };
+            return self.io.queue(1, &work);
         }
     }
 
@@ -177,6 +180,7 @@ const IO = switch (@import("builtin").target.os.tag) {
 
 const ops = @import("aio/ops.zig");
 pub const Id = ops.Id;
+pub const Nop = ops.Nop;
 pub const Fsync = ops.Fsync;
 pub const Read = ops.Read;
 pub const Write = ops.Write;
