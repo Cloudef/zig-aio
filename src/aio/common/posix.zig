@@ -136,13 +136,13 @@ pub inline fn perform(op: anytype, readiness: Readiness) Operation.Error!void {
         .fsync => _ = try std.posix.fsync(op.file.handle),
         .read => {
             op.out_read.* = std.posix.pread(op.file.handle, op.buffer, op.offset) catch |err| switch (err) {
-                error.Unseekable => try std.posix.read(op.file.handle, op.buffer),
+                error.Unseekable => |e| if (op.offset == 0) try std.posix.read(op.file.handle, op.buffer) else return e,
                 else => |e| return e,
             };
         },
         .write => {
             const written = std.posix.pwrite(op.file.handle, op.buffer, op.offset) catch |err| switch (err) {
-                error.Unseekable => try std.posix.write(op.file.handle, op.buffer),
+                error.Unseekable => |e| if (op.offset == 0) try std.posix.write(op.file.handle, op.buffer) else return e,
                 else => |e| return e,
             };
             if (op.out_written) |w| w.* = written;
