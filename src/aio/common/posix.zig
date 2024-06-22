@@ -51,7 +51,12 @@ pub const EventSource = struct {
                 _ = std.posix.read(self.fd, std.mem.asBytes(&v)) catch continue;
             } else if (comptime @hasDecl(std.posix.system, "kqueue")) {
                 var ev: [1]std.posix.Kevent = undefined;
-                _ = std.posix.kevent(self.fd, &.{}, &ev, null) catch continue;
+                _ = std.posix.kevent(self.fd, &.{}, &ev, null) catch |err| switch (err) {
+                    error.EventNotFound => unreachable,
+                    error.ProcessNotFound => unreachable,
+                    error.AccessDenied => unreachable,
+                    else => continue,
+                };
             } else {
                 unreachable;
             }
@@ -202,6 +207,8 @@ pub inline fn openReadiness(op: anytype) OpenReadinessError!Readiness {
                     else => |e| e,
                 };
                 break :blk .{ .fd = fd, .mode = .in };
+            } else if (comptime @hasDecl(std.posix.system, "kqueue")) {
+                break :blk .{ .fd = try std.posix.kqueue(), .mode = .in };
             } else {
                 @panic("unsupported");
             }
@@ -230,7 +237,12 @@ pub inline fn openReadiness(op: anytype) OpenReadinessError!Readiness {
     };
 }
 
-pub inline fn armReadiness(op: anytype, readiness: Readiness) error{Unexpected}!void {
+pub const ArmReadinessError = error{
+    SystemResources,
+    Unexpected,
+};
+
+pub inline fn armReadiness(op: anytype, readiness: Readiness) ArmReadinessError!void {
     switch (comptime Operation.tagFromPayloadType(@TypeOf(op.*))) {
         .timeout, .link_timeout => {
             if (comptime @hasDecl(std.posix.system, "timerfd_create")) {
@@ -247,6 +259,21 @@ pub inline fn armReadiness(op: anytype, readiness: Readiness) error{Unexpected}!
                 _ = std.posix.timerfd_settime(readiness.fd, .{}, &ts, null) catch |err| return switch (err) {
                     error.Canceled, error.InvalidHandle => unreachable,
                     error.Unexpected => |e| e,
+                };
+            } else if (comptime @hasDecl(std.posix.system, "kqueue")) {
+                _ = std.posix.kevent(readiness.fd, &.{.{
+                    .ident = @intCast(readiness.fd),
+                    .filter = std.posix.system.EVFILT_TIMER,
+                    .flags = std.posix.system.EV_ADD | std.posix.system.EV_ENABLE | std.posix.system.EV_ONESHOT,
+                    .fflags = std.posix.system.NOTE_NSECONDS,
+                    .data = @intCast(op.ns), // :sadface:
+                    .udata = 0,
+                }}, &.{}, null) catch |err| return switch (err) {
+                    error.EventNotFound => unreachable,
+                    error.ProcessNotFound => unreachable,
+                    error.AccessDenied => unreachable,
+                    error.SystemResources => |e| e,
+                    else => error.Unexpected,
                 };
             } else {
                 @panic("unsupported");
