@@ -378,7 +378,7 @@ pub const Scheduler = struct {
 
     /// Run until all tasks are dead
     pub fn run(self: *@This()) !void {
-        while (self.tasks.len + self.tasks_pending_reap.len > 0) {
+        while (self.tasks.len > 0 or self.tasks_pending_reap.len > 0) {
             try self.tick(.blocking);
         }
     }
