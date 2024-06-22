@@ -135,7 +135,9 @@ pub inline fn multi(operations: anytype) (Error || error{SomeOperationFailed})!v
 pub inline fn single(operation: anytype) (Error || @TypeOf(operation).Error)!void {
     var op: @TypeOf(operation) = operation;
     var err: @TypeOf(operation).Error = error.Success;
-    op.out_error = &err;
+    if (@hasField(@TypeOf(op), "out_error")) {
+        op.out_error = &err;
+    }
     _ = try complete(.{op});
     if (err != error.Success) return err;
 }
@@ -222,6 +224,25 @@ test "shared outputs" {
     try std.testing.expect(id1 != id2);
     try std.testing.expect(id1 != id3);
     try std.testing.expect(id2 != id3);
+}
+
+test "Nop" {
+    var dynamic = try Dynamic.init(std.testing.allocator, 16);
+    defer dynamic.deinit(std.testing.allocator);
+    try dynamic.queue(Nop{ .ident = 69, .userdata = 42 });
+    const Lel = struct {
+        fn cb(uop: Dynamic.Uop) void {
+            switch (uop) {
+                .nop => |*op| {
+                    std.debug.assert(69 == op.ident);
+                    std.debug.assert(42 == op.userdata);
+                },
+                else => @panic("nope"),
+            }
+        }
+    };
+    dynamic.callback = Lel.cb;
+    try std.testing.expectEqual(0, dynamic.completeAll());
 }
 
 test "Fsync" {
