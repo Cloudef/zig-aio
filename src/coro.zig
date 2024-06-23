@@ -39,7 +39,7 @@ fn debug(comptime fmt: []const u8, args: anytype) void {
 }
 
 pub const io = struct {
-    inline fn privateComplete(operations: anytype, yield_state: YieldState) aio.Error!u16 {
+    fn privateComplete(operations: anytype, yield_state: YieldState) aio.Error!u16 {
         if (Fiber.current()) |fiber| {
             var task: *TaskState = @ptrFromInt(fiber.getUserDataPtr().*);
 
@@ -77,10 +77,16 @@ pub const io = struct {
 
             if (task.io_counter > 0) {
                 // woken up for io cancelation
-                var cancels: [operations.len]aio.Cancel = undefined;
-                inline for (&cancels, &state) |*op, *s| op.* = .{ .id = s.id, .userdata = @intFromPtr(task) };
-                try task.scheduler.io.queue(cancels);
-                privateYield(.io_cancel);
+                // TODO: don't cancel already completed
+                // Currently this code is broken
+                if (false) {
+                    var cancels: [operations.len]aio.Cancel = undefined;
+                    inline for (&cancels, &state) |*op, *s| op.* = .{ .id = s.id, .userdata = @intFromPtr(task) };
+                    try task.scheduler.io.queue(cancels);
+                    task.io_counter += @intCast(operations.len - cancels.len);
+                    privateYield(.io_cancel);
+                }
+                unreachable;
             }
 
             var num_errors: u16 = 0;
@@ -280,7 +286,10 @@ pub const Scheduler = struct {
 
     pub fn reapAll(self: *@This()) void {
         while (self.tasks.pop()) |node| {
-            node.data.cast().marked_for_reap = true;
+            if (!node.data.cast().marked_for_reap) {
+                node.data.cast().marked_for_reap = true;
+                self.tasks_pending_reap.append(node);
+            }
             self.privateReap(node);
         }
     }
@@ -290,10 +299,13 @@ pub const Scheduler = struct {
         if (!task.isReapable()) {
             if (task.yield_state == .io) {
                 debug("task is pending on io, reaping later: {}", .{task});
-                task.wakeup(.io, .no_wait); // cancel io
+                // TODO: io cancellations are broken
+                // task.wakeup(.io, .no_wait); // cancel io
             }
-            task.marked_for_reap = true;
-            self.tasks_pending_reap.append(node);
+            if (!task.marked_for_reap) {
+                task.marked_for_reap = true;
+                self.tasks_pending_reap.append(node);
+            }
             return; // still pending
         }
         if (task.marked_for_reap) self.tasks_pending_reap.remove(node);
@@ -339,11 +351,14 @@ pub const Scheduler = struct {
         }
 
         debug("finished: {}", .{state});
-        self.tasks.remove(&state.link);
-        if (state.stack) |_| {
-            // stack is managed, it needs to be cleaned outside
-            state.marked_for_reap = true;
-            self.tasks_pending_reap.append(&state.link);
+
+        if (!state.marked_for_reap) {
+            self.tasks.remove(&state.link);
+            if (state.stack) |_| {
+                // stack is managed, it needs to be cleaned outside
+                state.marked_for_reap = true;
+                self.tasks_pending_reap.append(&state.link);
+            }
         }
     }
 
@@ -393,11 +408,10 @@ pub const Scheduler = struct {
     /// Processes pending IO and reaps dead tasks
     pub fn tick(self: *@This(), mode: aio.Dynamic.CompletionMode) aio.Error!void {
         _ = try self.io.complete(mode);
-        var maybe_node = self.tasks_pending_reap.first;
-        while (maybe_node) |node| {
-            const next = node.next;
+        var next = self.tasks_pending_reap.first;
+        while (next) |node| {
+            next = node.next;
             self.privateReap(node);
-            maybe_node = next;
         }
     }
 
