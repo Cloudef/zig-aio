@@ -21,6 +21,11 @@ const SharedError = error{
 /// Can be used to wakeup the backend, custom notifications, etc...
 pub const Nop = struct {
     pub const Error = error{Success};
+    pub const Domain = enum(u8) {
+        coro, // reserved, please don't use
+        _,
+    };
+    domain: Domain,
     ident: usize,
     link: Link = .unlinked,
     userdata: usize = 0,

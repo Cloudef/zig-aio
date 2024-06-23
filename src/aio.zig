@@ -229,11 +229,12 @@ test "shared outputs" {
 test "Nop" {
     var dynamic = try Dynamic.init(std.testing.allocator, 16);
     defer dynamic.deinit(std.testing.allocator);
-    try dynamic.queue(Nop{ .ident = 69, .userdata = 42 });
+    try dynamic.queue(Nop{ .domain = @enumFromInt(255), .ident = 69, .userdata = 42 });
     const Lel = struct {
         fn cb(uop: Dynamic.Uop) void {
             switch (uop) {
                 .nop => |*op| {
+                    std.debug.assert(255 == @intFromEnum(op.domain));
                     std.debug.assert(69 == op.ident);
                     std.debug.assert(42 == op.userdata);
                 },

@@ -124,6 +124,11 @@ pub const io = struct {
     }
 };
 
+/// Is the code currently running inside a task?
+pub inline fn isTask() bool {
+    return Fiber.current() != null;
+}
+
 /// Yields current task, can only be called from inside a task
 pub inline fn yield(state: anytype) void {
     privateYield(@enumFromInt(std.meta.fields(YieldState).len + @intFromEnum(state)));
@@ -180,6 +185,7 @@ fn privateYield(state: YieldState) void {
         debug("yielding: {}", .{task});
         if (@intFromEnum(state) >= std.meta.fields(YieldState).len and (task.waiters.first != null or task.scheduler_is_waiting)) {
             task.scheduler.io.queue(aio.Nop{
+                .domain = .coro,
                 .ident = @intFromEnum(YieldState.waiting_for_yield),
                 .userdata = @intFromPtr(task),
             }) catch @panic("cannot yield, the submission queue is full");
@@ -368,9 +374,11 @@ pub const Scheduler = struct {
                 std.debug.assert(op.userdata != 0);
                 var task: *TaskState = @ptrFromInt(op.userdata);
                 if (@TypeOf(op.*) == aio.Nop) {
-                    std.debug.assert(op.ident == @intFromEnum(YieldState.waiting_for_yield));
-                    while (task.waiters.popFirst()) |waiter| {
-                        waiter.data.cast().wakeup(.waiting_for_yield, .no_wait);
+                    if (op.domain != .coro) return;
+                    if (op.ident == @intFromEnum(YieldState.waiting_for_yield)) {
+                        while (task.waiters.popFirst()) |waiter| {
+                            waiter.data.cast().wakeup(.waiting_for_yield, .no_wait);
+                        }
                     }
                 } else {
                     task.io_counter -= 1;
