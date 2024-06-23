@@ -45,7 +45,9 @@ fn server(client_task: coro.Task) !void {
 
     const address = std.net.Address.initIp4(.{ 0, 0, 0, 0 }, 1327);
     try std.posix.setsockopt(socket, std.posix.SOL.SOCKET, std.posix.SO.REUSEADDR, &std.mem.toBytes(@as(c_int, 1)));
-    try std.posix.setsockopt(socket, std.posix.SOL.SOCKET, std.posix.SO.REUSEPORT, &std.mem.toBytes(@as(c_int, 1)));
+    if (@hasDecl(std.posix.SO, "REUSEPORT")) {
+        try std.posix.setsockopt(socket, std.posix.SOL.SOCKET, std.posix.SO.REUSEPORT, &std.mem.toBytes(@as(c_int, 1)));
+    }
     try std.posix.bind(socket, &address.any, address.getOsSockLen());
     try std.posix.listen(socket, 128);
 
