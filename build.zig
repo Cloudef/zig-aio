@@ -12,6 +12,7 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/aio.zig"),
         .target = target,
         .optimize = optimize,
+        .link_libc = target.query.os_tag == .windows,
     });
     aio.addImport("build_options", opts.createModule());
 
@@ -52,6 +53,7 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .optimize = optimize,
             .filters = &.{test_filter},
+            .link_libc = target.query.os_tag == .windows,
         });
         if (mod == .aio) tst.root_module.addImport("build_options", opts.createModule());
         if (mod == .coro) tst.root_module.addImport("aio", aio);

@@ -215,7 +215,7 @@ pub const MkDirAt = struct {
 
 /// std.fs.Dir.symlink
 pub const SymlinkAt = struct {
-    pub const Error = std.posix.SymLinkError || SharedError;
+    pub const Error = std.posix.SymLinkError || error{UnrecognizedVolume} || SharedError;
     dir: std.fs.Dir,
     target: [*:0]const u8,
     link_path: [*:0]const u8,
@@ -284,7 +284,7 @@ pub const NotifyEventSource = struct {
 
 pub const WaitEventSource = struct {
     pub const Error = SharedError;
-    source: aio.EventSource,
+    source: *aio.EventSource,
     out_id: ?*Id = null,
     out_error: ?*Error = null,
     link: Link = .unlinked,
@@ -293,7 +293,7 @@ pub const WaitEventSource = struct {
 
 pub const CloseEventSource = struct {
     pub const Error = SharedError;
-    source: aio.EventSource,
+    source: *aio.EventSource,
     out_id: ?*Id = null,
     out_error: ?*Error = null,
     link: Link = .unlinked,

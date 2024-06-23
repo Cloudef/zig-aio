@@ -465,7 +465,7 @@ pub const ThreadPool = struct {
         var wait_err: aio.WaitEventSource.Error = error.Success;
         while (!completed) {
             if (try io.privateComplete(.{
-                aio.WaitEventSource{ .source = self.source, .link = .soft, .out_error = &wait_err },
+                aio.WaitEventSource{ .source = &self.source, .link = .soft, .out_error = &wait_err },
             }, .io_waiting_thread) > 0) {
                 // it's possible to end up here if aio implementation ran out of resources
                 // in case of io_uring the application managed to fill up the submission queue

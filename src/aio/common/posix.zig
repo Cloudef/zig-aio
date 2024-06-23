@@ -1,31 +1,18 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const Operation = @import("../ops.zig").Operation;
+const windows = @import("windows.zig");
 
 pub const RENAME_NOREPLACE = 1 << 0;
 pub const PIDFD_NONBLOCK = @as(usize, 1 << @bitOffsetOf(std.posix.O, "NONBLOCK"));
 
-pub const EventSource = struct {
+const EventFd = struct {
     fd: std.posix.fd_t,
-    _: if (@hasDecl(std.posix.system, "kqueue"))
-        struct {
-            counter: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
-        }
-    else
-        struct {} = .{},
 
     pub inline fn init() !@This() {
-        if (comptime @hasDecl(std.posix.system, "eventfd")) {
-            return .{
-                .fd = try std.posix.eventfd(0, std.os.linux.EFD.CLOEXEC | std.os.linux.EFD.SEMAPHORE),
-            };
-        } else if (comptime @hasDecl(std.posix.system, "kqueue")) {
-            return .{
-                .fd = try std.posix.kqueue(),
-            };
-        } else {
-            @compileError("unsupported");
-        }
+        return .{
+            .fd = try std.posix.eventfd(0, std.os.linux.EFD.CLOEXEC | std.os.linux.EFD.SEMAPHORE),
+        };
     }
 
     pub inline fn deinit(self: *@This()) void {
@@ -35,63 +22,83 @@ pub const EventSource = struct {
 
     pub inline fn notify(self: *@This()) void {
         while (true) {
-            if (comptime @hasDecl(std.posix.system, "eventfd")) {
-                _ = std.posix.write(self.fd, &std.mem.toBytes(@as(u64, 1))) catch continue;
-            } else if (comptime @hasDecl(std.posix.system, "kqueue")) {
-                _ = std.posix.kevent(self.fd, &.{.{
-                    .ident = self._.counter.fetchAdd(1, .monotonic),
-                    .filter = std.posix.system.EVFILT_USER,
-                    .flags = std.posix.system.EV_ADD | std.posix.system.EV_ENABLE | std.posix.system.EV_ONESHOT,
-                    .fflags = std.posix.system.NOTE_TRIGGER,
-                    .data = 0,
-                    .udata = 0,
-                }}, &.{}, null) catch continue;
-            } else {
-                unreachable;
-            }
+            _ = std.posix.write(self.fd, &std.mem.toBytes(@as(u64, 1))) catch continue;
             break;
         }
     }
 
-    inline fn notifyReadiness(self: *@This()) Readiness {
-        if (comptime @hasDecl(std.posix.system, "eventfd")) {
-            return .{ .fd = self.fd, .mode = .out };
-        } else if (comptime @hasDecl(std.posix.system, "kqueue")) {
-            return .{};
-        } else {
-            unreachable;
-        }
+    pub inline fn notifyReadiness(self: *@This()) Readiness {
+        return .{ .fd = self.fd, .mode = .out };
     }
 
     pub inline fn wait(self: *@This()) void {
         while (true) {
-            if (comptime @hasDecl(std.posix.system, "eventfd")) {
-                var v: u64 = undefined;
-                _ = std.posix.read(self.fd, std.mem.asBytes(&v)) catch continue;
-            } else if (comptime @hasDecl(std.posix.system, "kqueue")) {
-                var ev: [1]std.posix.Kevent = undefined;
-                _ = std.posix.kevent(self.fd, &.{}, &ev, null) catch |err| switch (err) {
-                    error.EventNotFound => unreachable,
-                    error.ProcessNotFound => unreachable,
-                    error.AccessDenied => unreachable,
-                    else => continue,
-                };
-            } else {
-                unreachable;
-            }
+            var v: u64 = undefined;
+            _ = std.posix.read(self.fd, std.mem.asBytes(&v)) catch continue;
             break;
         }
     }
 
-    inline fn waitReadiness(self: *@This()) Readiness {
-        if (comptime @hasDecl(std.posix.system, "eventfd")) {
-            return .{ .fd = self.fd, .mode = .in };
-        } else if (comptime @hasDecl(std.posix.system, "kqueue")) {
-            return .{ .fd = self.fd, .mode = .in };
-        } else {
-            unreachable;
+    pub inline fn waitReadiness(self: *@This()) Readiness {
+        return .{ .fd = self.fd, .mode = .in };
+    }
+};
+
+const Kqueue = struct {
+    fd: std.posix.fd_t,
+    counter: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
+
+    pub inline fn init() !@This() {
+        return .{
+            .fd = try std.posix.kqueue(),
+        };
+    }
+
+    pub inline fn deinit(self: *@This()) void {
+        std.posix.close(self.fd);
+        self.* = undefined;
+    }
+
+    pub inline fn notify(self: *@This()) void {
+        while (true) {
+            _ = std.posix.kevent(self.fd, &.{.{
+                .ident = self.counter.fetchAdd(1, .monotonic),
+                .filter = std.posix.system.EVFILT_USER,
+                .flags = std.posix.system.EV_ADD | std.posix.system.EV_ENABLE | std.posix.system.EV_ONESHOT,
+                .fflags = std.posix.system.NOTE_TRIGGER,
+                .data = 0,
+                .udata = 0,
+            }}, &.{}, null) catch continue;
+            break;
         }
     }
+
+    pub inline fn notifyReadiness(_: *@This()) Readiness {
+        return .{};
+    }
+
+    pub inline fn wait(self: *@This()) void {
+        while (true) {
+            var ev: [1]std.posix.Kevent = undefined;
+            _ = std.posix.kevent(self.fd, &.{}, &ev, null) catch |err| switch (err) {
+                error.EventNotFound => unreachable,
+                error.ProcessNotFound => unreachable,
+                error.AccessDenied => unreachable,
+                else => continue,
+            };
+            break;
+        }
+    }
+
+    pub inline fn waitReadiness(self: *@This()) Readiness {
+        return .{ .fd = self.fd, .mode = .in };
+    }
+};
+
+pub const EventSource = switch (builtin.target.os.tag) {
+    .windows => windows.EventSource,
+    .macos, .ios, .watchos, .visionos, .tvos, .freebsd => Kqueue,
+    else => EventFd,
 };
 
 pub fn convertOpenFlags(flags: std.fs.File.OpenFlags) std.posix.O {
@@ -138,21 +145,31 @@ pub inline fn statusToTerm(status: u32) std.process.Child.Term {
         .{ .Unknown = status };
 }
 
+fn read(op: anytype) !void {
+    op.out_read.* = std.posix.pread(op.file.handle, op.buffer, op.offset) catch |err| switch (err) {
+        error.Unseekable => |e| if (op.offset == 0) try std.posix.read(op.file.handle, op.buffer) else return e,
+        else => |e| return e,
+    };
+}
+
+fn write(op: anytype) !void {
+    const written = std.posix.pwrite(op.file.handle, op.buffer, op.offset) catch |err| switch (err) {
+        error.Unseekable => |e| if (op.offset == 0) try std.posix.write(op.file.handle, op.buffer) else return e,
+        else => |e| return e,
+    };
+    if (op.out_written) |w| w.* = written;
+}
+
 pub inline fn perform(op: anytype, readiness: Readiness) Operation.Error!void {
     switch (comptime Operation.tagFromPayloadType(@TypeOf(op.*))) {
         .fsync => _ = try std.posix.fsync(op.file.handle),
-        .read => {
-            op.out_read.* = std.posix.pread(op.file.handle, op.buffer, op.offset) catch |err| switch (err) {
-                error.Unseekable => |e| if (op.offset == 0) try std.posix.read(op.file.handle, op.buffer) else return e,
-                else => |e| return e,
-            };
+        .read => read(op) catch |err| switch (err) {
+            error.Unexpected => |e| return if (builtin.target.os.tag == .windows) error.NotOpenForReading else e,
+            else => |e| return e,
         },
-        .write => {
-            const written = std.posix.pwrite(op.file.handle, op.buffer, op.offset) catch |err| switch (err) {
-                error.Unseekable => |e| if (op.offset == 0) try std.posix.write(op.file.handle, op.buffer) else return e,
-                else => |e| return e,
-            };
-            if (op.out_written) |w| w.* = written;
+        .write => write(op) catch |err| switch (err) {
+            error.Unexpected => |e| return if (builtin.target.os.tag == .windows) error.NotOpenForWriting else e,
+            else => |e| return e,
         },
         .accept => op.out_socket.* = try std.posix.accept(op.socket, op.addr, op.inout_addrlen, 0),
         .connect => _ = try std.posix.connect(op.socket, op.addr, op.addrlen),
@@ -161,7 +178,11 @@ pub inline fn perform(op: anytype, readiness: Readiness) Operation.Error!void {
             const written = try std.posix.send(op.socket, op.buffer, 0);
             if (op.out_written) |w| w.* = written;
         },
-        .open_at => op.out_file.handle = try std.posix.openatZ(op.dir.fd, op.path, convertOpenFlags(op.flags), 0),
+        .open_at => if (builtin.target.os.tag == .windows) {
+            op.out_file.* = try op.dir.openFileZ(op.path, op.flags);
+        } else {
+            op.out_file.handle = try std.posix.openatZ(op.dir.fd, op.path, convertOpenFlags(op.flags), 0);
+        },
         .close_file => std.posix.close(op.file.handle),
         .close_dir => std.posix.close(op.dir.fd),
         .rename_at => {
@@ -192,20 +213,37 @@ pub inline fn perform(op: anytype, readiness: Readiness) Operation.Error!void {
                 };
             } else {
                 // this is racy :(
-                if (op.new_dir.accessZ(op.new_path, .{})) {
-                    return error.PathAlreadyExists;
-                } else |err| switch (err) {
-                    error.FileNotFound => {}, // ok
-                    else => |e| return e,
+                if (builtin.target.os.tag == .windows) {
+                    // access is weird on windows
+                    if (op.new_dir.openFileZ(op.new_path, .{ .mode = .read_write })) |f| {
+                        f.close();
+                        return error.PathAlreadyExists;
+                    } else |err| switch (err) {
+                        error.FileNotFound => {}, // ok
+                        else => |e| return e,
+                    }
+                } else {
+                    if (op.new_dir.accessZ(op.new_path, .{ .mode = .read_write })) {
+                        return error.PathAlreadyExists;
+                    } else |err| switch (err) {
+                        error.FileNotFound => {}, // ok
+                        else => |e| return e,
+                    }
                 }
                 try std.posix.renameatZ(op.old_dir.fd, op.old_path, op.new_dir.fd, op.new_path);
             }
         },
-        .unlink_at => _ = try std.posix.unlinkatZ(op.dir.fd, op.path, 0),
-        .mkdir_at => _ = try std.posix.mkdiratZ(op.dir.fd, op.path, op.mode),
-        .symlink_at => _ = try std.posix.symlinkatZ(op.target, op.dir.fd, op.link_path),
+        .unlink_at => try std.posix.unlinkatZ(op.dir.fd, op.path, 0),
+        .mkdir_at => try std.posix.mkdiratZ(op.dir.fd, op.path, op.mode),
+        .symlink_at => if (builtin.target.os.tag == .windows) {
+            try op.dir.symLinkZ(op.target, op.link_path, .{});
+        } else {
+            try std.posix.symlinkatZ(op.target, op.dir.fd, op.link_path);
+        },
         .child_exit => {
-            if (@hasDecl(std.posix.system, "waitid")) {
+            if (builtin.target.os.tag == .windows) {
+                @panic("fixme");
+            } else if (comptime @hasDecl(std.posix.system, "waitid")) {
                 var siginfo: std.posix.siginfo_t = undefined;
                 _ = std.posix.system.waitid(.PIDFD, readiness.fd, &siginfo, std.posix.W.EXITED | std.posix.W.NOHANG);
                 if (op.out_term) |term| term.* = statusToTerm(@intCast(siginfo.fields.common.second.sigchld.status));
@@ -225,7 +263,7 @@ pub inline fn perform(op: anytype, readiness: Readiness) Operation.Error!void {
 }
 
 pub const Readiness = struct {
-    fd: std.posix.fd_t = 0,
+    fd: std.posix.fd_t = if (builtin.target.os.tag == .windows) std.os.windows.INVALID_HANDLE_VALUE else 0,
     mode: enum { noop, in, out } = .noop,
 };
 
@@ -248,7 +286,9 @@ pub inline fn openReadiness(op: anytype) OpenReadinessError!Readiness {
         .send => .{ .fd = op.socket, .mode = .out },
         .open_at, .close_file, .close_dir, .close_socket => .{},
         .timeout, .link_timeout => blk: {
-            if (comptime @hasDecl(std.posix.system, "timerfd_create")) {
+            if (builtin.target.os.tag == .windows) {
+                break :blk .{ .fd = windows.CreateWaitableTimerExW(null, null, 0, windows.TIMER_ALL_ACCESS), .mode = .in };
+            } else if (comptime @hasDecl(std.posix.system, "timerfd_create")) {
                 const fd = std.posix.timerfd_create(std.posix.CLOCK.MONOTONIC, .{ .CLOEXEC = true, .NONBLOCK = true }) catch |err| return switch (err) {
                     error.AccessDenied => unreachable,
                     else => |e| e,
@@ -262,7 +302,9 @@ pub inline fn openReadiness(op: anytype) OpenReadinessError!Readiness {
         },
         .cancel, .rename_at, .unlink_at, .mkdir_at, .symlink_at => .{},
         .child_exit => blk: {
-            if (comptime @hasDecl(std.posix.system, "pidfd_open")) {
+            if (builtin.target.os.tag == .windows) {
+                @panic("fixme");
+            } else if (comptime @hasDecl(std.posix.system, "pidfd_open")) {
                 const res = std.posix.system.pidfd_open(op.child, PIDFD_NONBLOCK);
                 const e = std.posix.errno(res);
                 if (e != .SUCCESS) return switch (e) {
@@ -309,7 +351,11 @@ pub const ArmReadinessError = error{
 pub inline fn armReadiness(op: anytype, readiness: Readiness) ArmReadinessError!void {
     switch (comptime Operation.tagFromPayloadType(@TypeOf(op.*))) {
         .timeout, .link_timeout => {
-            if (comptime @hasDecl(std.posix.system, "timerfd_create")) {
+            if (builtin.target.os.tag == .windows) {
+                const rel_time: i128 = @intCast(op.ns);
+                const li = windows.nanoSecondsToTimerTime(-rel_time);
+                std.debug.assert(windows.SetWaitableTimer(readiness.fd, &li, 0, null, null, 0) != 0);
+            } else if (comptime @hasDecl(std.posix.system, "timerfd_create")) {
                 const ts: std.os.linux.itimerspec = .{
                     .it_value = .{
                         .tv_sec = @intCast(op.ns / std.time.ns_per_s),
@@ -364,4 +410,15 @@ pub inline fn closeReadiness(op: anytype, readiness: Readiness) void {
         .notify_event_source, .wait_event_source, .close_event_source => false,
     };
     if (needs_close) std.posix.close(readiness.fd);
+}
+
+pub const invalid_fd = if (builtin.target.os.tag == .windows) std.os.windows.INVALID_HANDLE_VALUE else 0;
+pub const pollfd = if (builtin.target.os.tag == .windows) windows.pollfd else std.posix.pollfd;
+
+pub fn poll(pfds: []pollfd, timeout: i32) std.posix.PollError!usize {
+    if (builtin.target.os.tag == .windows) {
+        return windows.poll(pfds, timeout);
+    } else {
+        return std.posix.poll(pfds, timeout);
+    }
 }

@@ -29,7 +29,7 @@ readiness: []posix.Readiness,
 link_lock: std.DynamicBitSetUnmanaged,
 started: std.DynamicBitSetUnmanaged,
 pending: std.DynamicBitSetUnmanaged,
-pfd: FixedArrayList(std.posix.pollfd, u32),
+pfd: FixedArrayList(posix.pollfd, u32),
 prev_id: ?u16 = null, // for linking operations
 finished: FixedArrayList(Result, u16),
 finished_mutex: std.Thread.Mutex = .{},
@@ -60,7 +60,7 @@ pub fn init(allocator: std.mem.Allocator, n: u16) aio.Error!@This() {
     errdefer started.deinit(allocator);
     var pending = try std.DynamicBitSetUnmanaged.initEmpty(allocator, n);
     errdefer pending.deinit(allocator);
-    var pfd = try FixedArrayList(std.posix.pollfd, u32).init(allocator, n + 1);
+    var pfd = try FixedArrayList(posix.pollfd, u32).init(allocator, n + 1);
     errdefer pfd.deinit(allocator);
     var finished = try FixedArrayList(Result, u16).init(allocator, n);
     errdefer finished.deinit(allocator);
@@ -161,10 +161,11 @@ pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode, cb: ?aio.Dynam
     // The pros is that we don't have to iterated the self.pfd.items
     // However, the self.pfd.items changes frequently so we have to keep re-registering fds anyways
     // Poll is pretty much anywhere, so poll it is. This is fallback backend anyways.
-    _ = std.posix.poll(self.pfd.items[0..self.pfd.len], if (mode == .blocking) -1 else 0) catch |err| return switch (err) {
+    const n = posix.poll(self.pfd.items[0..self.pfd.len], if (mode == .blocking) -1 else 0) catch |err| return switch (err) {
         error.NetworkSubsystemFailed => unreachable,
         else => |e| e,
     };
+    if (n == 0) return .{};
 
     var res: aio.CompletionResult = .{};
     for (self.pfd.items[0..self.pfd.len]) |pfd| {
@@ -213,6 +214,7 @@ fn finish(self: *@This(), id: u16, failure: Operation.Error) void {
     defer self.source.notify();
     self.finished_mutex.lock();
     defer self.finished_mutex.unlock();
+    debug("finish: {} {}", .{ id, failure });
     for (self.finished.items[0..self.finished.len]) |*i| if (i.id == id) {
         i.* = .{ .id = id, .failure = failure };
         return;
@@ -316,7 +318,7 @@ fn submit(self: *@This()) !bool {
             try self.start(e.k);
         }
         if (self.pending.isSet(e.k)) {
-            std.debug.assert(self.readiness[e.k].fd != 0);
+            std.debug.assert(self.readiness[e.k].fd != posix.invalid_fd);
             self.pfd.add(.{
                 .fd = self.readiness[e.k].fd,
                 .events = switch (self.readiness[e.k].mode) {
