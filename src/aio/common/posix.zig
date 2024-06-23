@@ -10,9 +10,7 @@ const EventFd = struct {
     fd: std.posix.fd_t,
 
     pub inline fn init() !@This() {
-        return .{
-            .fd = try std.posix.eventfd(0, std.os.linux.EFD.CLOEXEC | std.os.linux.EFD.SEMAPHORE),
-        };
+        return .{ .fd = try std.posix.eventfd(0, std.os.linux.EFD.CLOEXEC | std.os.linux.EFD.SEMAPHORE) };
     }
 
     pub inline fn deinit(self: *@This()) void {
@@ -49,9 +47,7 @@ const Kqueue = struct {
     counter: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
 
     pub inline fn init() !@This() {
-        return .{
-            .fd = try std.posix.kqueue(),
-        };
+        return .{ .fd = try std.posix.kqueue() };
     }
 
     pub inline fn deinit(self: *@This()) void {

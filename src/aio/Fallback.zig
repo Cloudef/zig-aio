@@ -158,7 +158,7 @@ pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode, cb: ?aio.Dynam
     defer self.pfd.reset();
 
     // I was thinking if we should use epoll/kqueue if available
-    // The pros is that we don't have to iterated the self.pfd.items
+    // The pros is that we don't have to iterate the self.pfd.items
     // However, the self.pfd.items changes frequently so we have to keep re-registering fds anyways
     // Poll is pretty much anywhere, so poll it is. This is fallback backend anyways.
     const n = posix.poll(self.pfd.items[0..self.pfd.len], if (mode == .blocking) -1 else 0) catch |err| return switch (err) {
