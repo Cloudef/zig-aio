@@ -94,6 +94,13 @@ pub fn deinit(self: *@This()) void {
     // stack is now gone, doing anything after this with @This() is ub
 }
 
+pub inline fn signal(self: *@This()) void {
+    switch (self.status) {
+        .active, .io_cancel, .completed => {},
+        else => |status| self.wakeup(status),
+    }
+}
+
 pub inline fn wakeup(self: *@This(), expected_status: Status) void {
     std.debug.assert(self.status == expected_status);
     debug("waking up: {}", .{self});

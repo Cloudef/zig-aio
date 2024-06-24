@@ -23,6 +23,10 @@ pub inline fn current() ?@This() {
     }
 }
 
+pub inline fn signal(self: @This()) void {
+    self.cast().signal();
+}
+
 pub inline fn state(self: @This(), T: type) T {
     return @enumFromInt(self.cast().yield_state);
 }
@@ -40,6 +44,12 @@ pub inline fn yield(yield_state: anytype) void {
 pub inline fn wakeup(self: @This()) void {
     self.cast().yield_state = 0;
     self.cast().wakeup(.yield);
+}
+
+pub inline fn wakeupIf(self: @This(), yield_state: anytype) void {
+    if (self.state(@TypeOf(yield_state)) == yield_state) {
+        self.cast().wakeup(.yield);
+    }
 }
 
 pub const CompleteMode = Frame.CompleteMode;
@@ -68,12 +78,20 @@ pub fn Generic(comptime func: anytype) type {
             return self.any().format(fmt, opts, writer);
         }
 
+        pub inline fn signal(self: @This()) void {
+            self.any().signal();
+        }
+
         pub inline fn state(self: @This(), T: type) T {
             return self.any().state(T);
         }
 
         pub inline fn wakeup(self: @This()) void {
             self.any().wakeup();
+        }
+
+        pub inline fn wakeupIf(self: @This(), yield_state: anytype) void {
+            self.any().wakeupIf(yield_state);
         }
 
         pub inline fn complete(self: @This(), mode: CompleteMode) Result {
