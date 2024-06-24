@@ -49,7 +49,7 @@ pub const CompletionResult = struct {
 /// Queue operations dynamically and complete them on demand
 pub const Dynamic = struct {
     pub const Uop = ops.Operation.Union;
-    pub const Callback = *const fn (uop: Uop) void;
+    pub const Callback = *const fn (uop: Uop, id: Id, failed: bool) void;
     io: IO,
     /// Used by coro implementation
     callback: ?Callback = null,
@@ -135,11 +135,8 @@ pub inline fn multi(operations: anytype) (Error || error{SomeOperationFailed})!v
 pub inline fn single(operation: anytype) (Error || @TypeOf(operation).Error)!void {
     var op: @TypeOf(operation) = operation;
     var err: @TypeOf(operation).Error = error.Success;
-    if (@hasField(@TypeOf(op), "out_error")) {
-        op.out_error = &err;
-    }
-    _ = try complete(.{op});
-    if (err != error.Success) return err;
+    if (@hasField(@TypeOf(op), "out_error")) op.out_error = &err;
+    if (try complete(.{op}) > 0) return err;
 }
 
 /// Checks if the current backend supports the operations
@@ -231,9 +228,10 @@ test "Nop" {
     defer dynamic.deinit(std.testing.allocator);
     try dynamic.queue(Nop{ .domain = @enumFromInt(255), .ident = 69, .userdata = 42 });
     const Lel = struct {
-        fn cb(uop: Dynamic.Uop) void {
+        fn cb(uop: Dynamic.Uop, _: Id, failed: bool) void {
             switch (uop) {
                 .nop => |*op| {
+                    std.debug.assert(!failed);
                     std.debug.assert(255 == @intFromEnum(op.domain));
                     std.debug.assert(69 == op.ident);
                     std.debug.assert(42 == op.userdata);

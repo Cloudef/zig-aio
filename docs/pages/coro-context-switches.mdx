@@ -4,38 +4,20 @@
 
 To yield running task to the caller use the following.
 The function takes a enum value as a argument representing the yield state of the task.
+Enum value that corresponds to the integer `0` is resevered to indicate non yield state.
 
 ```zig
 coro.yield(SomeEnum.value);
 ```
 
-To continue running the task from where it left, you need to issue the same enum value to the following function.
-If you specify the third parameter as `.wait`, the current task will yield (or block if not a task) until the
-target task yields to that particural state. If instead third parameter is `.no_wait` then if the task currently
-isn't being yielded in the supplied state, the call is a no-op.
+The current yield state of a task can be checked with `state` method.
+To wakeup a task use the `wakeup` method. When task is woken up the yield state is reset to `0`.
+Calling `wakeup` when the task isn't yielded by application's yield state is a error.
+
+Example of checking the current yield state and then waking up the task.
 
 ```zig
-coro.wakeupFromState(task, SomeEnum.value, .wait);
+switch (task.state(SomeEnum)) {
+    value => task.wakeup(),
+}
 ```
-
-This is the preferred way to handle the control flow between tasks.
-
-## Canceling IO
-
-While it's possible to cancel IO by using the `aio.Cancel` operations. It is also possible to cancel
-all IO operations currently blocking a task by doing the following.
-If the task currently isn't being yielded by IO then the call is no-op.
-
-```zig
-coro.wakeupFromIo(task);
-```
-
-## Unpaired wakeup
-
-Sometimes it's useful to be able to wakeup the task from any yielding state.
-
-```zig
-coro.wakeup(task);
-```
-
-In this case the task will wake up no matter what its yielding state is currently.

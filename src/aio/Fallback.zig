@@ -100,12 +100,8 @@ pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
 }
 
 fn initOp(op: anytype, id: u16) void {
-    if (comptime @hasField(@TypeOf(op.*), "out_id")) {
-        if (op.out_id) |p_id| p_id.* = @enumFromInt(id);
-    }
-    if (comptime @hasField(@TypeOf(op.*), "out_error")) {
-        if (op.out_error) |out_error| out_error.* = error.Success;
-    }
+    if (op.out_id) |p_id| p_id.* = @enumFromInt(id);
+    if (op.out_error) |out_error| out_error.* = error.Success;
 }
 
 fn addOp(self: *@This(), uop: Operation.Union, linked_to: ?u16, readiness: posix.Readiness) !u16 {
@@ -334,10 +330,7 @@ fn submit(self: *@This()) !bool {
 }
 
 fn completition(op: anytype, self: *@This(), res: Result) void {
-    if (comptime @hasField(@TypeOf(op.*), "out_error")) {
-        if (op.out_error) |err| err.* = @errorCast(res.failure);
-    }
-
+    if (op.out_error) |err| err.* = @errorCast(res.failure);
     if (op.link != .unlinked and self.next[res.id] != res.id) {
         if (self.ops.nodes[self.next[res.id]].used == .link_timeout) {
             switch (op.link) {
@@ -369,14 +362,18 @@ fn handleFinished(self: *@This(), cb: ?aio.Dynamic.Callback) aio.CompletionResul
         } else {
             debug("complete: {}: {} [OK]", .{ res.id, std.meta.activeTag(self.ops.nodes[res.id].used) });
         }
-        defer self.removeOp(res.id);
+
         if (self.ops.nodes[res.id].used == .link_timeout and res.failure == error.OperationCanceled) {
             // special case
         } else {
             num_errors += @intFromBool(res.failure != error.Success);
         }
+
         uopUnwrapCall(&self.ops.nodes[res.id].used, completition, .{ self, res });
-        if (cb) |f| f(self.ops.nodes[res.id].used);
+
+        const uop = self.ops.nodes[res.id].used;
+        self.removeOp(res.id);
+        if (cb) |f| f(uop, @enumFromInt(res.id), res.failure != error.Success);
     }
 
     return .{ .num_completed = self.finished_copy.len, .num_errors = num_errors };

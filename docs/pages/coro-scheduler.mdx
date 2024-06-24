@@ -31,23 +31,20 @@ yields or performs a IO operation using one of the `coro.io` namespace functions
 var task = try scheduler.spawn(entrypoint, .{ 1, "args" }, .{});
 ```
 
-### Reaping tasks
+### Collecting result from a task
 
-Following removes a task, freeing its memory and canceling all running IO operations for that task.
-The reap may be delayed in case the task is currently doing IO, the IO operations will be actively canceled.
-
-```zig
-scheduler.reap(task);
-```
-
-Alternatively reap all the tasks using the following.
-The reap may be delayed in case the tasks are currently doing IO, the IO operations will be actively canceled.
+Use the following to collect a result of a task.
+After collecting the result, the task handle is no longer valid.
 
 ```zig
-scheduler.reapAll();
+const res = task.collect(.wait);
 ```
 
-Call to `deinit` also reaps all tasks.
+To cancel and collect partial result.
+
+```zig
+const res = task.collect(.cancel);
+```
 
 ### Running
 
@@ -56,14 +53,18 @@ By running tick the scheduler will reap tasks that returned (dead tasks) and con
 tasks in case they completed their IO operations.
 
 ```zig
-// if there are pending IO operations, blocks until at least one completes
+// If there are pending IO operations, blocks until at least one completes
 try scheduler.tick(.blocking);
-// returns immediately regardless of the current IO state
+// Returns immediately regardless of the current IO state
 try scheduler.tick(.nonblocking);
 ```
 
-To run the scheduler until all tasks have returned aka died, then use the following.
+To run the scheduler until all tasks have completed use the following.
+The `mode` option can let you decide whether to wait for all tasks to finish, or to actively try cancel them.
 
 ```zig
-try scheduler.run();
+// Wait the tasks forever
+try scheduler.run(.wait);
+// Actively cancel the tasks
+try scheduler.run(.cancel);
 ```

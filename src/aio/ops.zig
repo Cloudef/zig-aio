@@ -20,13 +20,15 @@ const SharedError = error{
 
 /// Can be used to wakeup the backend, custom notifications, etc...
 pub const Nop = struct {
-    pub const Error = error{Success};
+    pub const Error = SharedError;
     pub const Domain = enum(u8) {
         coro, // reserved, please don't use
         _,
     };
     domain: Domain,
     ident: usize,
+    out_id: ?*Id = null,
+    out_error: ?*Error = null,
     link: Link = .unlinked,
     userdata: usize = 0,
 };
@@ -175,8 +177,9 @@ pub const LinkTimeout = struct {
 
 /// Cancel a operation
 pub const Cancel = struct {
-    pub const Error = error{ Success, InProgress, NotFound };
+    pub const Error = error{ InProgress, NotFound } || SharedError;
     id: Id,
+    out_id: ?*Id = null,
     out_error: ?*Error = null,
     link: Link = .unlinked,
     userdata: usize = 0,
