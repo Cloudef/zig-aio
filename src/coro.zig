@@ -56,7 +56,9 @@ pub const io = struct {
     pub inline fn single(operation: anytype) (aio.Error || @TypeOf(operation).Error)!void {
         var op: @TypeOf(operation) = operation;
         var err: @TypeOf(operation).Error = error.Success;
-        if (@hasField(@TypeOf(op), "out_error")) op.out_error = &err;
-        if (try complete(.{op}) > 0) return err;
+        op.out_error = &err;
+        if (try complete(.{op}) > 0) {
+            return if (err == error.Success) error.Canceled else err;
+        }
     }
 };
