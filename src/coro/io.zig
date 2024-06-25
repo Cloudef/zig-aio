@@ -20,6 +20,9 @@ pub fn do(operations: anytype, status: Frame.Status) Error!u16 {
             op.userdata = @intFromPtr(ctx);
         }
 
+        // coro io operations get merged into one, having .link on last operation is always a mistake
+        work.ops[operations.len - 1].link = .unlinked;
+
         try frame.scheduler.io.queue(work.ops);
         // wait until scheduler actually submits our work
         const ack = frame.scheduler.io_ack;
