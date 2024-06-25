@@ -1,6 +1,5 @@
 const std = @import("std");
 const aio = @import("aio");
-const io = @import("io.zig");
 const Fiber = @import("zefi.zig");
 const Scheduler = @import("Scheduler.zig");
 const common = @import("common.zig");
