@@ -3,6 +3,7 @@ const aio = @import("aio");
 const Fiber = @import("zefi.zig");
 const Scheduler = @import("Scheduler.zig");
 const common = @import("common.zig");
+const log = std.log.scoped(.coro);
 
 pub const List = std.DoublyLinkedList(common.Link(@This(), "link", .double));
 pub const stack_alignment = Fiber.stack_alignment;
@@ -54,7 +55,6 @@ inline fn entrypoint(
     stack: ?Fiber.Stack,
     Result: type,
     out_frame: **@This(),
-    tracked: bool,
     comptime func: anytype,
     args: anytype,
 ) void {
@@ -71,7 +71,7 @@ inline fn entrypoint(
 
     debug("spawned: {}", .{frame});
     res = @call(.always_inline, func, args);
-    scheduler.num_complete += @intFromBool(tracked);
+    scheduler.num_complete += 1;
 
     // keep the stack alive, until the task is collected
     yield(.completed);
@@ -82,7 +82,6 @@ pub fn init(
     stack: Stack,
     managed_stack: bool,
     Result: type,
-    tracked: bool,
     comptime func: anytype,
     args: anytype,
 ) Error!*@This() {
@@ -92,12 +91,10 @@ pub fn init(
         if (managed_stack) stack else null,
         Result,
         &frame,
-        tracked,
         func,
         args,
     });
     fiber.switchTo();
-    if (!tracked) scheduler.frames.remove(&frame.link);
     return frame;
 }
 
@@ -111,12 +108,10 @@ fn wakeupWaiters(self: *@This()) void {
 
 pub fn deinit(self: *@This()) void {
     debug("deinit: {}", .{self});
-    if (self != self.scheduler.helper) {
-        std.debug.assert(self.status == .completed);
-        self.scheduler.frames.remove(&self.link);
-        self.scheduler.num_complete -= 1;
-        self.wakeupWaiters();
-    }
+    std.debug.assert(self.status == .completed);
+    self.scheduler.frames.remove(&self.link);
+    self.scheduler.num_complete -= 1;
+    self.wakeupWaiters();
     if (self.stack) |stack| self.scheduler.allocator.free(stack);
     // stack is now gone, doing anything after this with @This() is ub
 }
@@ -152,19 +147,43 @@ pub fn complete(self: *@This(), mode: CompleteMode, comptime Result: type) Resul
     std.debug.assert(!self.canceled);
     debug("complete: {}, {s}", .{ self, @tagName(mode) });
 
-    var frame: *@This() = current() orelse self.scheduler.helper;
-    while (self.status != .completed) {
-        if (mode == .cancel and tryCancel(self)) break;
-        self.waiters.prepend(&frame.wait_link);
-        defer self.waiters.remove(&frame.wait_link);
-        if (frame == self.scheduler.helper) {
-            frame.wakeup(.reset_event);
-        } else {
+    if (current()) |frame| {
+        while (self.status != .completed) {
+            if (mode == .cancel and tryCancel(self)) break;
+            self.waiters.prepend(&frame.wait_link);
+            defer self.waiters.remove(&frame.wait_link);
             yield(.reset_event);
+        }
+    } else {
+        var timer: ?std.time.Timer = std.time.Timer.start() catch null;
+        while (self.status != .completed) {
+            if (mode == .cancel and tryCancel(self)) break;
+            if (timer != null and self.status != .io_cancel) {
+                if (timer.?.read() >= 5 * std.time.ns_per_s) {
+                    log.err("deadlock detected, tearing down the scheduler by a force", .{});
+                    self.scheduler.state = .tear_down;
+                    break;
+                }
+            } else if (timer != null and self.status == .io_cancel) {
+                timer.?.reset(); // don't count the possible long lasting io tasks
+            }
+            _ = self.scheduler.tick(.blocking) catch |err| switch (err) {
+                error.NoDevice => unreachable,
+                error.SystemOutdated => unreachable,
+                error.PermissionDenied => unreachable,
+                else => |e| {
+                    log.err("error: {}", .{e});
+                    log.err("tick failed in a critical section, tearing down the scheduler by a force", .{});
+                    self.scheduler.state = .tear_down;
+                    break;
+                },
+            };
         }
     }
 
     if (comptime Result != void) {
+        std.debug.assert(self.scheduler.state != .tear_down); // can only be handled if complete returns void
+        std.debug.assert(self.status == .completed);
         const res: Result = @as(*Result, @ptrCast(@alignCast(self.result))).*;
         self.deinit();
         return res;
@@ -210,7 +229,6 @@ fn debug(comptime fmt: []const u8, args: anytype) void {
     } else {
         const options = @import("../coro.zig").options;
         if (comptime !options.debug) return;
-        const scope = std.log.scoped(.coro);
-        scope.debug(fmt, args);
+        log.debug(fmt, args);
     }
 }

@@ -11,8 +11,7 @@ io: aio.Dynamic,
 io_ack: u8 = 0,
 frames: Frame.List = .{},
 num_complete: usize = 0,
-helper: *Frame = undefined,
-state: enum { init, helper_spawned, tear_down } = .init,
+state: enum { init, tear_down } = .init,
 
 pub const InitOptions = struct {
     /// This is a hint, the implementation makes the final call
@@ -27,16 +26,16 @@ pub fn init(allocator: std.mem.Allocator, opts: InitOptions) aio.Error!@This() {
 }
 
 pub fn deinit(self: *@This()) void {
-    if (self.state == .tear_down) self.state = .helper_spawned;
-    self.run(.cancel) catch @panic("unrecovable"); // if all tasks aren't dead yet
-    var next = self.frames.first;
-    while (next) |node| {
+    if (self.state == .tear_down) self.state = .init;
+    self.run(.cancel) catch {}; // try stop everything gracefully
+    self.io.deinit(self.allocator); // if not possible shutdown IO
+    var next = self.frames.first; // then force collect all the frames
+    while (next) |node| { // this may cause the program to leak memory
         next = node.next;
         var frame = node.data.cast();
+        frame.status = .completed;
         frame.deinit();
     }
-    if (self.state != .init) self.helper.deinit();
-    self.io.deinit(self.allocator);
     self.* = undefined;
 }
 
@@ -54,20 +53,13 @@ pub const SpawnOptions = struct {
 pub fn spawn(self: *@This(), comptime func: anytype, args: anytype, opts: SpawnOptions) SpawnError!Task.Generic(func) {
     if (self.state == .tear_down) return error.Unexpected;
 
-    if (self.state == .init) {
-        self.state = .helper_spawned;
-        const stack = try self.allocator.alignedAlloc(u8, Frame.stack_alignment, 4096);
-        errdefer self.allocator.free(stack);
-        self.helper = try Frame.init(self, stack, true, Task.Generic(helper).Result, false, helper, .{self});
-    }
-
     const stack = switch (opts.stack) {
         .unmanaged => |buf| buf,
         .managed => |sz| try self.allocator.alignedAlloc(u8, Frame.stack_alignment, sz),
     };
 
     errdefer if (opts.stack == .managed) self.allocator.free(stack);
-    const frame = try Frame.init(self, stack, opts.stack == .managed, Task.Generic(func).Result, true, func, args);
+    const frame = try Frame.init(self, stack, opts.stack == .managed, Task.Generic(func).Result, func, args);
     return .{ .frame = frame };
 }
 
@@ -95,29 +87,6 @@ pub fn run(self: *@This(), mode: CompleteMode) aio.Error!void {
         while (self.state != .tear_down) {
             if (try self.tick(.blocking) == 0) break;
         }
-    }
-}
-
-// Helper task when we have to spin the loop, for example when collecting results
-// This is a critical section, and if it fails there's not much we can do
-// TODO: add deadlock detection
-//       if some frame keeps yielding the same state and never finishes do a panic
-fn helper(self: *@This()) void {
-    Frame.yield(.reset_event);
-    const scope = std.log.scoped(.coro);
-    while (true) { // this task gets cleaned up from deinit
-        _ = self.tick(.blocking) catch |err| switch (err) {
-            error.NoDevice => unreachable,
-            error.SystemOutdated => unreachable,
-            error.PermissionDenied => unreachable,
-            error.SubmissionQueueFull => continue,
-            else => |e| {
-                scope.err("error: {}", .{e});
-                scope.err("self.tick failed in a critical section, tearing down the scheduler by a force", .{});
-                self.state = .tear_down;
-            },
-        };
-        Frame.yield(.reset_event);
     }
 }
 
