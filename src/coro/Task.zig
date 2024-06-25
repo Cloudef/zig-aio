@@ -25,6 +25,10 @@ pub inline fn current() ?@This() {
     }
 }
 
+pub inline fn isComplete(self: @This()) bool {
+    return self.cast().status == .completed;
+}
+
 pub inline fn signal(self: @This()) void {
     self.cast().signal();
 }
@@ -67,6 +71,10 @@ pub fn generic(self: @This(), Result: type) Generic(Result) {
     return .{ .frame = self.frame };
 }
 
+pub fn generic2(self: @This(), comptime func: anytype) Generic2(func) {
+    return .{ .frame = self.frame };
+}
+
 pub fn Generic(comptime ResultType: type) type {
     return struct {
         pub const Result = ResultType;
@@ -79,6 +87,10 @@ pub fn Generic(comptime ResultType: type) type {
 
         pub fn format(self: @This(), comptime fmt: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
             return self.any().format(fmt, opts, writer);
+        }
+
+        pub inline fn isComplete(self: @This()) bool {
+            return self.any().isComplete();
         }
 
         pub inline fn signal(self: @This()) void {
@@ -105,4 +117,8 @@ pub fn Generic(comptime ResultType: type) type {
             return .{ .frame = self.frame };
         }
     };
+}
+
+pub fn Generic2(comptime func: anytype) type {
+    return Generic(ReturnType(func));
 }

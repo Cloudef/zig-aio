@@ -75,8 +75,13 @@ pub fn spawnAnyForCompletition(self: *@This(), scheduler: *Scheduler, Result: ty
     return scheduler.spawnAny(Result, yieldForCompletition, .{ self, func, args }, opts);
 }
 
+/// Helper for getting the Task.Generic when using spawnForCompletition tasks.
+pub fn Generic2(comptime func: anytype) type {
+    return Task.Generic(ReturnTypeWithError(func, std.Thread.SpawnError));
+}
+
 /// Spawn a new coroutine which will immediately call `yieldForCompletition` for later collection of the result
-pub fn spawnForCompletition(self: *@This(), scheduler: *Scheduler, func: anytype, args: anytype, opts: Scheduler.SpawnOptions) Scheduler.SpawnError!Task.Generic(ReturnTypeWithError(func, std.Thread.SpawnError)) {
+pub fn spawnForCompletition(self: *@This(), scheduler: *Scheduler, func: anytype, args: anytype, opts: Scheduler.SpawnOptions) Scheduler.SpawnError!Generic2(func) {
     const Result = ReturnTypeWithError(func, std.Thread.SpawnError);
     const task = try self.spawnAnyForCompletition(scheduler, Result, func, args, opts);
     return task.generic(Result);
