@@ -28,6 +28,7 @@ pub fn build(b: *std.Build) void {
         .aio_dynamic,
         .aio_immediate,
         .coro,
+        .coro_wttr,
     }) |example| {
         const exe = b.addExecutable(.{
             .name = @tagName(example),
