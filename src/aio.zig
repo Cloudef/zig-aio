@@ -517,3 +517,7 @@ test "EventSource" {
         CloseEventSource{ .source = &source },
     });
 }
+
+test {
+    std.testing.refAllDecls(@This());
+}

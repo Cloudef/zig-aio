@@ -5,6 +5,7 @@ const Frame = @import("Frame.zig");
 const Task = @import("Task.zig");
 const common = @import("common.zig");
 const options = @import("../coro.zig").options;
+const ReturnType = common.ReturnType;
 
 allocator: std.mem.Allocator,
 io: aio.Dynamic,
@@ -50,7 +51,8 @@ pub const SpawnOptions = struct {
 
 /// Spawns a new task, the task may do local IO operations which will not block the whole process using the `io` namespace functions
 /// Call `frame.complete` to collect the result and free the stack
-pub fn spawn(self: *@This(), comptime func: anytype, args: anytype, opts: SpawnOptions) SpawnError!Task.Generic(func) {
+/// Normally one would use the `spawn` method, but in case a generic functions return type can't be deduced, use this any variant.
+pub fn spawnAny(self: *@This(), Result: type, comptime func: anytype, args: anytype, opts: SpawnOptions) SpawnError!Task {
     if (self.state == .tear_down) return error.Unexpected;
 
     const stack = switch (opts.stack) {
@@ -59,8 +61,15 @@ pub fn spawn(self: *@This(), comptime func: anytype, args: anytype, opts: SpawnO
     };
 
     errdefer if (opts.stack == .managed) self.allocator.free(stack);
-    const frame = try Frame.init(self, stack, opts.stack == .managed, Task.Generic(func).Result, func, args);
+    const frame = try Frame.init(self, stack, opts.stack == .managed, Result, func, args);
     return .{ .frame = frame };
+}
+
+/// Spawns a new task, the task may do local IO operations which will not block the whole process using the `io` namespace functions
+/// Call `frame.complete` to collect the result and free the stack
+pub inline fn spawn(self: *@This(), comptime func: anytype, args: anytype, opts: SpawnOptions) SpawnError!Task.Generic(ReturnType(func)) {
+    var task = try self.spawnAny(ReturnType(func), func, args, opts);
+    return task.generic(ReturnType(func));
 }
 
 /// Step the scheduler by a single step.

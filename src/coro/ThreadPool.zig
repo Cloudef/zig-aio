@@ -1,6 +1,8 @@
 const std = @import("std");
 const aio = @import("aio");
 const io = @import("io.zig");
+const Scheduler = @import("Scheduler.zig");
+const Task = @import("Task.zig");
 const Frame = @import("Frame.zig");
 const ReturnTypeWithError = @import("common.zig").ReturnTypeWithError;
 const ReturnType = @import("common.zig").ReturnType;
@@ -23,9 +25,17 @@ pub fn deinit(self: *@This()) void {
     self.* = undefined;
 }
 
-inline fn entrypoint(self: *@This(), completed: *bool, cancellation: *bool, comptime func: anytype, res: anytype, args: anytype) void {
-    _ = cancellation; // TODO
-    res.* = @call(.auto, func, args);
+pub const CancellationToken = struct {
+    canceled: bool = false,
+};
+
+inline fn entrypoint(self: *@This(), completed: *bool, token: *CancellationToken, comptime func: anytype, res: anytype, args: anytype) void {
+    const fun_info = @typeInfo(@TypeOf(func)).Fn;
+    if (fun_info.params.len > 0 and fun_info.params[0].type.? == *const CancellationToken) {
+        res.* = @call(.auto, func, .{token} ++ args);
+    } else {
+        res.* = @call(.auto, func, args);
+    }
     completed.* = true;
     const n = self.num_tasks.load(.acquire);
     for (0..n) |_| self.source.notify();
@@ -37,16 +47,16 @@ pub fn yieldForCompletition(self: *@This(), func: anytype, args: anytype) Return
     var res: ReturnType(func) = undefined;
     _ = self.num_tasks.fetchAdd(1, .monotonic);
     defer _ = self.num_tasks.fetchSub(1, .release);
-    var cancellation: bool = false;
-    try self.pool.spawn(entrypoint, .{ self, &completed, &cancellation, func, &res, args });
+    var token: CancellationToken = .{};
+    try self.pool.spawn(entrypoint, .{ self, &completed, &token, func, &res, args });
     while (!completed) {
         const nerr = io.do(.{
             aio.WaitEventSource{ .source = &self.source, .link = .soft },
-        }, if (cancellation) .io_cancel else .io) catch 1;
+        }, if (token.canceled) .io_cancel else .io) catch 1;
         if (nerr > 0) {
             if (Frame.current()) |frame| {
                 if (frame.canceled) {
-                    cancellation = true;
+                    token.canceled = true;
                     continue;
                 }
             }
@@ -59,8 +69,20 @@ pub fn yieldForCompletition(self: *@This(), func: anytype, args: anytype) Return
     return res;
 }
 
+/// Spawn a new coroutine which will immediately call `yieldForCompletition` for later collection of the result
+/// Normally one would use the `spawnForCompletition` method, but in case a generic functions return type can't be deduced, use this any variant.
+pub fn spawnAnyForCompletition(self: *@This(), scheduler: *Scheduler, Result: type, func: anytype, args: anytype, opts: Scheduler.SpawnOptions) Scheduler.SpawnError!Task {
+    return scheduler.spawnAny(Result, yieldForCompletition, .{ self, func, args }, opts);
+}
+
+/// Spawn a new coroutine which will immediately call `yieldForCompletition` for later collection of the result
+pub fn spawnForCompletition(self: *@This(), scheduler: *Scheduler, func: anytype, args: anytype, opts: Scheduler.SpawnOptions) Scheduler.SpawnError!Task.Generic(ReturnTypeWithError(func, std.Thread.SpawnError)) {
+    const Result = ReturnTypeWithError(func, std.Thread.SpawnError);
+    const task = try self.spawnAnyForCompletition(scheduler, Result, func, args, opts);
+    return task.generic(Result);
+}
+
 const ThreadPool = @This();
-const Scheduler = @import("Scheduler.zig");
 
 test "ThreadPool" {
     const Test = struct {
@@ -68,16 +90,44 @@ test "ThreadPool" {
             std.time.sleep(1 * std.time.ns_per_s);
             return 69;
         }
+
         fn task(pool: *ThreadPool) !void {
             const ret = try pool.yieldForCompletition(blocking, .{});
             try std.testing.expectEqual(69, ret);
         }
+
+        fn blockingCanceled(token: *const CancellationToken) u32 {
+            while (!token.canceled) {
+                std.time.sleep(1 * std.time.ns_per_s);
+            }
+            return if (token.canceled) 666 else 69;
+        }
+
+        fn task2(pool: *ThreadPool) !u32 {
+            return try pool.yieldForCompletition(blockingCanceled, .{});
+        }
     };
+
     var scheduler = try Scheduler.init(std.testing.allocator, .{});
     defer scheduler.deinit();
+
     var pool: ThreadPool = .{};
     try pool.start(std.testing.allocator, 0);
     defer pool.deinit();
+
     for (0..10) |_| _ = try scheduler.spawn(Test.task, .{&pool}, .{});
-    try scheduler.run();
+
+    {
+        var task = try scheduler.spawn(Test.task2, .{&pool}, .{});
+        const res = task.complete(.cancel);
+        try std.testing.expectEqual(666, res);
+    }
+
+    {
+        var task = try pool.spawnForCompletition(&scheduler, Test.blocking, .{}, .{});
+        const res = task.complete(.wait);
+        try std.testing.expectEqual(69, res);
+    }
+
+    try scheduler.run(.wait);
 }

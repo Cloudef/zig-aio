@@ -59,21 +59,19 @@ pub inline fn wakeupIf(self: @This(), yield_state: anytype) void {
 
 pub const CompleteMode = Frame.CompleteMode;
 
-pub inline fn complete(self: @This(), mode: CompleteMode, comptime func: anytype) ReturnType(func) {
-    return self.cast().complete(mode, ReturnType(func));
+pub inline fn complete(self: @This(), mode: CompleteMode, Result: type) Result {
+    return self.cast().complete(mode, Result);
 }
 
-pub fn generic(self: @This(), comptime func: anytype) Generic(func) {
-    return .{ .node = self.node };
+pub fn generic(self: @This(), Result: type) Generic(Result) {
+    return .{ .frame = self.frame };
 }
 
-pub fn Generic(comptime func: anytype) type {
+pub fn Generic(comptime ResultType: type) type {
     return struct {
-        pub const Result = ReturnType(func);
-        pub const Fn = @TypeOf(func);
+        pub const Result = ResultType;
 
         frame: *align(@alignOf(Frame)) anyopaque,
-        comptime entry: Fn = func,
 
         fn cast(self: *@This()) *Frame {
             return @ptrCast(self.frame);
@@ -100,7 +98,7 @@ pub fn Generic(comptime func: anytype) type {
         }
 
         pub inline fn complete(self: @This(), mode: CompleteMode) Result {
-            return self.any().complete(mode, func);
+            return self.any().complete(mode, Result);
         }
 
         pub inline fn any(self: @This()) Task {

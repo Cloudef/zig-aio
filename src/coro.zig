@@ -62,3 +62,7 @@ pub const io = struct {
         }
     }
 };
+
+test {
+    std.testing.refAllDecls(@This());
+}
