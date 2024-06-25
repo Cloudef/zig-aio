@@ -1,7 +1,7 @@
 const std = @import("std");
 const aio = @import("aio");
 const coro = @import("coro");
-const log = std.log.scoped(.coro_aio);
+const log = std.log.scoped(.coro_wttr);
 
 // Just for fun, try returning a error from one of these tasks
 
