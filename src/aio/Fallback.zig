@@ -279,7 +279,6 @@ fn start(self: *@This(), id: u16) !void {
             },
             else => {
                 self.pending.unset(id);
-                self.started.unset(id);
                 self.link_lock.set(id); // prevent restarting
                 self.tpool.spawn(onThreadExecutor, .{ self, id, &self.ops.nodes[id].used, self.readiness[id] }) catch return error.SystemResources;
             },
