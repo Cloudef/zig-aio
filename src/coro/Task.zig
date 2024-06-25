@@ -57,7 +57,7 @@ pub inline fn wakeup(self: @This()) void {
 
 pub inline fn wakeupIf(self: @This(), yield_state: anytype) void {
     if (self.state(@TypeOf(yield_state)) == yield_state) {
-        self.cast().wakeup(.yield);
+        self.wakeup();
     }
 }
 
