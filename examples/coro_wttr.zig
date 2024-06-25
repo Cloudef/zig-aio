@@ -49,6 +49,7 @@ fn loader(completed: *u32, max: *const u32) !void {
         "▰▱▱▱▱▱▱",
     };
 
+    defer std.debug.print("                                     \r", .{});
     var idx: u8 = 0;
     while (true) : (idx += 1) {
         try coro.io.single(aio.Timeout{ .ns = 80 * std.time.ns_per_ms });
@@ -66,7 +67,7 @@ pub fn main() !void {
 
     var max: u32 = 0;
     var completed: u32 = 0;
-    _ = try scheduler.spawn(loader, .{ &completed, &max }, .{});
+    const ltask = try scheduler.spawn(loader, .{ &completed, &max }, .{});
 
     var tpool: coro.ThreadPool = .{};
     try tpool.start(gpa.allocator(), 1);
@@ -85,6 +86,9 @@ pub fn main() !void {
         _ = try scheduler.tick(.blocking);
     }
 
+    // don't really have to call this, but I want the defer that cleans the progress bar to run
+    ltask.cancel();
+
     for (tasks.items, 0..) |task, idx| {
         const body = try task.complete(.wait);
         defer allocator.free(body);
@@ -92,6 +96,7 @@ pub fn main() !void {
             try std.io.getStdOut().writer().print("\nAaand the current master zig version is... ", .{});
         }
         try std.io.getStdOut().writeAll(body);
+        try std.io.getStdOut().writeAll("\n");
     }
 
     try std.io.getStdOut().writer().print("\nThat's all folks\n", .{});
