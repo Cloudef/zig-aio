@@ -67,6 +67,11 @@ pub inline fn complete(self: @This(), mode: CompleteMode, Result: type) Result {
     return self.cast().complete(mode, Result);
 }
 
+/// this is same as complete(.cancel, void)
+pub inline fn cancel(self: @This()) void {
+    self.cast().complete(.cancel, void);
+}
+
 pub fn generic(self: @This(), Result: type) Generic(Result) {
     return .{ .frame = self.frame };
 }
@@ -111,6 +116,10 @@ pub fn Generic(comptime ResultType: type) type {
 
         pub inline fn complete(self: @This(), mode: CompleteMode) Result {
             return self.any().complete(mode, Result);
+        }
+
+        pub inline fn cancel(self: @This()) void {
+            self.any().cancel();
         }
 
         pub inline fn any(self: @This()) Task {
