@@ -93,13 +93,9 @@ pub fn run(self: *@This(), mode: CompleteMode) aio.Error!void {
 fn ioQueue(uop: aio.Dynamic.Uop, id: aio.Id) void {
     switch (uop) {
         inline else => |*op| {
-            if (@TypeOf(op.*) == aio.Nop and op.domain == .coro) {
-                // reserved
-            } else {
-                std.debug.assert(op.userdata != 0);
-                var ctx: *common.OperationContext = @ptrFromInt(op.userdata);
-                ctx.id = id;
-            }
+            std.debug.assert(op.userdata != 0);
+            var ctx: *common.OperationContext = @ptrFromInt(op.userdata);
+            ctx.id = id;
         },
     }
 }
@@ -107,21 +103,17 @@ fn ioQueue(uop: aio.Dynamic.Uop, id: aio.Id) void {
 fn ioCompletition(uop: aio.Dynamic.Uop, _: aio.Id, failed: bool) void {
     switch (uop) {
         inline else => |*op| {
-            if (@TypeOf(op.*) == aio.Nop and op.domain == .coro) {
-                // reserved
-            } else {
-                std.debug.assert(op.userdata != 0);
-                var ctx: *common.OperationContext = @ptrFromInt(op.userdata);
-                var frame: *Frame = ctx.whole.frame;
-                std.debug.assert(ctx.whole.num_operations > 0);
-                ctx.completed = true;
-                ctx.whole.num_operations -= 1;
-                ctx.whole.num_errors += @intFromBool(failed);
-                if (ctx.whole.num_operations == 0) {
-                    switch (frame.status) {
-                        .io, .io_cancel => frame.wakeup(frame.status),
-                        else => unreachable,
-                    }
+            std.debug.assert(op.userdata != 0);
+            var ctx: *common.OperationContext = @ptrFromInt(op.userdata);
+            var frame: *Frame = ctx.whole.frame;
+            std.debug.assert(ctx.whole.num_operations > 0);
+            ctx.completed = true;
+            ctx.whole.num_operations -= 1;
+            ctx.whole.num_errors += @intFromBool(failed);
+            if (ctx.whole.num_operations == 0) {
+                switch (frame.status) {
+                    .io, .io_cancel => frame.wakeup(frame.status),
+                    else => unreachable,
                 }
             }
         },
