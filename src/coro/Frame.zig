@@ -66,7 +66,7 @@ inline fn entrypoint(
         .result = &res,
     };
     frame.fiber.getUserDataPtr().* = @intFromPtr(&frame);
-    scheduler.frames.prepend(&frame.link);
+    scheduler.frames.append(&frame.link);
     out_frame.* = &frame;
 
     debug("spawned: {}", .{frame});

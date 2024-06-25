@@ -79,7 +79,7 @@ pub const CompleteMode = Frame.CompleteMode;
 pub fn run(self: *@This(), mode: CompleteMode) aio.Error!void {
     if (mode == .cancel) {
         // start canceling tasks starting from the most recent one
-        while (self.frames.first) |node| {
+        while (self.frames.last) |node| {
             if (self.state == .tear_down) return error.Unexpected;
             node.data.cast().complete(.cancel, void);
         }
