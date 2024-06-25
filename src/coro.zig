@@ -5,7 +5,6 @@
 
 const std = @import("std");
 const aio = @import("aio");
-const Fiber = @import("coro/zefi.zig");
 
 const root = @import("root");
 pub const options: Options = if (@hasDecl(root, "coro_options")) root.coro_options else .{};
