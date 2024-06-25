@@ -30,7 +30,7 @@ pub const std_options: std.Options = .{
     .log_level = .debug,
 };
 
-fn server(lock: *coro.ResetEvent) !void {
+fn server(startup: *coro.ResetEvent) !void {
     var socket: std.posix.socket_t = undefined;
     try coro.io.single(aio.Socket{
         .domain = std.posix.AF.INET,
@@ -47,7 +47,7 @@ fn server(lock: *coro.ResetEvent) !void {
     try std.posix.bind(socket, &address.any, address.getOsSockLen());
     try std.posix.listen(socket, 128);
 
-    lock.set();
+    startup.set();
 
     var client_sock: std.posix.socket_t = undefined;
     try coro.io.single(aio.Accept{ .socket = socket, .out_socket = &client_sock });
@@ -69,7 +69,7 @@ fn server(lock: *coro.ResetEvent) !void {
     });
 }
 
-fn client(lock: *coro.ResetEvent) !void {
+fn client(startup: *coro.ResetEvent) !void {
     var socket: std.posix.socket_t = undefined;
     try coro.io.single(aio.Socket{
         .domain = std.posix.AF.INET,
@@ -78,7 +78,7 @@ fn client(lock: *coro.ResetEvent) !void {
         .out_socket = &socket,
     });
 
-    lock.wait();
+    try startup.wait();
 
     const address = std.net.Address.initIp4(.{ 127, 0, 0, 1 }, 1327);
     try coro.io.single(aio.Connect{
@@ -110,9 +110,9 @@ pub fn main() !void {
     defer _ = gpa.deinit();
     var scheduler = try coro.Scheduler.init(gpa.allocator(), .{});
     defer scheduler.deinit();
-    var lock: coro.ResetEvent = .{};
-    _ = try scheduler.spawn(client, .{&lock}, .{});
-    _ = try scheduler.spawn(server, .{&lock}, .{});
+    var startup: coro.ResetEvent = .{};
+    _ = try scheduler.spawn(client, .{&startup}, .{});
+    _ = try scheduler.spawn(server, .{&startup}, .{});
     try scheduler.run(.wait);
 }
 ```
