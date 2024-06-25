@@ -27,7 +27,8 @@ pub fn init(allocator: std.mem.Allocator, opts: InitOptions) aio.Error!@This() {
 }
 
 pub fn deinit(self: *@This()) void {
-    self.run(.cancel) catch @panic("unrecovable");
+    if (self.state == .tear_down) self.state = .helper_spawned;
+    self.run(.cancel) catch @panic("unrecovable"); // if all tasks aren't dead yet
     var next = self.frames.first;
     while (next) |node| {
         next = node.next;
@@ -84,15 +85,16 @@ pub const CompleteMode = Frame.CompleteMode;
 
 /// Run until all tasks are complete.
 pub fn run(self: *@This(), mode: CompleteMode) aio.Error!void {
-    while (self.state != .tear_down) {
-        if (mode == .cancel) {
-            var next = self.frames.first;
-            while (next) |node| {
-                next = node.next;
-                _ = node.data.cast().tryCancel();
-            }
+    if (mode == .cancel) {
+        // start canceling tasks starting from the most recent one
+        while (self.frames.first) |node| {
+            if (self.state == .tear_down) return error.Unexpected;
+            node.data.cast().complete(.cancel, void);
         }
-        if (try self.tick(.blocking) == 0) break;
+    } else {
+        while (self.state != .tear_down) {
+            if (try self.tick(.blocking) == 0) break;
+        }
     }
 }
 
@@ -103,7 +105,7 @@ pub fn run(self: *@This(), mode: CompleteMode) aio.Error!void {
 fn helper(self: *@This()) void {
     Frame.yield(.reset_event);
     const scope = std.log.scoped(.coro);
-    while (self.state != .tear_down) {
+    while (true) { // this task gets cleaned up from deinit
         _ = self.tick(.blocking) catch |err| switch (err) {
             error.NoDevice => unreachable,
             error.SystemOutdated => unreachable,

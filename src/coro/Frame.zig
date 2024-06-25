@@ -66,7 +66,7 @@ inline fn entrypoint(
         .result = &res,
     };
     frame.fiber.getUserDataPtr().* = @intFromPtr(&frame);
-    scheduler.frames.append(&frame.link);
+    scheduler.frames.prepend(&frame.link);
     out_frame.* = &frame;
 
     debug("spawned: {}", .{frame});
@@ -164,9 +164,13 @@ pub fn complete(self: *@This(), mode: CompleteMode, comptime Result: type) Resul
         }
     }
 
-    const res: Result = @as(*Result, @ptrCast(@alignCast(self.result))).*;
-    self.deinit();
-    return res;
+    if (comptime Result != void) {
+        const res: Result = @as(*Result, @ptrCast(@alignCast(self.result))).*;
+        self.deinit();
+        return res;
+    } else {
+        self.deinit();
+    }
 }
 
 pub fn tryCancel(self: *@This()) bool {
