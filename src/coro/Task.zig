@@ -1,5 +1,7 @@
 const std = @import("std");
+const aio = @import("aio");
 const ReturnType = @import("common.zig").ReturnType;
+const ReturnTypeWithError = @import("common.zig").ReturnTypeWithError;
 const Frame = @import("Frame.zig");
 
 const Task = @This();
@@ -31,11 +33,14 @@ pub inline fn state(self: @This(), T: type) T {
     return @enumFromInt(self.cast().yield_state);
 }
 
-pub inline fn yield(yield_state: anytype) void {
+pub const YieldError = error{Canceled};
+
+pub inline fn yield(yield_state: anytype) YieldError!void {
     if (Frame.current()) |frame| {
         frame.yield_state = @intFromEnum(yield_state);
         if (frame.yield_state == 0) @panic("yield_state `0` is reserved");
         Frame.yield(.yield);
+        if (frame.canceled) return error.Canceled;
     } else {
         unreachable;
     }

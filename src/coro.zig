@@ -40,7 +40,7 @@ pub const io = struct {
     pub inline fn complete(operations: anytype) aio.Error!u16 {
         const do = @import("coro/io.zig").do;
         return do(operations, .io) catch |err| switch (err) {
-            error.OperationCanceled => operations.len,
+            error.Canceled => operations.len,
             else => |e| e,
         };
     }

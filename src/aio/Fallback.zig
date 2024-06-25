@@ -137,19 +137,19 @@ inline fn queueOperation(self: *@This(), op: anytype) aio.Error!u16 {
     return id;
 }
 
-pub fn queue(self: *@This(), comptime len: u16, work: anytype) aio.Error!void {
+pub fn queue(self: *@This(), comptime len: u16, work: anytype, cb: ?aio.Dynamic.QueueCallback) aio.Error!void {
     if (comptime len == 1) {
-        _ = try self.queueOperation(&work.ops[0]);
+        const id = try self.queueOperation(&work.ops[0]);
+        if (cb) |f| f(self.ops.nodes[id].used, @enumFromInt(id));
     } else {
         var ids: std.BoundedArray(u16, len) = .{};
         errdefer for (ids.constSlice()) |id| self.removeOp(id);
-        inline for (&work.ops) |*op| {
-            ids.append(try self.queueOperation(op)) catch unreachable;
-        }
+        inline for (&work.ops) |*op| ids.append(try self.queueOperation(op)) catch unreachable;
+        if (cb) |f| for (ids.constSlice()) |id| f(self.ops.nodes[id].used, @enumFromInt(id));
     }
 }
 
-pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode, cb: ?aio.Dynamic.Callback) aio.Error!aio.CompletionResult {
+pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode, cb: ?aio.Dynamic.CompletionCallback) aio.Error!aio.CompletionResult {
     if (!try self.submit()) return .{};
     defer self.pfd.reset();
 
@@ -166,8 +166,8 @@ pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode, cb: ?aio.Dynam
     var res: aio.CompletionResult = .{};
     for (self.pfd.items[0..self.pfd.len]) |pfd| {
         if (pfd.revents == 0) continue;
-        std.debug.assert(pfd.revents & std.posix.POLL.NVAL == 0);
         if (pfd.fd == self.source.fd) {
+            std.debug.assert(pfd.revents & std.posix.POLL.NVAL == 0);
             std.debug.assert(pfd.revents & std.posix.POLL.ERR == 0);
             std.debug.assert(pfd.revents & std.posix.POLL.HUP == 0);
             self.source.wait();
@@ -175,7 +175,7 @@ pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode, cb: ?aio.Dynam
         } else {
             var iter = self.ops.iterator();
             while (iter.next()) |e| if (pfd.fd == self.readiness[e.k].fd) {
-                if (pfd.revents & std.posix.POLL.ERR != 0 or pfd.revents & std.posix.POLL.HUP != 0) {
+                if (pfd.revents & std.posix.POLL.ERR != 0 or pfd.revents & std.posix.POLL.HUP != 0 or pfd.revents & std.posix.POLL.NVAL != 0) {
                     self.finish(e.k, error.Unexpected);
                     continue;
                 }
@@ -195,7 +195,7 @@ pub fn immediate(comptime len: u16, work: anytype) aio.Error!u16 {
     const allocator = sfb.get();
     var wrk = try init(allocator, len);
     defer wrk.deinit(allocator);
-    try wrk.queue(len, work);
+    try wrk.queue(len, work, null);
     var n: u16 = len;
     var num_errors: u16 = 0;
     while (n > 0) {
@@ -226,7 +226,7 @@ fn cancel(self: *@This(), id: u16) enum { in_progress, not_found, ok } {
         return .not_found;
     }
     // collect the result later
-    self.finish(id, error.OperationCanceled);
+    self.finish(id, error.Canceled);
     return .ok;
 }
 
@@ -346,7 +346,7 @@ fn completition(op: anytype, self: *@This(), res: Result) void {
     }
 }
 
-fn handleFinished(self: *@This(), cb: ?aio.Dynamic.Callback) aio.CompletionResult {
+fn handleFinished(self: *@This(), cb: ?aio.Dynamic.CompletionCallback) aio.CompletionResult {
     {
         self.finished_mutex.lock();
         defer self.finished_mutex.unlock();
@@ -363,7 +363,7 @@ fn handleFinished(self: *@This(), cb: ?aio.Dynamic.Callback) aio.CompletionResul
             debug("complete: {}: {} [OK]", .{ res.id, std.meta.activeTag(self.ops.nodes[res.id].used) });
         }
 
-        if (self.ops.nodes[res.id].used == .link_timeout and res.failure == error.OperationCanceled) {
+        if (self.ops.nodes[res.id].used == .link_timeout and res.failure == error.Canceled) {
             // special case
         } else {
             num_errors += @intFromBool(res.failure != error.Success);

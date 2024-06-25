@@ -187,7 +187,7 @@ pub inline fn perform(op: anytype, readiness: Readiness) Operation.Error!void {
                 const e = std.posix.errno(res);
                 if (e != .SUCCESS) return switch (e) {
                     .SUCCESS, .INTR, .INVAL, .AGAIN => unreachable,
-                    .CANCELED => error.OperationCanceled,
+                    .CANCELED => error.Canceled,
                     .ACCES => error.AccessDenied,
                     .PERM => error.AccessDenied,
                     .BUSY => error.FileBusy,

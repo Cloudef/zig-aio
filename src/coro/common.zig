@@ -10,7 +10,7 @@ pub const WholeContext = struct {
 
 pub const OperationContext = struct {
     whole: *WholeContext,
-    id: aio.Id = @enumFromInt(0),
+    id: ?aio.Id = null,
     completed: bool = false,
 };
 
@@ -32,17 +32,16 @@ pub fn Link(comptime T: type, comptime field: []const u8, comptime container: en
 }
 
 pub fn ReturnType(comptime func: anytype) type {
-    const base = @typeInfo(@TypeOf(func)).Fn.return_type.?;
-    return switch (@typeInfo(base)) {
-        .ErrorUnion => |eu| eu.error_set!eu.payload,
-        else => base,
-    };
+    return @typeInfo(@TypeOf(func)).Fn.return_type.?;
 }
 
-pub fn ReturnTypeWithError(comptime func: anytype, comptime Error: type) type {
-    const base = @typeInfo(@TypeOf(func)).Fn.return_type.?;
-    return switch (@typeInfo(base)) {
-        .ErrorUnion => |eu| (Error || eu.error_set)!eu.payload,
-        else => Error!base,
+pub fn ReturnTypeWithError(comptime func: anytype, comptime E: type) type {
+    return MixErrorUnion(ReturnType(func), E);
+}
+
+pub fn MixErrorUnion(comptime T: type, comptime E: type) type {
+    return switch (@typeInfo(T)) {
+        .ErrorUnion => |eu| (E || eu.error_set)!eu.payload,
+        else => E!T,
     };
 }

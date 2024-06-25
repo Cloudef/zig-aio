@@ -84,19 +84,21 @@ inline fn queueOperation(self: *@This(), op: anytype) aio.Error!u16 {
     return self.ops.add(@unionInit(Operation.Union, tag, op.*)) catch unreachable;
 }
 
-pub fn queue(self: *@This(), comptime len: u16, work: anytype) aio.Error!void {
+pub fn queue(self: *@This(), comptime len: u16, work: anytype, cb: ?aio.Dynamic.QueueCallback) aio.Error!void {
     if (comptime len == 1) {
-        _ = try self.queueOperation(&work.ops[0]);
+        const id = try self.queueOperation(&work.ops[0]);
+        if (cb) |f| f(self.ops.nodes[id].used, @enumFromInt(id));
     } else {
         var ids: std.BoundedArray(u16, len) = .{};
         errdefer for (ids.constSlice()) |id| self.ops.remove(id);
         inline for (&work.ops) |*op| ids.append(try self.queueOperation(op)) catch unreachable;
+        if (cb) |f| for (ids.constSlice()) |id| f(self.ops.nodes[id].used, @enumFromInt(id));
     }
 }
 
 pub const NOP = std.math.maxInt(u64);
 
-pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode, cb: ?aio.Dynamic.Callback) aio.Error!aio.CompletionResult {
+pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode, cb: ?aio.Dynamic.CompletionCallback) aio.Error!aio.CompletionResult {
     if (self.ops.empty()) return .{};
 
     if (mode == .nonblocking) {
@@ -323,13 +325,13 @@ inline fn uring_handle_completion(op: anytype, cqe: *std.os.linux.io_uring_cqe) 
     if (err != .SUCCESS) {
         const res: @TypeOf(op.*).Error = switch (comptime Operation.tagFromPayloadType(@TypeOf(op.*))) {
             .nop => switch (err) {
-                .CANCELED => error.OperationCanceled,
+                .CANCELED => error.Canceled,
                 else => std.posix.unexpectedErrno(err),
             },
             .fsync => switch (err) {
                 .SUCCESS, .INTR, .INVAL, .FAULT, .AGAIN, .ROFS => unreachable,
                 .BADF => unreachable, // not a file
-                .CANCELED => error.OperationCanceled,
+                .CANCELED => error.Canceled,
                 .IO => error.InputOutput,
                 .NOSPC => error.NoSpaceLeft,
                 .DQUOT => error.DiskQuota,
@@ -338,7 +340,7 @@ inline fn uring_handle_completion(op: anytype, cqe: *std.os.linux.io_uring_cqe) 
             },
             .read => switch (err) {
                 .SUCCESS, .INTR, .INVAL, .FAULT, .AGAIN, .ISDIR => unreachable,
-                .CANCELED => error.OperationCanceled,
+                .CANCELED => error.Canceled,
                 .BADF => error.NotOpenForReading,
                 .IO => error.InputOutput,
                 .PERM => error.AccessDenied,
@@ -352,7 +354,7 @@ inline fn uring_handle_completion(op: anytype, cqe: *std.os.linux.io_uring_cqe) 
             },
             .write => switch (err) {
                 .SUCCESS, .INTR, .INVAL, .FAULT, .AGAIN, .DESTADDRREQ => unreachable,
-                .CANCELED => error.OperationCanceled,
+                .CANCELED => error.Canceled,
                 .DQUOT => error.DiskQuota,
                 .FBIG => error.FileTooBig,
                 .BADF => error.NotOpenForWriting,
@@ -367,7 +369,7 @@ inline fn uring_handle_completion(op: anytype, cqe: *std.os.linux.io_uring_cqe) 
             },
             .accept => switch (err) {
                 .SUCCESS, .INTR, .FAULT, .AGAIN, .DESTADDRREQ => unreachable,
-                .CANCELED => error.OperationCanceled,
+                .CANCELED => error.Canceled,
                 .BADF => unreachable, // always a race condition
                 .CONNABORTED => error.ConnectionAborted,
                 .INVAL => error.SocketNotListening,
@@ -383,7 +385,7 @@ inline fn uring_handle_completion(op: anytype, cqe: *std.os.linux.io_uring_cqe) 
             },
             .connect => switch (err) {
                 .SUCCESS, .INTR, .INVAL, .AGAIN, .DESTADDRREQ, .INPROGRESS => unreachable,
-                .CANCELED => error.OperationCanceled,
+                .CANCELED => error.Canceled,
                 .ACCES => error.PermissionDenied,
                 .PERM => error.PermissionDenied,
                 .ADDRINUSE => error.AddressInUse,
@@ -406,7 +408,7 @@ inline fn uring_handle_completion(op: anytype, cqe: *std.os.linux.io_uring_cqe) 
             },
             .recv => switch (err) {
                 .SUCCESS, .INTR, .INVAL, .FAULT, .AGAIN => unreachable,
-                .CANCELED => error.OperationCanceled,
+                .CANCELED => error.Canceled,
                 .BADF => unreachable, // always a race condition
                 .NOTCONN => error.SocketNotConnected,
                 .NOTSOCK => unreachable,
@@ -418,7 +420,7 @@ inline fn uring_handle_completion(op: anytype, cqe: *std.os.linux.io_uring_cqe) 
             },
             .send => switch (err) {
                 .SUCCESS, .INTR, .INVAL, .AGAIN => unreachable,
-                .CANCELED => error.OperationCanceled,
+                .CANCELED => error.Canceled,
                 .ACCES => error.AccessDenied,
                 .ALREADY => error.FastOpenAlreadyInProgress,
                 .BADF => unreachable, // always a race condition
@@ -439,7 +441,7 @@ inline fn uring_handle_completion(op: anytype, cqe: *std.os.linux.io_uring_cqe) 
             },
             .open_at => switch (err) {
                 .SUCCESS, .INTR, .INVAL, .AGAIN => unreachable,
-                .CANCELED => error.OperationCanceled,
+                .CANCELED => error.Canceled,
                 .ACCES => error.AccessDenied,
                 .FBIG => error.FileTooBig,
                 .OVERFLOW => error.FileTooBig,
@@ -460,35 +462,35 @@ inline fn uring_handle_completion(op: anytype, cqe: *std.os.linux.io_uring_cqe) 
                 else => std.posix.unexpectedErrno(err),
             },
             .close_file, .close_dir, .close_socket => switch (err) {
-                .CANCELED => error.OperationCanceled,
+                .CANCELED => error.Canceled,
                 else => std.posix.unexpectedErrno(err),
             },
             .notify_event_source, .wait_event_source, .close_event_source => switch (err) {
-                .CANCELED => error.OperationCanceled,
+                .CANCELED => error.Canceled,
                 else => std.posix.unexpectedErrno(err),
             },
             .timeout => switch (err) {
                 .SUCCESS, .INTR, .INVAL, .AGAIN => unreachable,
                 .TIME => error.Success,
-                .CANCELED => error.OperationCanceled,
+                .CANCELED => error.Canceled,
                 else => std.posix.unexpectedErrno(err),
             },
             .link_timeout => switch (err) {
                 .SUCCESS, .INTR, .INVAL, .AGAIN => unreachable,
                 .TIME => error.Expired,
-                .ALREADY, .CANCELED => error.OperationCanceled,
+                .ALREADY, .CANCELED => error.Canceled,
                 else => std.posix.unexpectedErrno(err),
             },
             .cancel => switch (err) {
                 .SUCCESS, .INTR, .INVAL, .AGAIN => unreachable,
                 .ALREADY => error.InProgress,
                 .NOENT => error.NotFound,
-                .CANCELED => error.OperationCanceled,
+                .CANCELED => error.Canceled,
                 else => std.posix.unexpectedErrno(err),
             },
             .rename_at => switch (err) {
                 .SUCCESS, .INTR, .INVAL, .AGAIN => unreachable,
-                .CANCELED => error.OperationCanceled,
+                .CANCELED => error.Canceled,
                 .ACCES => error.AccessDenied,
                 .PERM => error.AccessDenied,
                 .BUSY => error.FileBusy,
@@ -510,7 +512,7 @@ inline fn uring_handle_completion(op: anytype, cqe: *std.os.linux.io_uring_cqe) 
             },
             .unlink_at => switch (err) {
                 .SUCCESS, .INTR, .AGAIN => unreachable,
-                .CANCELED => error.OperationCanceled,
+                .CANCELED => error.Canceled,
                 .ACCES => error.AccessDenied,
                 .PERM => error.AccessDenied,
                 .BUSY => error.FileBusy,
@@ -531,7 +533,7 @@ inline fn uring_handle_completion(op: anytype, cqe: *std.os.linux.io_uring_cqe) 
             },
             .mkdir_at => switch (err) {
                 .SUCCESS, .INTR, .INVAL, .AGAIN => unreachable,
-                .CANCELED => error.OperationCanceled,
+                .CANCELED => error.Canceled,
                 .ACCES => error.AccessDenied,
                 .BADF => unreachable,
                 .PERM => error.AccessDenied,
@@ -552,7 +554,7 @@ inline fn uring_handle_completion(op: anytype, cqe: *std.os.linux.io_uring_cqe) 
             },
             .symlink_at => switch (err) {
                 .SUCCESS, .INTR, .INVAL, .AGAIN, .FAULT => unreachable,
-                .CANCELED => error.OperationCanceled,
+                .CANCELED => error.Canceled,
                 .ACCES => error.AccessDenied,
                 .PERM => error.AccessDenied,
                 .DQUOT => error.DiskQuota,
@@ -569,13 +571,13 @@ inline fn uring_handle_completion(op: anytype, cqe: *std.os.linux.io_uring_cqe) 
             },
             .child_exit => switch (err) {
                 .SUCCESS, .INTR, .AGAIN, .FAULT, .INVAL => unreachable,
-                .CANCELED => error.OperationCanceled,
+                .CANCELED => error.Canceled,
                 .CHILD => error.NotFound,
                 else => std.posix.unexpectedErrno(err),
             },
             .socket => switch (err) {
                 .SUCCESS, .INTR, .AGAIN, .FAULT => unreachable,
-                .CANCELED => error.OperationCanceled,
+                .CANCELED => error.Canceled,
                 .ACCES => error.PermissionDenied,
                 .AFNOSUPPORT => error.AddressFamilyNotSupported,
                 .INVAL => error.ProtocolFamilyNotAvailable,
@@ -592,7 +594,7 @@ inline fn uring_handle_completion(op: anytype, cqe: *std.os.linux.io_uring_cqe) 
         if (op.out_error) |out_error| out_error.* = res;
 
         if (res != error.Success) {
-            if ((comptime Operation.tagFromPayloadType(@TypeOf(op.*)) == .link_timeout) and res == error.OperationCanceled) {
+            if ((comptime Operation.tagFromPayloadType(@TypeOf(op.*)) == .link_timeout) and res == error.Canceled) {
                 // special case
             } else {
                 debug("complete: {}: {} [FAIL] {}", .{ cqe.user_data, comptime Operation.tagFromPayloadType(@TypeOf(op.*)), res });

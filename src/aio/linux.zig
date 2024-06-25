@@ -54,13 +54,13 @@ const FallbackSupport = union(enum) {
         }
     }
 
-    pub inline fn queue(self: *@This(), comptime len: u16, work: anytype) aio.Error!void {
+    pub inline fn queue(self: *@This(), comptime len: u16, work: anytype, cb: ?aio.Dynamic.QueueCallback) aio.Error!void {
         return switch (self.*) {
-            inline else => |*io| io.queue(len, work),
+            inline else => |*io| io.queue(len, work, cb),
         };
     }
 
-    pub inline fn complete(self: *@This(), work: anytype, cb: ?aio.Dynamic.Callback) aio.Error!aio.CompletionResult {
+    pub inline fn complete(self: *@This(), work: anytype, cb: ?aio.Dynamic.CompletionCallback) aio.Error!aio.CompletionResult {
         return switch (self.*) {
             inline else => |*io| io.complete(work, cb),
         };

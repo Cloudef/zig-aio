@@ -27,14 +27,14 @@ pub const WaitList = std.SinglyLinkedList(common.Link(@This(), "wait_link", .sin
 
 fiber: *Fiber,
 stack: ?Fiber.Stack = null,
+result: *anyopaque,
 scheduler: *Scheduler,
 canceled: bool = false,
 status: Status = .active,
-result: *anyopaque,
+yield_state: u8 = 0,
 link: List.Node = .{ .data = .{} },
 waiters: WaitList = .{},
 wait_link: WaitList.Node = .{ .data = .{} },
-yield_state: u8 = 0,
 
 pub fn current() ?*@This() {
     if (Fiber.current()) |fiber| {
@@ -45,16 +45,17 @@ pub fn current() ?*@This() {
 }
 
 pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-    try writer.print("{x}!{}", .{ @intFromPtr(self.fiber), self.status });
+    try writer.print("{x}:{}", .{ @intFromPtr(self.fiber), self.status });
 }
 
 pub const Error = error{OutOfMemory} || Fiber.Error;
 
 inline fn entrypoint(
     scheduler: *Scheduler,
-    stack: Fiber.Stack,
+    stack: ?Fiber.Stack,
     Result: type,
     out_frame: **@This(),
+    tracked: bool,
     comptime func: anytype,
     args: anytype,
 ) void {
@@ -71,25 +72,52 @@ inline fn entrypoint(
 
     debug("spawned: {}", .{frame});
     res = @call(.always_inline, func, args);
-    scheduler.num_complete += 1;
+    scheduler.num_complete += @intFromBool(tracked);
 
     // keep the stack alive, until the task is collected
     yield(.completed);
 }
 
-pub fn init(scheduler: *Scheduler, stack: Stack, Result: type, comptime func: anytype, args: anytype) Error!*@This() {
+pub fn init(
+    scheduler: *Scheduler,
+    stack: Stack,
+    managed_stack: bool,
+    Result: type,
+    tracked: bool,
+    comptime func: anytype,
+    args: anytype,
+) Error!*@This() {
     var frame: *@This() = undefined;
-    var fiber = try Fiber.init(stack, 0, entrypoint, .{ scheduler, stack, Result, &frame, func, args });
+    var fiber = try Fiber.init(stack, 0, entrypoint, .{
+        scheduler,
+        if (managed_stack) stack else null,
+        Result,
+        &frame,
+        tracked,
+        func,
+        args,
+    });
     fiber.switchTo();
+    if (!tracked) scheduler.frames.remove(&frame.link);
     return frame;
+}
+
+fn wakeupWaiters(self: *@This()) void {
+    var next = self.waiters.first;
+    while (next) |node| {
+        next = node.next;
+        node.data.cast().wakeup(.reset_event);
+    }
 }
 
 pub fn deinit(self: *@This()) void {
     debug("deinit: {}", .{self});
-    std.debug.assert(self.status == .completed);
-    self.scheduler.frames.remove(&self.link);
-    self.scheduler.num_complete -= 1;
-    while (self.waiters.popFirst()) |node| node.data.cast().wakeup(.reset_event);
+    if (self != self.scheduler.helper) {
+        std.debug.assert(self.status == .completed);
+        self.scheduler.frames.remove(&self.link);
+        self.scheduler.num_complete -= 1;
+        self.wakeupWaiters();
+    }
     if (self.stack) |stack| self.scheduler.allocator.free(stack);
     // stack is now gone, doing anything after this with @This() is ub
 }
@@ -110,7 +138,6 @@ pub inline fn wakeup(self: *@This(), expected_status: Status) void {
 
 pub fn yield(status: Status) void {
     if (current()) |frame| {
-        if (status != .completed and status != .io_cancel and frame.canceled) return;
         std.debug.assert(frame.status == .active);
         frame.status = status;
         debug("yielding: {}", .{frame});
@@ -123,20 +150,18 @@ pub fn yield(status: Status) void {
 pub const CompleteMode = enum { wait, cancel };
 
 pub fn complete(self: *@This(), mode: CompleteMode, comptime Result: type) Result {
-    if (self.canceled) return;
+    std.debug.assert(!self.canceled);
+    debug("complete: {}, {s}", .{ self, @tagName(mode) });
 
-    debug("complete: {}, {}", .{ self, mode });
-
-    if (current()) |frame| {
-        while (self.status != .completed) {
-            if (mode == .cancel and tryCancel(self)) break;
-            self.waiters.prepend(&frame.wait_link);
+    var frame: *@This() = current() orelse self.scheduler.helper;
+    while (self.status != .completed) {
+        if (mode == .cancel and tryCancel(self)) break;
+        self.waiters.prepend(&frame.wait_link);
+        defer self.waiters.remove(&frame.wait_link);
+        if (frame == self.scheduler.helper) {
+            frame.wakeup(.reset_event);
+        } else {
             yield(.reset_event);
-        }
-    } else {
-        while (self.status != .completed) {
-            if (mode == .cancel and tryCancel(self)) break;
-            if (self.scheduler.tick(.nonblocking) catch 0 == 0) break;
         }
     }
 
@@ -150,24 +175,25 @@ pub fn tryCancel(self: *@This()) bool {
         self.canceled = true;
         switch (self.status) {
             .active => {},
-            .io => {
+            .io => |status| {
                 debug("cancel... pending on io: {}", .{self});
-                self.wakeup(.io); // cancel io
+                self.wakeup(status); // cancel io
             },
             .io_cancel => {
-                debug("cancel... pending on io: {}", .{self});
+                debug("cancel... pending on cancel: {}", .{self});
+                // can't cancel
             },
-            .reset_event => {
+            .reset_event => |status| {
                 debug("cancel... reset event: {}", .{self});
-                self.wakeup(.reset_event);
+                self.wakeup(status);
             },
-            .semaphore => {
+            .semaphore => |status| {
                 debug("cancel... semaphore: {}", .{self});
-                self.wakeup(.semaphore);
+                self.wakeup(status);
             },
-            .yield => {
+            .yield => |status| {
                 debug("cancel... yield: {}", .{self});
-                self.wakeup(.yield);
+                self.wakeup(status);
             },
             .completed => unreachable,
         }

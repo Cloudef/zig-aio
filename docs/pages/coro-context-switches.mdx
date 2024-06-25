@@ -5,9 +5,10 @@
 To yield running task to the caller use the following.
 The function takes a enum value as a argument representing the yield state of the task.
 Enum value that corresponds to the integer `0` is resevered to indicate non yield state.
+Yielding may return the `error.Canceled` if the task has been canceled.
 
 ```zig
-coro.yield(SomeEnum.value);
+try coro.yield(SomeEnum.value);
 ```
 
 The current yield state of a task can be checked with `state` method.

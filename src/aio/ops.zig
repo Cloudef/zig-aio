@@ -14,7 +14,7 @@ pub const Link = enum {
 
 const SharedError = error{
     Success,
-    OperationCanceled,
+    Canceled,
     Unexpected,
 };
 
