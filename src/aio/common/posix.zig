@@ -4,7 +4,7 @@ const Operation = @import("../ops.zig").Operation;
 const windows = @import("windows.zig");
 
 pub const RENAME_NOREPLACE = 1 << 0;
-pub const PIDFD_NONBLOCK = @as(usize, 1 << @bitOffsetOf(std.posix.O, "NONBLOCK"));
+pub const O_NONBLOCK = @as(usize, 1 << @bitOffsetOf(std.posix.O, "NONBLOCK"));
 
 const EventFd = struct {
     fd: std.posix.fd_t,
@@ -275,8 +275,18 @@ pub inline fn openReadiness(op: anytype) OpenReadinessError!Readiness {
     return switch (comptime Operation.tagFromPayloadType(@TypeOf(op.*))) {
         .nop => .{},
         .fsync => .{},
-        .write => .{ .fd = op.file.handle, .mode = .out },
-        .read => .{ .fd = op.file.handle, .mode = .in },
+        .write => blk: {
+            if (builtin.target.isDarwin() and std.posix.isatty(op.file.handle)) {
+                return .{}; // nice :D will block one thread
+            }
+            break :blk .{ .fd = op.file.handle, .mode = .out };
+        },
+        .read => blk: {
+            if (builtin.target.isDarwin() and std.posix.isatty(op.file.handle)) {
+                return .{}; // nice :D will block one thread
+            }
+            break :blk .{ .fd = op.file.handle, .mode = .in };
+        },
         .accept, .recv => .{ .fd = op.socket, .mode = .in },
         .socket, .connect => .{},
         .send => .{ .fd = op.socket, .mode = .out },
@@ -301,7 +311,7 @@ pub inline fn openReadiness(op: anytype) OpenReadinessError!Readiness {
             if (builtin.target.os.tag == .windows) {
                 @panic("fixme");
             } else if (comptime @hasDecl(std.posix.system, "pidfd_open")) {
-                const res = std.posix.system.pidfd_open(op.child, PIDFD_NONBLOCK);
+                const res = std.posix.system.pidfd_open(op.child, O_NONBLOCK);
                 const e = std.posix.errno(res);
                 if (e != .SUCCESS) return switch (e) {
                     .INVAL, .SRCH => unreachable,

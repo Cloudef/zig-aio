@@ -5,9 +5,7 @@ pub fn FixedArrayList(T: type, SZ: type) type {
         items: []T,
         len: SZ = 0,
 
-        pub const Error = error{
-            OutOfMemory,
-        };
+        pub const Error = error{OutOfMemory};
 
         pub fn init(allocator: std.mem.Allocator, n: SZ) Error!@This() {
             return .{ .items = try allocator.alloc(T, n) };
@@ -30,6 +28,50 @@ pub fn FixedArrayList(T: type, SZ: type) type {
     };
 }
 
+pub fn DoubleBufferedFixedArrayList(T: type, SZ: type) type {
+    return struct {
+        mutex: std.Thread.Mutex = .{},
+        safe: FixedArrayList(T, SZ),
+        copy: []T align(std.atomic.cache_line),
+
+        pub const Error = error{OutOfMemory};
+
+        pub fn init(allocator: std.mem.Allocator, n: SZ) Error!@This() {
+            var safe = try FixedArrayList(T, SZ).init(allocator, n);
+            errdefer safe.deinit(allocator);
+            const copy = try allocator.alloc(T, n);
+            errdefer allocator.free(copy);
+            return .{ .safe = safe, .copy = copy };
+        }
+
+        pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
+            self.safe.deinit(allocator);
+            allocator.free(self.copy);
+            self.* = undefined;
+        }
+
+        pub fn add(self: *@This(), item: T) Error!void {
+            self.mutex.lock();
+            defer self.mutex.unlock();
+            try self.safe.add(item);
+        }
+
+        pub fn reset(self: *@This()) void {
+            self.mutex.lock();
+            defer self.mutex.unlock();
+            self.safe.reset();
+        }
+
+        pub fn swap(self: *@This()) []const T {
+            self.mutex.lock();
+            defer self.mutex.unlock();
+            defer self.safe.reset();
+            @memcpy(self.copy[0..self.safe.len], self.safe.items[0..self.safe.len]);
+            return self.copy[0..self.safe.len];
+        }
+    };
+}
+
 pub fn Pool(T: type, SZ: type) type {
     return struct {
         pub const Node = union(enum) { free: ?SZ, used: T };
@@ -38,9 +80,7 @@ pub fn Pool(T: type, SZ: type) type {
         num_free: SZ = 0,
         num_used: SZ = 0,
 
-        pub const Error = error{
-            OutOfMemory,
-        };
+        pub const Error = error{OutOfMemory};
 
         pub fn init(allocator: std.mem.Allocator, n: SZ) Error!@This() {
             return .{ .nodes = try allocator.alloc(Node, n) };
