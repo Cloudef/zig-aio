@@ -27,6 +27,10 @@ try pool.start(std.testing.allocator, 0);
 defer pool.deinit(); // pool must always be destroyed before scheduler
 
 _ = try scheduler.spawn(task, .{&pool}, .{});
+
+// Or alternatively, which does the same as above
+_ = try pool.spawnForCompletition(&scheduler, blockingCode, .{}, .{});
+
 try scheduler.run();
 ```
 

@@ -25,4 +25,4 @@ outside a task then the call would be equal to calling the equal function from t
 Use `aio.Cancel` operation to cancel the currently running operations in a task.
 The `out_error` of such operation will then be set as `error.Canceled`.
 
-Alternatively it's possible to call `task.complete(.cancel);` to actively cancel a task and collect its partial result.
+Alternatively it's possible to call `task.cancel()`, or `task.complete(.cancel);` to actively cancel a task and collect its partial result.

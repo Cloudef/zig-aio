@@ -22,3 +22,11 @@ switch (task.state(SomeEnum)) {
     value => task.wakeup(),
 }
 ```
+
+Shorthand for waking up task when the state is as expected.
+
+```zig
+task.wakeupIf(Task.SomeEnum);
+```
+
+Trying to wakeup a task that was not yielded by the user code is an programming error.

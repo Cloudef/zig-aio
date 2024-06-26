@@ -31,19 +31,25 @@ yields or performs a IO operation using one of the `coro.io` namespace functions
 var task = try scheduler.spawn(entrypoint, .{ 1, "args" }, .{});
 ```
 
+In case the return type of the function can not be deduced by the compiler, use the spawnAny variant.
+
+```zig
+var task = try scheduler.spawnAny(void, entrypoint, .{ 1, "args" }, .{});
+```
+
 ### Collecting result from a task
 
 Use the following to collect a result of a task.
 After collecting the result, the task handle is no longer valid.
 
 ```zig
-const res = task.collect(.wait);
+const res = task.complete(.wait);
 ```
 
 To cancel and collect partial result.
 
 ```zig
-const res = task.collect(.cancel);
+const res = task.complete(.cancel);
 ```
 
 ### Running
