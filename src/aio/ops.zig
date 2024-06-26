@@ -1,7 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const aio = @import("../aio.zig");
-const posix = @import("common/posix.zig");
+const posix = @import("posix.zig");
 
 pub const Id = enum(usize) { _ };
 

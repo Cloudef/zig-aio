@@ -1,8 +1,9 @@
 const std = @import("std");
 const aio = @import("../aio.zig");
 const Operation = @import("ops.zig").Operation;
-const Pool = @import("common/types.zig").Pool;
-const posix = @import("common/posix.zig");
+const Pool = @import("common.zig").Pool;
+const posix = @import("posix.zig");
+const linux = @import("posix/linux.zig");
 const log = std.log.scoped(.io_uring);
 
 fn debug(comptime fmt: []const u8, args: anytype) void {
@@ -272,7 +273,7 @@ inline fn uring_queue(io: *std.os.linux.IoUring, op: anytype, user_data: u64) ai
             break :blk try io.link_timeout(user_data, &ts, 0);
         },
         .cancel => try io.cancel(user_data, @intFromEnum(op.id), 0),
-        .rename_at => try io.renameat(user_data, op.old_dir.fd, op.old_path, op.new_dir.fd, op.new_path, posix.RENAME_NOREPLACE),
+        .rename_at => try io.renameat(user_data, op.old_dir.fd, op.old_path, op.new_dir.fd, op.new_path, linux.RENAME_NOREPLACE),
         .unlink_at => try io.unlinkat(user_data, op.dir.fd, op.path, 0),
         .mkdir_at => try io.mkdirat(user_data, op.dir.fd, op.path, op.mode),
         .symlink_at => try io.symlinkat(user_data, op.target, op.dir.fd, op.link_path),

@@ -1,11 +1,11 @@
 const builtin = @import("builtin");
 const std = @import("std");
-const posix = @import("common/posix.zig");
 const aio = @import("../aio.zig");
+const posix = @import("posix.zig");
 const Operation = @import("ops.zig").Operation;
-const Pool = @import("common/types.zig").Pool;
-const FixedArrayList = @import("common/types.zig").FixedArrayList;
-const DoubleBufferedFixedArrayList = @import("common/types.zig").DoubleBufferedFixedArrayList;
+const Pool = @import("common.zig").Pool;
+const FixedArrayList = @import("common.zig").FixedArrayList;
+const DoubleBufferedFixedArrayList = @import("common.zig").DoubleBufferedFixedArrayList;
 
 // This tries to emulate io_uring functionality.
 // If something does not match how it works on io_uring on linux, it should be change to match.
