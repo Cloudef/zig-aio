@@ -18,6 +18,9 @@ const SharedError = error{
     Unexpected,
 };
 
+// TODO: Support rest of the ops from <https://man.archlinux.org/man/io_uring_enter.2.en>
+//       Even linux/io_uring only ops
+
 /// Can be used to wakeup the backend, custom notifications, etc...
 pub const Nop = struct {
     pub const Error = SharedError;
@@ -264,8 +267,6 @@ pub const SymlinkAt = struct {
     link: Link = .unlinked,
     userdata: usize = 0,
 };
-
-// TODO: linkat
 
 /// std.process.Child.wait
 pub const ChildExit = struct {

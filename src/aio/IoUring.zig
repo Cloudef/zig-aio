@@ -28,6 +28,14 @@ const Supported = struct {
     }
 };
 
+// TODO: Support IOSQE_FIXED_FILE
+// TODO: Support IOSQE_BUFFER_SELECT
+// TODO: Support IOSQE_IO_DRAIN
+// TODO: Support IOSQE_ASYNC
+
+// Could also make io_uring based event source with `IORING_OP_MSG_RING`
+// However I've read some claims that passing messages to other ring has more
+// latency than actually using eventfd. Eventfd is simple and reliable.
 pub const EventSource = posix.EventSource;
 
 io: std.os.linux.IoUring,
