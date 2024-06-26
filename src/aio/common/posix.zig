@@ -192,6 +192,7 @@ pub inline fn perform(op: anytype, readiness: Readiness) Operation.Error!void {
                 };
             },
             .send_msg => _ = try std.posix.sendmsg(op.socket, op.msg, 0),
+            .shutdown => try std.posix.shutdown(op.socket, op.how),
             .open_at => if (builtin.target.os.tag == .windows) {
                 op.out_file.* = try op.dir.openFileZ(op.path, op.flags);
             } else {
@@ -309,7 +310,7 @@ pub inline fn openReadiness(op: anytype) OpenReadinessError!Readiness {
             break :blk .{ .fd = op.file.handle, .mode = .in };
         },
         .accept, .recv, .recv_msg => .{ .fd = op.socket, .mode = .in },
-        .socket, .connect => .{},
+        .socket, .connect, .shutdown => .{},
         .send, .send_msg => .{ .fd = op.socket, .mode = .out },
         .open_at, .close_file, .close_dir, .close_socket => .{},
         .timeout, .link_timeout => blk: {
@@ -418,7 +419,7 @@ pub inline fn armReadiness(op: anytype, readiness: Readiness) ArmReadinessError!
         },
         .nop => {},
         .fsync, .read, .write => {},
-        .socket, .accept, .connect, .recv, .send, .recv_msg, .send_msg => {},
+        .socket, .accept, .connect, .recv, .send, .recv_msg, .send_msg, .shutdown => {},
         .open_at, .close_file, .close_dir, .close_socket => {},
         .cancel, .rename_at, .unlink_at, .mkdir_at, .symlink_at => {},
         .notify_event_source, .wait_event_source, .close_event_source => {},
@@ -431,7 +432,7 @@ pub inline fn closeReadiness(op: anytype, readiness: Readiness) void {
         .timeout, .link_timeout, .child_exit => true,
         .nop => false,
         .fsync, .read, .write => false,
-        .socket, .accept, .connect, .recv, .send, .recv_msg, .send_msg => false,
+        .socket, .accept, .connect, .recv, .send, .recv_msg, .send_msg, .shutdown => false,
         .open_at, .close_file, .close_dir, .close_socket => false,
         .cancel, .rename_at, .unlink_at, .mkdir_at, .symlink_at => false,
         .notify_event_source, .wait_event_source, .close_event_source => false,

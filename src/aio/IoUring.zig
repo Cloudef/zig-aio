@@ -47,6 +47,7 @@ pub inline fn isSupported(op_types: []const type) bool {
             .send => std.os.linux.IORING_OP.SEND, // 5.6
             .recv_msg => std.os.linux.IORING_OP.RECVMSG, // 5.3
             .send_msg => std.os.linux.IORING_OP.SENDMSG, // 5.3
+            .shutdown => std.os.linux.IORING_OP.SHUTDOWN, // 5.11
             .open_at => std.os.linux.IORING_OP.OPENAT, // 5.15
             .close_file, .close_dir, .close_socket, .close_event_source => std.os.linux.IORING_OP.CLOSE, // 5.15
             .timeout => std.os.linux.IORING_OP.TIMEOUT, // 5.4
@@ -240,6 +241,11 @@ inline fn uring_queue(io: *std.os.linux.IoUring, op: anytype, user_data: u64) ai
         .send => try io.send(user_data, op.socket, op.buffer, 0),
         .recv_msg => try io.recvmsg(user_data, op.socket, op.out_msg, 0),
         .send_msg => try io.sendmsg(user_data, op.socket, op.msg, 0),
+        .shutdown => try io.shutdown(user_data, op.socket, switch (op.how) {
+            .recv => std.posix.SHUT.RD,
+            .send => std.posix.SHUT.RW,
+            .both => std.posix.SHUT.RDWR,
+        }),
         .open_at => try io.openat(user_data, op.dir.fd, op.path, posix.convertOpenFlags(op.flags), 0),
         .close_file => try io.close(user_data, op.file.handle),
         .close_dir => try io.close(user_data, op.dir.fd),
@@ -476,6 +482,13 @@ inline fn uring_handle_completion(op: anytype, cqe: *std.os.linux.io_uring_cqe) 
                 .NETDOWN => error.NetworkSubsystemFailed,
                 else => std.posix.unexpectedErrno(err),
             },
+            .shutdown => switch (err) {
+                .SUCCESS, .BADF, .INVAL => unreachable,
+                .NOTCONN => error.SocketNotConnected,
+                .NOTSOCK => unreachable,
+                .NOBUFS => error.SystemResources,
+                else => std.posix.unexpectedErrno(err),
+            },
             .open_at => switch (err) {
                 .SUCCESS, .INTR, .INVAL, .AGAIN => unreachable,
                 .CANCELED => error.Canceled,
@@ -655,7 +668,7 @@ inline fn uring_handle_completion(op: anytype, cqe: *std.os.linux.io_uring_cqe) 
         .send => if (op.out_written) |w| {
             w.* = @intCast(cqe.res);
         },
-        .recv_msg, .send_msg => {},
+        .recv_msg, .send_msg, .shutdown => {},
         .open_at => op.out_file.handle = cqe.res,
         .close_file, .close_dir, .close_socket => {},
         .notify_event_source, .wait_event_source, .close_event_source => {},

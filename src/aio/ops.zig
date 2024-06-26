@@ -141,6 +141,17 @@ pub const SendMsg = struct {
     userdata: usize = 0,
 };
 
+/// std.posix.shutdown
+pub const Shutdown = struct {
+    pub const Error = std.posix.ShutdownError || SharedError;
+    socket: std.posix.socket_t,
+    how: std.posix.ShutdownHow,
+    out_id: ?*Id = null,
+    out_error: ?*Error = null,
+    link: Link = .unlinked,
+    userdata: usize = 0,
+};
+
 /// std.fs.Dir.openFile
 pub const OpenAt = struct {
     pub const Error = std.fs.File.OpenError || SharedError;
@@ -340,6 +351,7 @@ pub const Operation = enum {
     send,
     recv_msg,
     send_msg,
+    shutdown,
     open_at,
     close_file,
     close_dir,
@@ -368,6 +380,7 @@ pub const Operation = enum {
         .send = Send,
         .recv_msg = RecvMsg,
         .send_msg = SendMsg,
+        .shutdown = Shutdown,
         .open_at = OpenAt,
         .close_file = CloseFile,
         .close_dir = CloseDir,
