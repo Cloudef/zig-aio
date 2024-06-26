@@ -205,10 +205,6 @@ pub fn immediate(comptime len: u16, work: anytype) aio.Error!u16 {
 
 fn finish(self: *@This(), id: u16, failure: Operation.Error) void {
     debug("finish: {} {}", .{ id, failure });
-    // for (self.finished.items[0..self.finished.len]) |*i| if (i.id == id) {
-    //     i.* = .{ .id = id, .failure = failure };
-    //     return;
-    // };
     self.finished.add(.{ .id = id, .failure = failure }) catch unreachable;
     self.source.notify();
 }
