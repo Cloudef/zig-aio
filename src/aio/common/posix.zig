@@ -176,10 +176,6 @@ pub inline fn perform(op: anytype, readiness: Readiness) Operation.Error!void {
                 if (op.out_written) |w| w.* = written;
             },
             .recv_msg => {
-                const recvmsg = if (@hasDecl(std.posix.system, "recvmsg"))
-                    std.posix.system.recvmsg
-                else
-                    std.c.recvmsg;
                 const e = std.posix.errno(recvmsg(op.socket, op.out_msg, 0));
                 if (e != .SUCCESS) return switch (e) {
                     .SUCCESS, .INVAL, .BADF, .NOTSOCK => unreachable,
@@ -191,7 +187,39 @@ pub inline fn perform(op: anytype, readiness: Readiness) Operation.Error!void {
                     else => std.posix.unexpectedErrno(e),
                 };
             },
-            .send_msg => _ = try std.posix.sendmsg(op.socket, op.msg, 0),
+            .send_msg => {
+                if (@hasDecl(std.posix.system, "msghdr_const")) {
+                    _ = try std.posix.sendmsg(op.socket, op.msg, 0);
+                } else {
+                    const e = std.posix.errno(sendmsg(op.socket, op.msg, 0));
+                    if (e != .SUCCESS) return switch (e) {
+                        .SUCCESS, .INVAL, .BADF, .NOTSOCK => unreachable,
+                        .ACCES => error.AccessDenied,
+                        .AGAIN => error.WouldBlock,
+                        .ALREADY => error.FastOpenAlreadyInProgress,
+                        .CONNRESET => error.ConnectionResetByPeer,
+                        .DESTADDRREQ => unreachable, // The socket is not connection-mode, and no peer address is set.
+                        .FAULT => unreachable, // An invalid user space address was specified for an argument.
+                        .INTR => continue,
+                        .ISCONN => unreachable, // connection-mode socket was connected already but a recipient was specified
+                        .MSGSIZE => error.MessageTooBig,
+                        .NOBUFS => error.SystemResources,
+                        .NOMEM => error.SystemResources,
+                        .OPNOTSUPP => unreachable, // Some bit in the flags argument is inappropriate for the socket type.
+                        .PIPE => error.BrokenPipe,
+                        .AFNOSUPPORT => error.AddressFamilyNotSupported,
+                        .LOOP => error.SymLinkLoop,
+                        .NAMETOOLONG => error.NameTooLong,
+                        .NOENT => error.FileNotFound,
+                        .NOTDIR => error.NotDir,
+                        .HOSTUNREACH => error.NetworkUnreachable,
+                        .NETUNREACH => error.NetworkUnreachable,
+                        .NOTCONN => error.SocketNotConnected,
+                        .NETDOWN => error.NetworkSubsystemFailed,
+                        else => std.posix.unexpectedErrno(e),
+                    };
+                }
+            },
             .shutdown => try std.posix.shutdown(op.socket, op.how),
             .open_at => if (builtin.target.os.tag == .windows) {
                 op.out_file.* = try op.dir.openFileZ(op.path, op.flags);
@@ -450,3 +478,48 @@ pub fn poll(pfds: []pollfd, timeout: i32) std.posix.PollError!usize {
         return std.posix.poll(pfds, timeout);
     }
 }
+
+const darwin_msghdr = extern struct {
+    /// Optional address.
+    msg_name: ?*std.posix.sockaddr,
+    /// Size of address.
+    msg_namelen: std.posix.socklen_t,
+    /// Scatter/gather array.
+    msg_iov: [*]std.posix.iovec,
+    /// Number of elements in msg_iov.
+    msg_iovlen: i32,
+    /// Ancillary data.
+    msg_control: ?*anyopaque,
+    /// Ancillary data buffer length.
+    msg_controllen: std.posix.socklen_t,
+    /// Flags on received message.
+    msg_flags: i32,
+};
+
+const darwin_msghdr_const = extern struct {
+    /// Optional address.
+    msg_name: ?*const std.posix.sockaddr,
+    /// Size of address.
+    msg_namelen: std.posix.socklen_t,
+    /// Scatter/gather array.
+    msg_iov: [*]std.posix.iovec_const,
+    /// Number of elements in msg_iov.
+    msg_iovlen: i32,
+    /// Ancillary data.
+    msg_control: ?*anyopaque,
+    /// Ancillary data buffer length.
+    msg_controllen: std.posix.socklen_t,
+    /// Flags on received message.
+    msg_flags: i32,
+};
+
+pub const msghdr = if (builtin.target.isDarwin()) darwin_msghdr else std.c.msghdr;
+pub const msghdr_const = if (builtin.target.isDarwin()) darwin_msghdr_const else std.c.msghdr_const;
+
+const c = struct {
+    pub extern "c" fn recvmsg(sockfd: std.c.fd_t, msg: *msghdr, flags: u32) isize;
+    pub extern "c" fn sendmsg(sockfd: std.c.fd_t, msg: *const msghdr_const, flags: u32) isize;
+};
+
+const recvmsg = if (@hasDecl(std.posix.system, "msghdr")) std.posix.system.recvmsg else c.recvmsg;
+const sendmsg = if (@hasDecl(std.posix.system, "msghdr_const")) std.posix.system.sendmsg else c.sendmsg;

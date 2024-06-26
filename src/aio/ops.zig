@@ -1,6 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const aio = @import("../aio.zig");
+const posix = @import("common/posix.zig");
 
 pub const Id = enum(usize) { _ };
 
@@ -126,7 +127,7 @@ pub const RecvMsg = struct {
         SocketNotConnected,
     } || SharedError;
     socket: std.posix.socket_t,
-    out_msg: *std.posix.msghdr,
+    out_msg: *posix.msghdr,
     out_id: ?*Id = null,
     out_error: ?*Error = null,
     link: Link = .unlinked,
@@ -137,7 +138,7 @@ pub const RecvMsg = struct {
 pub const SendMsg = struct {
     pub const Error = std.posix.SendMsgError || SharedError;
     socket: std.posix.socket_t,
-    msg: *const std.posix.msghdr_const,
+    msg: *const posix.msghdr_const,
     out_id: ?*Id = null,
     out_error: ?*Error = null,
     link: Link = .unlinked,
