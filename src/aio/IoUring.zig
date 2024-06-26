@@ -45,6 +45,8 @@ pub inline fn isSupported(op_types: []const type) bool {
             .connect => std.os.linux.IORING_OP.CONNECT, // 5.5
             .recv => std.os.linux.IORING_OP.RECV, // 5.6
             .send => std.os.linux.IORING_OP.SEND, // 5.6
+            .recv_msg => std.os.linux.IORING_OP.RECVMSG, // 5.3
+            .send_msg => std.os.linux.IORING_OP.SENDMSG, // 5.3
             .open_at => std.os.linux.IORING_OP.OPENAT, // 5.15
             .close_file, .close_dir, .close_socket, .close_event_source => std.os.linux.IORING_OP.CLOSE, // 5.15
             .timeout => std.os.linux.IORING_OP.TIMEOUT, // 5.4
@@ -236,6 +238,8 @@ inline fn uring_queue(io: *std.os.linux.IoUring, op: anytype, user_data: u64) ai
         .connect => try io.connect(user_data, op.socket, op.addr, op.addrlen),
         .recv => try io.recv(user_data, op.socket, .{ .buffer = op.buffer }, 0),
         .send => try io.send(user_data, op.socket, op.buffer, 0),
+        .recv_msg => try io.recvmsg(user_data, op.socket, op.out_msg, 0),
+        .send_msg => try io.sendmsg(user_data, op.socket, op.msg, 0),
         .open_at => try io.openat(user_data, op.dir.fd, op.path, posix.convertOpenFlags(op.flags), 0),
         .close_file => try io.close(user_data, op.file.handle),
         .close_dir => try io.close(user_data, op.dir.fd),
@@ -439,6 +443,39 @@ inline fn uring_handle_completion(op: anytype, cqe: *std.os.linux.io_uring_cqe) 
                 .NETDOWN => error.NetworkSubsystemFailed,
                 else => std.posix.unexpectedErrno(err),
             },
+            .recv_msg => switch (err) {
+                .SUCCESS, .INTR, .INVAL, .FAULT, .AGAIN => unreachable,
+                .CANCELED => error.Canceled,
+                .BADF => unreachable, // always a race condition
+                .NOTCONN => error.SocketNotConnected,
+                .NOTSOCK => unreachable,
+                .NOMEM => error.SystemResources,
+                .CONNREFUSED => error.ConnectionRefused,
+                .CONNRESET => error.ConnectionResetByPeer,
+                .TIMEDOUT => error.ConnectionTimedOut,
+                else => std.posix.unexpectedErrno(err),
+            },
+            .send_msg => switch (err) {
+                .SUCCESS, .INTR, .INVAL, .AGAIN => unreachable,
+                .CANCELED => error.Canceled,
+                .ACCES => error.AccessDenied,
+                .ALREADY => error.FastOpenAlreadyInProgress,
+                .BADF => unreachable, // always a race condition
+                .CONNRESET => error.ConnectionResetByPeer,
+                .DESTADDRREQ => unreachable, // The socket is not connection-mode, and no peer address is set.
+                .FAULT => unreachable, // An invalid user space address was specified for an argument.
+                .ISCONN => unreachable, // connection-mode socket was connected already but a recipient was specified
+                .MSGSIZE => error.MessageTooBig,
+                .NOBUFS => error.SystemResources,
+                .NOMEM => error.SystemResources,
+                .NOTSOCK => unreachable, // The file descriptor sockfd does not refer to a socket.
+                .OPNOTSUPP => unreachable, // Some bit in the flags argument is inappropriate for the socket type.
+                .PIPE => error.BrokenPipe,
+                .HOSTUNREACH => error.NetworkUnreachable,
+                .NETUNREACH => error.NetworkUnreachable,
+                .NETDOWN => error.NetworkSubsystemFailed,
+                else => std.posix.unexpectedErrno(err),
+            },
             .open_at => switch (err) {
                 .SUCCESS, .INTR, .INVAL, .AGAIN => unreachable,
                 .CANCELED => error.Canceled,
@@ -618,6 +655,7 @@ inline fn uring_handle_completion(op: anytype, cqe: *std.os.linux.io_uring_cqe) 
         .send => if (op.out_written) |w| {
             w.* = @intCast(cqe.res);
         },
+        .recv_msg, .send_msg => {},
         .open_at => op.out_file.handle = cqe.res,
         .close_file, .close_dir, .close_socket => {},
         .notify_event_source, .wait_event_source, .close_event_source => {},

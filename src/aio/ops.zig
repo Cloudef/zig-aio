@@ -113,7 +113,33 @@ pub const Send = struct {
     userdata: usize = 0,
 };
 
-// TODO: recvmsg, sendmsg
+/// recvmsg(2)
+pub const RecvMsg = struct {
+    pub const Error = error{
+        ConnectionRefused,
+        ConnectionTimedOut,
+        ConnectionResetByPeer,
+        SystemResources,
+        SocketNotConnected,
+    } || SharedError;
+    socket: std.posix.socket_t,
+    out_msg: *std.posix.msghdr,
+    out_id: ?*Id = null,
+    out_error: ?*Error = null,
+    link: Link = .unlinked,
+    userdata: usize = 0,
+};
+
+/// std.posix.sendmsg
+pub const SendMsg = struct {
+    pub const Error = std.posix.SendMsgError || SharedError;
+    socket: std.posix.socket_t,
+    msg: *const std.posix.msghdr_const,
+    out_id: ?*Id = null,
+    out_error: ?*Error = null,
+    link: Link = .unlinked,
+    userdata: usize = 0,
+};
 
 /// std.fs.Dir.openFile
 pub const OpenAt = struct {
@@ -312,6 +338,8 @@ pub const Operation = enum {
     connect,
     recv,
     send,
+    recv_msg,
+    send_msg,
     open_at,
     close_file,
     close_dir,
@@ -338,6 +366,8 @@ pub const Operation = enum {
         .connect = Connect,
         .recv = Recv,
         .send = Send,
+        .recv_msg = RecvMsg,
+        .send_msg = SendMsg,
         .open_at = OpenAt,
         .close_file = CloseFile,
         .close_dir = CloseDir,
