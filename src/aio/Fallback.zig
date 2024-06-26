@@ -7,7 +7,12 @@ const Pool = @import("common/types.zig").Pool;
 const FixedArrayList = @import("common/types.zig").FixedArrayList;
 const DoubleBufferedFixedArrayList = @import("common/types.zig").DoubleBufferedFixedArrayList;
 
-// This mess of a code just shows how much io_uring was needed
+// This tries to emulate io_uring functionality.
+// If something does not match how it works on io_uring on linux, it should be change to match.
+// While this uses readiness before performing the requests, the io_uring model is not particularily
+// suited for readiness, thus don't expect this fallback to be particularily effecient.
+// However it might be still more pleasant experience than (e)poll/kqueueing away as the behaviour should be
+// more or less consistent.
 
 pub const EventSource = posix.EventSource;
 
@@ -30,11 +35,12 @@ pub fn isSupported(_: []const type) bool {
 }
 
 fn minThreads() u32 {
-    // might need this on BSD too.
-    // it's not a great solution, but this at least lets apps that poll /dev/tty
-    // work with one dedicated thread given for it.
-    // unfortunately pselect/select which will work on /dev/tty are just too annoying
-    // to try and kludge into this backend.
+    // Might need this on BSD too.
+    // It's not a great solution, but this at least lets apps that poll /dev/tty work
+    // with one dedicated thread given for it. Unfortunately pselect/select which will
+    // work on /dev/tty are just too annoying to try and kludge into this backend.A
+    // <https://lists.apple.com/archives/Darwin-dev/2006/Apr/msg00066.html>
+    // <https://nathancraddock.com/blog/macos-dev-tty-polling/>
     return if (builtin.target.isDarwin()) 2 else 1;
 }
 
