@@ -11,9 +11,9 @@ pub const options: Options = if (@hasDecl(root, "aio_options")) root.aio_options
 pub const Options = struct {
     /// Enable debug logs and tracing.
     debug: bool = false,
-    /// Num threads for a thread pool, if a backend requires one.
+    /// Max thread count for a thread pool if a backend requires one.
     /// By default use the cpu core count.
-    num_threads: ?u32 = null,
+    max_threads: ?u32 = null,
     /// Operations that the main backend must support.
     /// If the operations are not supported by a main backend then a fallback backend will be used instead.
     /// This is unused if fallback is disabled, in that case you should check for a support manually.
@@ -24,6 +24,13 @@ pub const Options = struct {
         force,
         disable,
     } = if (build_options.fallback) .force else .auto,
+    /// Max kludge threads for the fallback backend.
+    /// Kludge threads are used when operation cannot be polled for readiness.
+    /// One example is macos's /dev/tty which can only be queried for readiness using select/pselect.
+    /// Kludge threads also allow the fallback backend to work on windows, but it is not particularily resource friendly way to do it.
+    /// <https://lists.apple.com/archives/Darwin-dev/2006/Apr/msg00066.html>
+    /// <https://nathancraddock.com/blog/macos-dev-tty-polling/>
+    fallback_max_kludge_threads: usize = 1024,
 };
 
 pub const Error = error{

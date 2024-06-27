@@ -13,7 +13,6 @@ source: aio.EventSource = undefined,
 num_tasks: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
 
 /// Spin up the pool, `allocator` is used to allocate the tasks
-/// If `num_threads` is null, the thread count for the current CPU is used
 pub fn start(self: *@This(), allocator: std.mem.Allocator, options: DynamicThreadPool.Options) !void {
     self.* = .{
         .pool = undefined,

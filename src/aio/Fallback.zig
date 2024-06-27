@@ -37,29 +37,12 @@ pending: std.DynamicBitSetUnmanaged, // operation is pending on readiness fd (po
 started: std.DynamicBitSetUnmanaged, // operation has been queued, it's being performed if pending is false
 pfd: FixedArrayList(posix.pollfd, u32), // current fds that we must poll for wakeup
 tpool: *DynamicThreadPool, // thread pool for performing operations, not all operations will be performed here
+kludge_tpool: *DynamicThreadPool, // thread pool for performing operations which can't be polled for readiness
 source: EventSource, // when threads finish, they signal it using this event source
 finished: DoubleBufferedFixedArrayList(Result, u16), // operations that are finished, double buffered to be thread safe
 
 pub fn isSupported(_: []const type) bool {
     return true; // very optimistic :D
-}
-
-fn minThreads() u32 {
-    // Might need this on BSD too.
-    // It's not a great solution, but this at least lets apps that poll /dev/tty work
-    // with one dedicated thread given for it. Unfortunately pselect/select which will
-    // work on /dev/tty are just too annoying to try and kludge into this backend.
-    // <https://lists.apple.com/archives/Darwin-dev/2006/Apr/msg00066.html>
-    // <https://nathancraddock.com/blog/macos-dev-tty-polling/>
-    //
-    // TODO: Remove this kludge
-    // New plan:
-    // 1. Create a special aio.ReadTty operation.
-    // 2. Use another threadpool which is unbounded but the threads timeout if they haven't been active after certain period of time.
-    // 3. Put ReadTty actions on this special thread pool on mac and windows
-    // 4. On windows translate the output of ReadConsoleInputW into Ansi/Kitty/VT100 escape sequences
-    // Bonus: The second thread pool can be used for other stuff as well that can't be reliably polled
-    return if (builtin.target.isDarwin()) 2 else 1;
 }
 
 pub fn init(allocator: std.mem.Allocator, n: u16) aio.Error!@This() {
@@ -79,12 +62,18 @@ pub fn init(allocator: std.mem.Allocator, n: u16) aio.Error!@This() {
     errdefer pfd.deinit(allocator);
     var tpool = try allocator.create(DynamicThreadPool);
     errdefer allocator.destroy(tpool);
-    const thread_count: u32 = aio.options.num_threads orelse @intCast(@max(minThreads(), std.Thread.getCpuCount() catch 1));
-    tpool.init(allocator, .{ .num_threads = thread_count }) catch |err| return switch (err) {
+    tpool.init(allocator, .{ .max_threads = aio.options.max_threads }) catch |err| return switch (err) {
         error.TimerUnsupported => error.SystemOutdated,
         else => |e| e,
     };
     errdefer tpool.deinit();
+    var kludge_tpool = try allocator.create(DynamicThreadPool);
+    errdefer allocator.destroy(kludge_tpool);
+    kludge_tpool.init(allocator, .{ .max_threads = aio.options.fallback_max_kludge_threads }) catch |err| return switch (err) {
+        error.TimerUnsupported => error.SystemOutdated,
+        else => |e| e,
+    };
+    errdefer kludge_tpool.deinit();
     var source = try EventSource.init();
     errdefer source.deinit();
     var finished = try DoubleBufferedFixedArrayList(Result, u16).init(allocator, n);
@@ -98,6 +87,7 @@ pub fn init(allocator: std.mem.Allocator, n: u16) aio.Error!@This() {
         .started = started,
         .pfd = pfd,
         .tpool = tpool,
+        .kludge_tpool = kludge_tpool,
         .source = source,
         .finished = finished,
     };
@@ -106,6 +96,8 @@ pub fn init(allocator: std.mem.Allocator, n: u16) aio.Error!@This() {
 pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
     self.tpool.deinit();
     allocator.destroy(self.tpool);
+    self.kludge_tpool.deinit();
+    allocator.destroy(self.kludge_tpool);
     var iter = self.ops.iterator();
     while (iter.next()) |e| uopUnwrapCall(e.v, posix.closeReadiness, .{self.readiness[e.k]});
     self.ops.deinit(allocator);
@@ -257,7 +249,7 @@ fn start(self: *@This(), id: u16) !void {
     if (self.link_lock.isSet(id)) return; // previous op hasn't finished yet
 
     self.started.set(id);
-    if (self.readiness[id].mode == .noop or self.pending.isSet(id)) {
+    if (self.readiness[id].mode == .nopoll or self.readiness[id].mode == .kludge or self.pending.isSet(id)) {
         if (self.next[id] != id) {
             debug("perform: {}: {} => {}", .{ id, std.meta.activeTag(self.ops.nodes[id].used), self.next[id] });
         } else {
@@ -304,7 +296,11 @@ fn start(self: *@This(), id: u16) !void {
             },
             else => {
                 // perform on thread
-                self.tpool.spawn(onThreadExecutor, .{ self, id, &self.ops.nodes[id].used, self.readiness[id] }) catch return error.SystemResources;
+                if (self.readiness[id].mode != .kludge) {
+                    self.tpool.spawn(onThreadExecutor, .{ self, id, &self.ops.nodes[id].used, self.readiness[id] }) catch return error.SystemResources;
+                } else {
+                    self.kludge_tpool.spawn(onThreadExecutor, .{ self, id, &self.ops.nodes[id].used, self.readiness[id] }) catch return error.SystemResources;
+                }
             },
         }
     } else {
@@ -341,7 +337,7 @@ fn submit(self: *@This()) !bool {
             self.pfd.add(.{
                 .fd = self.readiness[e.k].fd,
                 .events = switch (self.readiness[e.k].mode) {
-                    .noop => unreachable,
+                    .nopoll, .kludge => unreachable,
                     .in => std.posix.POLL.IN,
                     .out => std.posix.POLL.OUT,
                 },

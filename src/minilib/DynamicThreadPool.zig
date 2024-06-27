@@ -16,6 +16,7 @@ mutex: std.Thread.Mutex = .{},
 cond: std.Thread.Condition = .{},
 threads: []DynamicThread = &.{},
 run_queue: RunQueue = .{},
+idling_threads: u32 = 0,
 active_threads: u32 = 0,
 timeout: u64,
 // used to serialize the acquisition order
@@ -27,7 +28,7 @@ const RunProto = *const fn (*@This(), *Runnable) void;
 
 pub const Options = struct {
     // Use the cpu core count by default
-    num_threads: ?u32 = null,
+    max_threads: ?u32 = null,
     // Inactivity timeout when the thread will be joined
     timeout: u64 = 5 * std.time.ns_per_s,
 };
@@ -46,7 +47,7 @@ pub fn init(self: *@This(), allocator: std.mem.Allocator, options: Options) Init
 
     _ = try std.time.Timer.start(); // check that we have a timer
 
-    const thread_count = options.num_threads orelse @max(1, std.Thread.getCpuCount() catch 1);
+    const thread_count = options.max_threads orelse @max(1, std.Thread.getCpuCount() catch 1);
     self.serial = try std.DynamicBitSetUnmanaged.initEmpty(allocator, thread_count);
     errdefer self.serial.deinit(allocator);
     self.threads = try allocator.alloc(DynamicThread, thread_count);
@@ -94,9 +95,8 @@ pub fn spawn(self: *@This(), comptime func: anytype, args: anytype) SpawnError!v
             const closure: *@This() = @alignCast(@fieldParentPtr("run_node", run_node));
             @call(.auto, func, closure.arguments);
             // The thread pool's allocator is protected by the mutex.
-            const mutex = &pool.mutex;
-            mutex.lock();
-            defer mutex.unlock();
+            pool.mutex.lock();
+            defer pool.mutex.unlock();
             pool.allocator.destroy(closure);
         }
     };
@@ -106,12 +106,12 @@ pub fn spawn(self: *@This(), comptime func: anytype, args: anytype) SpawnError!v
         defer self.mutex.unlock();
 
         // Activate a new thread if the run queue is running hot
-        if ((self.run_queue.first != null and self.serial.count() == self.active_threads) or self.active_threads == 0) {
-            for (self.threads, 0..) |*dthread, id| {
+        if (self.idling_threads == 0 and self.active_threads < self.threads.len) {
+            for (self.threads[self.active_threads..], 0..) |*dthread, id| {
                 if (!dthread.active and dthread.thread == null) {
                     dthread.active = true;
-                    self.active_threads += 1;
                     self.serial.unset(id);
+                    self.active_threads += 1;
                     dthread.thread = try std.Thread.spawn(.{}, worker, .{ self, dthread, @as(u32, @intCast(id)), self.timeout });
                     break;
                 }
@@ -159,7 +159,6 @@ fn worker(self: *@This(), thread: *DynamicThread, id: u32, timeout: u64) void {
         if (can_work) {
             self.serial.set(id);
             defer self.serial.unset(id);
-            defer timer.reset();
             while (thread.active) {
                 // Get the node
                 const node = blk: {
@@ -172,6 +171,7 @@ fn worker(self: *@This(), thread: *DynamicThread, id: u32, timeout: u64) void {
                 if (node) |run_node| {
                     const runFn = run_node.data.runFn;
                     runFn(self, &run_node.data);
+                    timer.reset();
                 } else break;
             }
         }
@@ -182,6 +182,8 @@ fn worker(self: *@This(), thread: *DynamicThread, id: u32, timeout: u64) void {
             self.mutex.lock();
             defer self.mutex.unlock();
             if (self.run_queue.first == null) {
+                self.idling_threads += 1;
+                defer self.idling_threads -= 1;
                 self.cond.timedWait(&self.mutex, timeout - now) catch break :main;
             }
         }

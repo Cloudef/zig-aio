@@ -22,6 +22,11 @@ const SharedError = error{
 // TODO: Support rest of the ops from <https://man.archlinux.org/man/io_uring_enter.2.en>
 //       Even linux/io_uring only ops
 
+// TODO:
+// 1. Create a special aio.ReadTty operation.
+// 2. Put ReadTty actions on kludge thread pool on mac and windows
+// 3. On windows translate the output of ReadConsoleInputW into Ansi/Kitty/VT100 escape sequences
+
 /// Can be used to wakeup the backend, custom notifications, etc...
 pub const Nop = struct {
     pub const Error = SharedError;

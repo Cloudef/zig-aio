@@ -191,7 +191,7 @@ pub inline fn perform(op: anytype, readiness: Readiness) Operation.Error!void {
 
 pub const Readiness = struct {
     fd: std.posix.fd_t = invalid_fd,
-    mode: enum { noop, in, out } = .noop,
+    mode: enum { nopoll, in, out, kludge } = .nopoll,
 };
 
 pub const OpenReadinessError = error{
@@ -208,23 +208,24 @@ pub inline fn openReadiness(op: anytype) OpenReadinessError!Readiness {
         .fsync => .{},
         .write => blk: {
             if (builtin.target.isDarwin() and std.posix.isatty(op.file.handle)) {
-                return .{}; // nice :D will block one thread
+                break :blk .{ .mode = .kludge };
             }
             break :blk .{ .fd = op.file.handle, .mode = .out };
         },
         .read => blk: {
+            // TODO: check this only in special readTty op in future, and make read return the error
             if (builtin.target.isDarwin() and std.posix.isatty(op.file.handle)) {
-                return .{}; // nice :D will block one thread
+                break :blk .{ .mode = .kludge };
             }
             break :blk .{ .fd = op.file.handle, .mode = .in };
         },
         .accept, .recv, .recv_msg => switch (builtin.target.os.tag) {
-            .windows => .{},
+            .windows => .{ .mode = .kludge },
             else => .{ .fd = op.socket, .mode = .in },
         },
         .socket, .connect, .shutdown => .{},
         .send, .send_msg => switch (builtin.target.os.tag) {
-            .windows => .{},
+            .windows => .{ .mode = .kludge },
             else => .{ .fd = op.socket, .mode = .out },
         },
         .open_at, .close_file, .close_dir, .close_socket => .{},
