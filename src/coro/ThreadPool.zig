@@ -16,11 +16,7 @@ num_tasks: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
 /// If `num_threads` is null, the thread count for the current CPU is used
 pub fn start(self: *@This(), allocator: std.mem.Allocator, options: DynamicThreadPool.Options) !void {
     self.* = .{
-        .pool = .{
-            .allocator = undefined,
-            .threads = undefined,
-            .timeout = undefined,
-        },
+        .pool = undefined,
         .source = try aio.EventSource.init(),
     };
     errdefer self.source.deinit();
