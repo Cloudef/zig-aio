@@ -263,6 +263,8 @@ fn start(self: *@This(), id: u16) !void {
         } else {
             debug("perform: {}: {}", .{ id, std.meta.activeTag(self.ops.nodes[id].used) });
         }
+        self.pending.unset(id);
+        self.link_lock.set(id); // prevent restarting
         switch (self.ops.nodes[id].used) {
             .nop => self.finish(id, error.Success),
             .cancel => |op| {
@@ -292,9 +294,16 @@ fn start(self: *@This(), id: u16) !void {
                     self.finish(id, error.Success);
                 }
             },
+            // can be performed here, doesn't have to be dispatched to thread
+            inline .child_exit, .notify_event_source, .wait_event_source, .close_event_source => |*op| {
+                var failure: Operation.Error = error.Success;
+                _ = posix.perform(op, self.readiness[id]) catch |err| {
+                    failure = err;
+                };
+                self.finish(id, failure);
+            },
             else => {
-                self.pending.unset(id);
-                self.link_lock.set(id); // prevent restarting
+                // perform on thread
                 self.tpool.spawn(onThreadExecutor, .{ self, id, &self.ops.nodes[id].used, self.readiness[id] }) catch return error.SystemResources;
             },
         }

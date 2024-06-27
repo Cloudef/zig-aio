@@ -180,10 +180,11 @@ pub inline fn perform(op: anytype, readiness: Readiness) Operation.Error!void {
         },
         .socket => op.out_socket.* = try std.posix.socket(op.domain, op.flags, op.protocol),
         .close_socket => std.posix.close(op.socket),
+        // backend can perform these without a thread
         .notify_event_source => op.source.notify(),
         .wait_event_source => op.source.wait(),
         .close_event_source => op.source.deinit(),
-        // this function is meant for execution on a thread, it makes no sense to execute these on a thread
+        // these must be implemented by the backend
         .nop, .timeout, .link_timeout, .cancel => unreachable,
     }
 }
