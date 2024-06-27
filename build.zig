@@ -18,7 +18,15 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/aio.zig"),
         .target = target,
         .optimize = optimize,
-        .link_libc = target.query.os_tag == .windows,
+        .link_libc = switch (target.query.os_tag orelse .other) {
+            .windows => true,
+            .freebsd, .openbsd, .dragonfly, .netbsd => true,
+            else => false,
+        },
+        .single_threaded = switch (target.query.os_tag orelse .other) {
+            .linux => null, // io_uring backend can be used without threads
+            else => false,
+        },
     });
     aio.addImport("minilib", minilib);
     aio.addImport("build_options", opts.createModule());
@@ -62,7 +70,8 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .optimize = optimize,
             .filters = &.{test_filter},
-            .link_libc = target.query.os_tag == .windows,
+            .link_libc = aio.link_libc,
+            .single_threaded = aio.single_threaded,
         });
         if (mod != .minilib) tst.root_module.addImport("minilib", minilib);
         if (mod == .aio) tst.root_module.addImport("build_options", opts.createModule());

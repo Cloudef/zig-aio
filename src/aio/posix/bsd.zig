@@ -1,5 +1,31 @@
+const builtin = @import("builtin");
 const std = @import("std");
 const posix = @import("../posix.zig");
+
+pub const NOTE_NSECONDS = switch (builtin.target.os.tag) {
+    .netbsd => 0x00000003,
+    .dragonfly => @compileError("dragonfly lacks NOTE_NSECONDS, timer resolution is reduced"),
+    else => std.posix.system.NOTE_NSECONDS,
+};
+
+pub const EVFILT_USER = switch (builtin.target.os.tag) {
+    .openbsd => @compileError("openbsd lacks EVFILT_USER, won't work until that's implemented"),
+    .dragonfly => -9,
+    else => std.posix.system.EVFILT_USER,
+};
+
+pub const msghdr_const = switch (builtin.target.os.tag) {
+    .dragonfly => extern struct {
+        msg_name: ?*const anyopaque,
+        msg_namelen: std.posix.socklen_t,
+        msg_iov: [*]std.posix.iovec,
+        msg_iovlen: c_int,
+        msg_control: ?*anyopaque,
+        msg_controllen: std.posix.socklen_t,
+        msg_flags: c_int,
+    },
+    else => std.posix.system.msghdr_const,
+};
 
 pub const EventSource = struct {
     fd: std.posix.fd_t,
@@ -18,7 +44,7 @@ pub const EventSource = struct {
         while (true) {
             _ = std.posix.kevent(self.fd, &.{.{
                 .ident = self.counter.fetchAdd(1, .monotonic),
-                .filter = std.posix.system.EVFILT_USER,
+                .filter = EVFILT_USER,
                 .flags = std.posix.system.EV_ADD | std.posix.system.EV_ENABLE | std.posix.system.EV_ONESHOT,
                 .fflags = std.posix.system.NOTE_TRIGGER,
                 .data = 0,
@@ -97,8 +123,14 @@ pub const Timer = struct {
             .ident = @intCast(self.fd),
             .filter = std.posix.system.EVFILT_TIMER,
             .flags = std.posix.system.EV_ADD | std.posix.system.EV_ENABLE | std.posix.system.EV_ONESHOT,
-            .fflags = std.posix.system.NOTE_NSECONDS,
-            .data = @intCast(ns), // :sadface:
+            .fflags = switch (builtin.target.os.tag) {
+                .dragonfly => 0,
+                else => NOTE_NSECONDS,
+            },
+            .data = switch (builtin.target.os.tag) {
+                .dragonfly => @intCast(ns / std.time.ns_per_ms), // :sadface:
+                else => @intCast(ns), // :sadface:
+            },
             .udata = 0,
         }}, &.{}, null) catch |err| return switch (err) {
             error.EventNotFound => unreachable,

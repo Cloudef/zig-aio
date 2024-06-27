@@ -19,7 +19,7 @@ pub const Clock = enum {
 pub const EventSource = switch (builtin.target.os.tag) {
     .linux => linux.EventSource,
     .windows => windows.EventSource,
-    .freebsd, .netbsd => bsd.EventSource,
+    .freebsd, .openbsd, .dragonfly, .netbsd => bsd.EventSource,
     .macos, .ios, .watchos, .visionos, .tvos => darwin.EventSource,
     else => @compileError("unsupported"),
 };
@@ -27,7 +27,7 @@ pub const EventSource = switch (builtin.target.os.tag) {
 pub const ChildWatcher = switch (builtin.target.os.tag) {
     .linux => linux.ChildWatcher,
     .windows => windows.ChildWatcher,
-    .freebsd, .netbsd => bsd.ChildWatcher,
+    .freebsd, .openbsd, .dragonfly, .netbsd => bsd.ChildWatcher,
     .macos, .ios, .watchos, .visionos, .tvos => darwin.ChildWatcher,
     else => @compileError("unsupported"),
 };
@@ -35,7 +35,7 @@ pub const ChildWatcher = switch (builtin.target.os.tag) {
 pub const Timer = switch (builtin.target.os.tag) {
     .linux => linux.Timer,
     .windows => windows.Timer,
-    .freebsd, .netbsd => bsd.Timer,
+    .freebsd, .openbsd, .dragonfly, .netbsd => bsd.Timer,
     .macos, .ios, .watchos, .visionos, .tvos => darwin.Timer,
     else => @compileError("unsupported"),
 };
@@ -294,6 +294,7 @@ pub const msghdr = switch (builtin.target.os.tag) {
 pub const msghdr_const = switch (builtin.target.os.tag) {
     .windows => windows.msghdr_const,
     .macos, .ios, .tvos, .watchos, .visionos => darwin.msghdr_const,
+    .freebsd, .openbsd, .dragonfly, .netbsd => bsd.msghdr_const,
     else => std.posix.msghdr_const,
 };
 
@@ -377,5 +378,6 @@ pub const recvmsg = switch (builtin.target.os.tag) {
 pub const sendmsg = switch (builtin.target.os.tag) {
     .windows => windows.sendmsg,
     .macos, .ios, .tvos, .watchos, .visionos => sendmsgPosix,
+    .dragonfly => sendmsgPosix,
     else => std.posix.sendmsg,
 };
