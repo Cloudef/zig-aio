@@ -1,3 +1,4 @@
+const builtin = @import("builtin");
 const std = @import("std");
 const aio = @import("aio");
 const coro = @import("coro");
@@ -8,7 +9,11 @@ const log = std.log.scoped(.coro_wttr);
 fn getWeather(completed: *u32, allocator: std.mem.Allocator, city: []const u8, lang: []const u8) anyerror![]const u8 {
     defer completed.* += 1;
     var url: std.BoundedArray(u8, 256) = .{};
-    try url.writer().print("https://wttr.in/{s}?AF&lang={s}", .{ city, lang });
+    if (builtin.target.os.tag == .windows) {
+        try url.writer().print("https://wttr.in/{s}?AFT&lang={s}", .{ city, lang });
+    } else {
+        try url.writer().print("https://wttr.in/{s}?AF&lang={s}", .{ city, lang });
+    }
     var body = std.ArrayList(u8).init(allocator);
     var client: std.http.Client = .{ .allocator = allocator };
     defer client.deinit();
@@ -61,6 +66,11 @@ pub fn main() !void {
     var gpa: std.heap.GeneralPurposeAllocator(.{}) = .{};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
+
+    if (builtin.target.os.tag == .windows) {
+        const utf8_codepage: c_uint = 65001;
+        _ = std.os.windows.kernel32.SetConsoleOutputCP(utf8_codepage);
+    }
 
     var scheduler = try coro.Scheduler.init(allocator, .{});
     defer scheduler.deinit();
