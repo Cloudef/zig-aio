@@ -14,10 +14,12 @@ const DynamicThread = struct {
 allocator: std.mem.Allocator,
 mutex: std.Thread.Mutex = .{},
 cond: std.Thread.Condition = .{},
-threads: []DynamicThread,
+threads: []DynamicThread = &.{},
 run_queue: RunQueue = .{},
+active_threads: u32 = 0,
 timeout: u64,
-active_threads: u16 = 0,
+// used to serialize the acquisition order
+serial: std.DynamicBitSetUnmanaged align(std.atomic.cache_line) = undefined,
 
 const RunQueue = std.SinglyLinkedList(Runnable);
 const Runnable = struct { runFn: RunProto };
@@ -35,7 +37,6 @@ pub const InitError = error{OutOfMemory} || std.time.Timer.Error;
 pub fn init(self: *@This(), allocator: std.mem.Allocator, options: Options) InitError!void {
     self.* = .{
         .allocator = allocator,
-        .threads = &[_]DynamicThread{},
         .timeout = options.timeout,
     };
 
@@ -44,9 +45,13 @@ pub fn init(self: *@This(), allocator: std.mem.Allocator, options: Options) Init
     }
 
     _ = try std.time.Timer.start(); // check that we have a timer
+
     const thread_count = options.num_threads orelse @max(1, std.Thread.getCpuCount() catch 1);
+    self.serial = try std.DynamicBitSetUnmanaged.initEmpty(allocator, thread_count);
+    errdefer self.serial.deinit(allocator);
     self.threads = try allocator.alloc(DynamicThread, thread_count);
-    for (self.threads) |*dthread| dthread.* = .{};
+    errdefer allocator.free(self.threads);
+    @memset(self.threads, .{});
 }
 
 pub fn deinit(self: *@This()) void {
@@ -59,6 +64,7 @@ pub fn deinit(self: *@This()) void {
         self.cond.broadcast();
         for (self.threads) |*dthread| if (dthread.thread) |thrd| thrd.join();
         self.allocator.free(self.threads);
+        self.serial.deinit(self.allocator);
     }
     self.* = undefined;
 }
@@ -101,12 +107,13 @@ pub fn spawn(self: *@This(), comptime func: anytype, args: anytype) SpawnError!v
         defer self.mutex.unlock();
 
         // Activate a new thread if the run queue is running hot
-        if (self.run_queue.first != null or self.active_threads == 0) {
-            for (self.threads) |*dthread| {
+        if ((self.run_queue.first != null and self.serial.count() == self.active_threads) or self.active_threads == 0) {
+            for (self.threads, 0..) |*dthread, id| {
                 if (!dthread.active and dthread.thread == null) {
                     dthread.active = true;
                     self.active_threads += 1;
-                    dthread.thread = try std.Thread.spawn(.{}, worker, .{ self, dthread });
+                    self.serial.unset(id);
+                    dthread.thread = try std.Thread.spawn(.{}, worker, .{ self, dthread, @as(u32, @intCast(id)), self.timeout });
                     break;
                 }
             }
@@ -118,38 +125,65 @@ pub fn spawn(self: *@This(), comptime func: anytype, args: anytype) SpawnError!v
     }
 
     // Notify waiting threads outside the lock to try and keep the critical section small.
-    self.cond.signal();
+    // Wake up all the threads so they can figure out their acquisition order
+    // Threads that don't seem to get much work will die out by itself
+    self.cond.broadcast();
 }
 
-fn worker(self: *@This(), thread: *DynamicThread) void {
+fn worker(self: *@This(), thread: *DynamicThread, id: u32, timeout: u64) void {
     var timer = std.time.Timer.start() catch unreachable;
-    while (thread.active) {
-        while (thread.active) {
-            // TODO: should serialize the acqusation order here so that
-            //       threads will always pop the run queue in order
-            //       this would make the busy threads always be at the beginning
-            //       of the array, while less busy or dead threads are at the end
-            const node = blk: {
-                self.mutex.lock();
-                defer self.mutex.unlock();
-                break :blk self.run_queue.popFirst();
-            };
-            if (node) |run_node| {
-                const runFn = run_node.data.runFn;
-                runFn(&run_node.data);
-                timer.reset();
-            } else break;
+    main: while (thread.active) {
+        // Serialize the acquisition order here so that threads will always pop the run queue in order
+        // this makes the busy threads always be at the beginning of the array,
+        // while less busy or dead threads are at the end
+        // If a thread keeps getting out done by the earlier threads, it will time out
+        const can_work: bool = blk: {
+            outer: while (id > 0 and thread.active) {
+                {
+                    self.mutex.lock();
+                    defer self.mutex.unlock();
+                    if (self.run_queue.first == null) {
+                        // We were outraced, go back to sleep
+                        break :blk false;
+                    }
+                }
+                if (timer.read() >= timeout) break :main;
+                for (0..id) |idx| if (!self.serial.isSet(idx)) {
+                    std.Thread.yield() catch {};
+                    continue :outer;
+                };
+                break :outer;
+            }
+            break :blk true;
+        };
+
+        if (can_work) {
+            self.serial.set(id);
+            defer self.serial.unset(id);
+            defer timer.reset();
+            while (thread.active) {
+                // Get the node
+                const node = blk: {
+                    self.mutex.lock();
+                    defer self.mutex.unlock();
+                    break :blk self.run_queue.popFirst();
+                };
+
+                // Do the work
+                if (node) |run_node| {
+                    const runFn = run_node.data.runFn;
+                    runFn(&run_node.data);
+                } else break;
+            }
         }
+
         if (thread.active) {
+            const now = timer.read();
+            if (now >= timeout) break :main;
             self.mutex.lock();
             defer self.mutex.unlock();
-            const now = timer.read();
-            if (now >= self.timeout) {
-                thread.active = false;
-            } else {
-                self.cond.timedWait(&self.mutex, self.timeout - now) catch {
-                    thread.active = false;
-                };
+            if (self.run_queue.first == null) {
+                self.cond.timedWait(&self.mutex, timeout - now) catch break :main;
             }
         }
     }
@@ -158,7 +192,12 @@ fn worker(self: *@This(), thread: *DynamicThread) void {
     defer self.mutex.unlock();
     self.active_threads -= 1;
 
+    // This thread won't partipicate in the acquisition order anymore
+    // In case there are threads further in the queue don't block them if there's a burst of work
+    self.serial.set(id);
+
     if (thread.active) {
+        // timed out
         thread.active = false;
         // the thread cleans up itself from here on
         thread.thread.?.detach();
