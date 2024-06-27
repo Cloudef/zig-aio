@@ -23,7 +23,7 @@ serial: std.DynamicBitSetUnmanaged align(std.atomic.cache_line) = undefined,
 
 const RunQueue = std.SinglyLinkedList(Runnable);
 const Runnable = struct { runFn: RunProto };
-const RunProto = *const fn (*Runnable) void;
+const RunProto = *const fn (*@This(), *Runnable) void;
 
 pub const Options = struct {
     // Use the cpu core count by default
@@ -87,18 +87,17 @@ pub fn spawn(self: *@This(), comptime func: anytype, args: anytype) SpawnError!v
     const Outer = @This();
     const Closure = struct {
         arguments: Args,
-        pool: *Outer,
         run_node: RunQueue.Node = .{ .data = .{ .runFn = runFn } },
 
-        fn runFn(runnable: *Runnable) void {
+        fn runFn(pool: *Outer, runnable: *Runnable) void {
             const run_node: *RunQueue.Node = @fieldParentPtr("data", runnable);
             const closure: *@This() = @alignCast(@fieldParentPtr("run_node", run_node));
             @call(.auto, func, closure.arguments);
             // The thread pool's allocator is protected by the mutex.
-            const mutex = &closure.pool.mutex;
+            const mutex = &pool.mutex;
             mutex.lock();
             defer mutex.unlock();
-            closure.pool.allocator.destroy(closure);
+            pool.allocator.destroy(closure);
         }
     };
 
@@ -120,7 +119,7 @@ pub fn spawn(self: *@This(), comptime func: anytype, args: anytype) SpawnError!v
         }
 
         const closure = try self.allocator.create(Closure);
-        closure.* = .{ .arguments = args, .pool = self };
+        closure.* = .{ .arguments = args };
         self.run_queue.prepend(&closure.run_node);
     }
 
@@ -172,7 +171,7 @@ fn worker(self: *@This(), thread: *DynamicThread, id: u32, timeout: u64) void {
                 // Do the work
                 if (node) |run_node| {
                     const runFn = run_node.data.runFn;
-                    runFn(&run_node.data);
+                    runFn(self, &run_node.data);
                 } else break;
             }
         }
