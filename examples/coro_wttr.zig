@@ -50,8 +50,8 @@ fn loader(completed: *u32, max: *const u32) !void {
     };
 
     defer std.debug.print("                                     \r", .{});
-    var idx: u8 = 0;
-    while (true) : (idx += 1) {
+    var idx: usize = 0;
+    while (true) : (idx +%= 1) {
         try coro.io.single(aio.Timeout{ .ns = 80 * std.time.ns_per_ms });
         std.debug.print("  {s} {}/{} loading that juicy info\r", .{ frames[idx % frames.len], completed.*, max.* });
     }
