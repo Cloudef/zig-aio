@@ -41,6 +41,7 @@ pub const EventSource = linux.EventSource;
 
 io: std.os.linux.IoUring,
 ops: ItemPool(Operation.Union, u16),
+cqes: []std.os.linux.io_uring_cqe,
 
 pub inline fn isSupported(op_types: []const type) bool {
     var ops: [op_types.len]std.os.linux.IORING_OP = undefined;
@@ -78,14 +79,17 @@ pub fn init(allocator: std.mem.Allocator, n: u16) aio.Error!@This() {
     const n2 = std.math.ceilPowerOfTwo(u16, n) catch unreachable;
     var io = try uring_init(n2);
     errdefer io.deinit();
-    const ops = try ItemPool(Operation.Union, u16).init(allocator, n2);
+    var ops = try ItemPool(Operation.Union, u16).init(allocator, n2);
     errdefer ops.deinit(allocator);
-    return .{ .io = io, .ops = ops };
+    const cqes = try allocator.alloc(std.os.linux.io_uring_cqe, n2);
+    errdefer allocator.free(cqes);
+    return .{ .io = io, .ops = ops, .cqes = cqes };
 }
 
 pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
     self.io.deinit();
     self.ops.deinit(allocator);
+    allocator.free(self.cqes);
     self.* = undefined;
 }
 
@@ -122,9 +126,8 @@ pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode, cb: ?aio.Dynam
     _ = try uring_submit(&self.io);
 
     var result: aio.CompletionResult = .{};
-    var cqes: [aio.options.io_uring_cqe_sz]std.os.linux.io_uring_cqe = undefined;
-    const n = try uring_copy_cqes(&self.io, &cqes, 1);
-    for (cqes[0..n]) |*cqe| {
+    const n = try uring_copy_cqes(&self.io, self.cqes, 1);
+    for (self.cqes[0..n]) |*cqe| {
         if (cqe.user_data == NOP) continue;
         const uop = self.ops.get(@intCast(cqe.user_data)).*;
         var failed: bool = false;

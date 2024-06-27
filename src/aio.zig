@@ -12,10 +12,8 @@ pub const Options = struct {
     /// Enable debug logs and tracing.
     debug: bool = false,
     /// Num threads for a thread pool, if a backend requires one.
-    /// By default use the cpu code count.
+    /// By default use the cpu core count.
     num_threads: ?u32 = null,
-    /// Completition event buffer size for the io_uring backend.
-    io_uring_cqe_sz: u16 = 64,
     /// Operations that the main backend must support.
     /// If the operations are not supported by a main backend then a fallback backend will be used instead.
     /// This is unused if fallback is disabled, in that case you should check for a support manually.
