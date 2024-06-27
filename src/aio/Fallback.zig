@@ -38,9 +38,17 @@ fn minThreads() u32 {
     // Might need this on BSD too.
     // It's not a great solution, but this at least lets apps that poll /dev/tty work
     // with one dedicated thread given for it. Unfortunately pselect/select which will
-    // work on /dev/tty are just too annoying to try and kludge into this backend.A
+    // work on /dev/tty are just too annoying to try and kludge into this backend.
     // <https://lists.apple.com/archives/Darwin-dev/2006/Apr/msg00066.html>
     // <https://nathancraddock.com/blog/macos-dev-tty-polling/>
+    //
+    // TODO: Remove this kludge
+    // New plan:
+    // 1. Create a special aio.ReadTty operation.
+    // 2. Use another threadpool which is unbounded but the threads timeout if they haven't been active after certain period of time.
+    // 3. Put ReadTty actions on this special thread pool on mac and windows
+    // 4. On windows translate the output of ReadConsoleInputW into Ansi/Kitty/VT100 escape sequences
+    // Bonus: The second thread pool can be used for other stuff as well that can't be reliably polled
     return if (builtin.target.isDarwin()) 2 else 1;
 }
 
