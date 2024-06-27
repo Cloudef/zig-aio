@@ -77,8 +77,8 @@ pub const Write = struct {
 pub const Accept = struct {
     pub const Error = std.posix.AcceptError || SharedError;
     socket: std.posix.socket_t,
-    addr: ?*std.posix.sockaddr = null,
-    inout_addrlen: ?*std.posix.socklen_t = null,
+    addr: ?*posix.sockaddr = null,
+    inout_addrlen: ?*posix.socklen_t = null,
     out_socket: *std.posix.socket_t,
     out_id: ?*Id = null,
     out_error: ?*Error = null,
@@ -90,8 +90,8 @@ pub const Accept = struct {
 pub const Connect = struct {
     pub const Error = std.posix.ConnectError || SharedError;
     socket: std.posix.socket_t,
-    addr: *const std.posix.sockaddr,
-    addrlen: std.posix.socklen_t,
+    addr: *const posix.sockaddr,
+    addrlen: posix.socklen_t,
     out_id: ?*Id = null,
     out_error: ?*Error = null,
     link: Link = .unlinked,

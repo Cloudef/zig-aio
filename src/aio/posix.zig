@@ -6,6 +6,7 @@ const linux = @import("posix/linux.zig");
 const bsd = @import("posix/bsd.zig");
 const darwin = @import("posix/darwin.zig");
 const windows = @import("posix/windows.zig");
+const wasi = @import("posix/wasi.zig");
 
 pub const Clock = enum {
     monotonic,
@@ -288,6 +289,7 @@ pub fn poll(pfds: []pollfd, timeout: i32) std.posix.PollError!usize {
 pub const msghdr = switch (builtin.target.os.tag) {
     .windows => windows.msghdr,
     .macos, .ios, .tvos, .watchos, .visionos => darwin.msghdr,
+    .wasi => wasi.msghdr,
     else => std.posix.msghdr,
 };
 
@@ -295,6 +297,7 @@ pub const msghdr_const = switch (builtin.target.os.tag) {
     .windows => windows.msghdr_const,
     .macos, .ios, .tvos, .watchos, .visionos => darwin.msghdr_const,
     .freebsd, .openbsd, .dragonfly, .netbsd => bsd.msghdr_const,
+    .wasi => wasi.msghdr_const,
     else => std.posix.msghdr_const,
 };
 
@@ -380,4 +383,14 @@ pub const sendmsg = switch (builtin.target.os.tag) {
     .macos, .ios, .tvos, .watchos, .visionos => sendmsgPosix,
     .dragonfly => sendmsgPosix,
     else => std.posix.sendmsg,
+};
+
+pub const sockaddr = switch (builtin.target.os.tag) {
+    .wasi => wasi.sockaddr,
+    else => std.posix.sockaddr,
+};
+
+pub const socklen_t = switch (builtin.target.os.tag) {
+    .wasi => wasi.socklen_t,
+    else => std.posix.socklen_t,
 };
