@@ -192,6 +192,7 @@ const ops = @import("aio/ops.zig");
 pub const Id = ops.Id;
 pub const Nop = ops.Nop;
 pub const Fsync = ops.Fsync;
+pub const ReadTty = ops.ReadTty;
 pub const Read = ops.Read;
 pub const Write = ops.Write;
 pub const Accept = ops.Accept;

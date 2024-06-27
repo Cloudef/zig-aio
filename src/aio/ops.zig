@@ -22,11 +22,6 @@ const SharedError = error{
 // TODO: Support rest of the ops from <https://man.archlinux.org/man/io_uring_enter.2.en>
 //       Even linux/io_uring only ops
 
-// TODO:
-// 1. Create a special aio.ReadTty operation.
-// 2. Put ReadTty actions on kludge thread pool on mac and windows
-// 3. On windows translate the output of ReadConsoleInputW into Ansi/Kitty/VT100 escape sequences
-
 /// Can be used to wakeup the backend, custom notifications, etc...
 pub const Nop = struct {
     pub const Error = SharedError;
@@ -41,6 +36,49 @@ pub const Nop = struct {
 pub const Fsync = struct {
     pub const Error = std.fs.File.SyncError || SharedError;
     file: std.fs.File,
+    out_id: ?*Id = null,
+    out_error: ?*Error = null,
+    link: Link = .unlinked,
+    userdata: usize = 0,
+};
+
+/// Special variant of read meant for reading a TTY fd/HANDLE
+/// - Uses workarounds on broken platforms such as MacOS where aio.Read would return EINVAL,
+///   <https://lists.apple.com/archives/Darwin-dev/2006/Apr/msg00066.html>
+///   <https://nathancraddock.com/blog/macos-dev-tty-polling/>
+/// - Translates Windows ReadConsoleInputW into Kitty/VT escape sequences (!)
+pub const ReadTty = struct {
+    pub const TranslationState = switch (builtin.target.os.tag) {
+        .windows => struct {
+            /// Needed for accurate resize information
+            stdout: std.fs.File,
+            last_mouse_button_press: u16 = 0,
+
+            pub fn init(stdout: std.fs.File) @This() {
+                return .{ .stdout = stdout };
+            }
+        },
+        else => struct {
+            pub fn init(_: std.fs.File) @This() {
+                return .{};
+            }
+        },
+    };
+
+    pub const Mode = union(enum) {
+        /// On windows buffer will contain INPUT_RECORD structs.
+        /// The length of the buffer must be able to hold at least one such struct.
+        direct: void,
+        /// Translate windows console input into ANSI/VT/Kitty compatible input.
+        /// Pass reference of the TranslationState, for correct translation a unique reference per stdin handle must be used.
+        translation: *TranslationState,
+    };
+
+    pub const Error = std.posix.PReadError || error{NoSpaceLeft} || SharedError;
+    tty: std.fs.File,
+    buffer: []u8,
+    out_read: *usize,
+    mode: Mode = .direct,
     out_id: ?*Id = null,
     out_error: ?*Error = null,
     link: Link = .unlinked,
@@ -350,6 +388,7 @@ pub const CloseEventSource = struct {
 pub const Operation = enum {
     nop,
     fsync,
+    read_tty,
     read,
     write,
     accept,
@@ -379,6 +418,7 @@ pub const Operation = enum {
     pub const map = std.enums.EnumMap(@This(), type).init(.{
         .nop = Nop,
         .fsync = Fsync,
+        .read_tty = ReadTty,
         .read = Read,
         .write = Write,
         .accept = Accept,

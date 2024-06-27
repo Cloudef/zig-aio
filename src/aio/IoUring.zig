@@ -49,7 +49,7 @@ pub inline fn isSupported(op_types: []const type) bool {
         op.* = switch (Operation.tagFromPayloadType(op_type)) {
             .nop => std.os.linux.IORING_OP.NOP,
             .fsync => std.os.linux.IORING_OP.FSYNC, // 5.4
-            .read, .wait_event_source => std.os.linux.IORING_OP.READ, // 5.6
+            .read_tty, .read, .wait_event_source => std.os.linux.IORING_OP.READ, // 5.6
             .write, .notify_event_source => std.os.linux.IORING_OP.WRITE, // 5.6
             .accept => std.os.linux.IORING_OP.ACCEPT, // 5.5
             .connect => std.os.linux.IORING_OP.CONNECT, // 5.5
@@ -245,6 +245,7 @@ inline fn uring_queue(io: *std.os.linux.IoUring, op: anytype, user_data: u64) ai
     var sqe = switch (comptime Operation.tagFromPayloadType(@TypeOf(op.*))) {
         .nop => try io.nop(user_data),
         .fsync => try io.fsync(user_data, op.file.handle, 0),
+        .read_tty => try io.read(user_data, op.tty.handle, .{ .buffer = op.buffer }, 0),
         .read => try io.read(user_data, op.file.handle, .{ .buffer = op.buffer }, op.offset),
         .write => try io.write(user_data, op.file.handle, op.buffer, op.offset),
         .accept => try io.accept(user_data, op.socket, op.addr, op.inout_addrlen, 0),
@@ -360,7 +361,7 @@ inline fn uring_handle_completion(op: anytype, cqe: *std.os.linux.io_uring_cqe) 
                 .PERM => error.AccessDenied,
                 else => std.posix.unexpectedErrno(err),
             },
-            .read => switch (err) {
+            .read_tty, .read => switch (err) {
                 .SUCCESS, .INTR, .INVAL, .FAULT, .AGAIN, .ISDIR => unreachable,
                 .CANCELED => error.Canceled,
                 .BADF => error.NotOpenForReading,
@@ -670,7 +671,7 @@ inline fn uring_handle_completion(op: anytype, cqe: *std.os.linux.io_uring_cqe) 
     switch (comptime Operation.tagFromPayloadType(@TypeOf(op.*))) {
         .nop => {},
         .fsync => {},
-        .read => op.out_read.* = @intCast(cqe.res),
+        .read_tty, .read => op.out_read.* = @intCast(cqe.res),
         .write => if (op.out_written) |w| {
             w.* = @intCast(cqe.res);
         },

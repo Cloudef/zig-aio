@@ -1,20 +1,26 @@
 const std = @import("std");
 const posix = @import("../posix.zig");
+const ops = @import("../ops.zig");
 const log = std.log.scoped(.aio_windows);
 
-const HANDLE = std.os.windows.HANDLE;
 const WINAPI = std.os.windows.WINAPI;
+const HANDLE = std.os.windows.HANDLE;
+const CHAR = std.os.windows.CHAR;
+const WCHAR = std.os.windows.WCHAR;
 const BOOL = std.os.windows.BOOL;
-const INFINITE = std.os.windows.INFINITE;
-const MAXIMUM_WAIT_OBJECTS = std.os.windows.MAXIMUM_WAIT_OBJECTS;
-const SECURITY_ATTRIBUTES = std.os.windows.SECURITY_ATTRIBUTES;
-const LPCWSTR = std.os.windows.LPCWSTR;
+const UINT = std.os.windows.UINT;
+const WORD = std.os.windows.WORD;
 const DWORD = std.os.windows.DWORD;
 const LONG = std.os.windows.LONG;
 const LARGE_INTEGER = packed struct(std.os.windows.LARGE_INTEGER) {
     dwLowDateTime: DWORD,
     dwHighDateTime: DWORD,
 };
+const COORD = std.os.windows.COORD;
+const LPCWSTR = std.os.windows.LPCWSTR;
+const INFINITE = std.os.windows.INFINITE;
+const MAXIMUM_WAIT_OBJECTS = std.os.windows.MAXIMUM_WAIT_OBJECTS;
+const SECURITY_ATTRIBUTES = std.os.windows.SECURITY_ATTRIBUTES;
 
 pub extern "kernel32" fn SetEvent(hEvent: HANDLE) callconv(WINAPI) BOOL;
 pub extern "kernel32" fn ResetEvent(hEvent: HANDLE) callconv(WINAPI) BOOL;
@@ -109,6 +115,77 @@ pub const Timer = struct {
         self.* = undefined;
     }
 };
+
+pub const KEY_EVENT_RECORD = extern struct {
+    bKeyDown: BOOL,
+    wRepeatCount: WORD,
+    wVirtualKeyCode: WORD,
+    wVirtualScanCode: WORD,
+    uChar: extern union {
+        UnicodeChar: WCHAR,
+        AsciiChar: CHAR,
+    },
+    dwControlKeyState: DWORD,
+};
+
+pub const MOUSE_EVENT_RECORD = extern struct {
+    dwMousePosition: COORD,
+    dwButtonState: DWORD,
+    dwControlKeyState: DWORD,
+    dwEventFlags: DWORD,
+};
+
+pub const WINDOW_BUFFER_SIZE_RECORD = extern struct {
+    dwSize: COORD,
+};
+
+pub const MENU_EVENT_RECORD = extern struct {
+    dwCommandId: UINT,
+};
+
+pub const FOCUS_EVENT_RECORD = extern struct {
+    bSetFocus: BOOL,
+};
+
+pub const INPUT_RECORD = extern struct {
+    EventType: enum(WORD) {
+        key = 0x0001,
+        mouse = 0x0002,
+        resize = 0x0004,
+        focus = 0x0010,
+    },
+    Event: extern union {
+        KeyEvent: KEY_EVENT_RECORD,
+        MouseEvent: MOUSE_EVENT_RECORD,
+        WindowBufferSizeEvent: WINDOW_BUFFER_SIZE_RECORD,
+        MenuEvent: MENU_EVENT_RECORD,
+        FocusEvent: FOCUS_EVENT_RECORD,
+    },
+};
+
+pub extern "kernel32" fn ReadConsoleInputW(hConsoleInput: HANDLE, lpBuffer: *INPUT_RECORD, nLength: DWORD, lpNumberOfEventsRead: *DWORD) callconv(WINAPI) BOOL;
+
+pub fn translateTty(_: std.posix.fd_t, _: []u8, _: *ops.ReadTty.TranslationState) ops.ReadTty.Error!usize {
+    if (true) @panic("TODO");
+    return 0;
+}
+
+pub fn readTty(fd: std.posix.fd_t, buf: []u8, mode: ops.ReadTty.Mode) ops.ReadTty.Error!usize {
+    return switch (mode) {
+        .direct => {
+            if (buf.len < @sizeOf(INPUT_RECORD)) {
+                return error.NoSpaceLeft;
+            }
+            var read: u32 = 0;
+            const n_fits: u32 = @intCast(buf.len / @sizeOf(INPUT_RECORD));
+            if (ReadConsoleInputW(fd, @ptrCast(@alignCast(buf.ptr)), n_fits, &read) == 0) {
+                return std.os.windows.unexpectedError(std.os.windows.kernel32.GetLastError());
+            }
+            return read * @sizeOf(INPUT_RECORD);
+        },
+        .translation => |state| translateTty(fd, buf, state),
+    };
+}
 
 pub const pollfd = struct {
     fd: HANDLE,

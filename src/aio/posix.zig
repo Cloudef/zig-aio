@@ -85,6 +85,13 @@ pub inline fn statusToTerm(status: u32) std.process.Child.Term {
         .{ .Unknown = status };
 }
 
+pub fn readTty(fd: std.posix.fd_t, buf: []u8, mode: ops.ReadTty.Mode) ops.ReadTty.Error!usize {
+    return switch (builtin.target.os.tag) {
+        .windows => windows.readTty(fd, buf, mode),
+        else => std.posix.read(fd, buf),
+    };
+}
+
 pub fn readUring(fd: std.posix.fd_t, buf: []u8, off: usize) ops.Read.Error!usize {
     const res = std.posix.pread(fd, buf, off) catch |err| switch (err) {
         error.Unseekable => |e| if (off == 0) std.posix.read(fd, buf) else e,
@@ -152,6 +159,7 @@ pub fn symlinkAtUring(target: [*:0]const u8, dir: std.fs.Dir, link_path: [*:0]co
 pub inline fn perform(op: anytype, readiness: Readiness) Operation.Error!void {
     switch (comptime Operation.tagFromPayloadType(@TypeOf(op.*))) {
         .fsync => _ = try std.posix.fsync(op.file.handle),
+        .read_tty => op.out_read.* = try readTty(op.tty.handle, op.buffer, op.mode),
         .read => op.out_read.* = try readUring(op.file.handle, op.buffer, op.offset),
         .write => {
             const written = try writeUring(op.file.handle, op.buffer, op.offset);
@@ -207,19 +215,12 @@ pub inline fn openReadiness(op: anytype) OpenReadinessError!Readiness {
     return switch (comptime Operation.tagFromPayloadType(@TypeOf(op.*))) {
         .nop => .{},
         .fsync => .{},
-        .write => blk: {
-            if (builtin.target.isDarwin() and std.posix.isatty(op.file.handle)) {
-                break :blk .{ .mode = .kludge };
-            }
-            break :blk .{ .fd = op.file.handle, .mode = .out };
+        .write => .{ .fd = op.file.handle, .mode = .out },
+        .read_tty => switch (builtin.target.os.tag) {
+            .macos, .ios, .watchos, .visionos, .tvos => .{ .mode = .kludge },
+            else => .{ .fd = op.tty.handle, .mode = .in },
         },
-        .read => blk: {
-            // TODO: check this only in special readTty op in future, and make read return the error
-            if (builtin.target.isDarwin() and std.posix.isatty(op.file.handle)) {
-                break :blk .{ .mode = .kludge };
-            }
-            break :blk .{ .fd = op.file.handle, .mode = .in };
-        },
+        .read => .{ .fd = op.file.handle, .mode = .in },
         .accept, .recv, .recv_msg => switch (builtin.target.os.tag) {
             .windows => .{ .mode = .kludge },
             else => .{ .fd = op.socket, .mode = .in },
