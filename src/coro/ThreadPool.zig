@@ -4,19 +4,27 @@ const io = @import("io.zig");
 const Scheduler = @import("Scheduler.zig");
 const Task = @import("Task.zig");
 const Frame = @import("Frame.zig");
-const ReturnTypeWithError = @import("common.zig").ReturnTypeWithError;
-const ReturnType = @import("common.zig").ReturnType;
+const DynamicThreadPool = @import("minilib").DynamicThreadPool;
+const ReturnType = @import("minilib").ReturnType;
+const ReturnTypeMixedWithErrorSet = @import("minilib").ReturnTypeMixedWithErrorSet;
 
-pool: std.Thread.Pool = undefined,
+pool: DynamicThreadPool = undefined,
 source: aio.EventSource = undefined,
 num_tasks: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
 
 /// Spin up the pool, `allocator` is used to allocate the tasks
-/// If `num_jobs` is zero, the thread count for the current CPU is used
-pub fn start(self: *@This(), allocator: std.mem.Allocator, num_jobs: u32) !void {
-    self.* = .{ .pool = .{ .allocator = undefined, .threads = undefined }, .source = try aio.EventSource.init() };
+/// If `num_threads` is null, the thread count for the current CPU is used
+pub fn start(self: *@This(), allocator: std.mem.Allocator, options: DynamicThreadPool.Options) !void {
+    self.* = .{
+        .pool = .{
+            .allocator = undefined,
+            .threads = undefined,
+            .timeout = undefined,
+        },
+        .source = try aio.EventSource.init(),
+    };
     errdefer self.source.deinit();
-    try self.pool.init(.{ .allocator = allocator, .n_jobs = if (num_jobs == 0) null else num_jobs });
+    try self.pool.init(allocator, options);
 }
 
 pub fn deinit(self: *@This()) void {
@@ -42,7 +50,7 @@ inline fn entrypoint(self: *@This(), completed: *bool, token: *CancellationToken
 }
 
 /// Yield until `func` finishes on another thread
-pub fn yieldForCompletition(self: *@This(), func: anytype, args: anytype) ReturnTypeWithError(func, std.Thread.SpawnError) {
+pub fn yieldForCompletition(self: *@This(), func: anytype, args: anytype) ReturnTypeMixedWithErrorSet(func, DynamicThreadPool.SpawnError) {
     var completed: bool = false;
     var res: ReturnType(func) = undefined;
     _ = self.num_tasks.fetchAdd(1, .monotonic);
@@ -77,12 +85,12 @@ pub fn spawnAnyForCompletition(self: *@This(), scheduler: *Scheduler, Result: ty
 
 /// Helper for getting the Task.Generic when using spawnForCompletition tasks.
 pub fn Generic2(comptime func: anytype) type {
-    return Task.Generic(ReturnTypeWithError(func, std.Thread.SpawnError));
+    return Task.Generic(ReturnTypeMixedWithErrorSet(func, std.Thread.SpawnError));
 }
 
 /// Spawn a new coroutine which will immediately call `yieldForCompletition` for later collection of the result
 pub fn spawnForCompletition(self: *@This(), scheduler: *Scheduler, func: anytype, args: anytype, opts: Scheduler.SpawnOptions) Scheduler.SpawnError!Generic2(func) {
-    const Result = ReturnTypeWithError(func, std.Thread.SpawnError);
+    const Result = ReturnTypeMixedWithErrorSet(func, std.Thread.SpawnError);
     const task = try self.spawnAnyForCompletition(scheduler, Result, func, args, opts);
     return task.generic(Result);
 }
@@ -117,7 +125,7 @@ test "ThreadPool" {
     defer scheduler.deinit();
 
     var pool: ThreadPool = .{};
-    try pool.start(std.testing.allocator, 0);
+    try pool.start(std.testing.allocator, .{});
     defer pool.deinit();
 
     for (0..10) |_| _ = try scheduler.spawn(Test.task, .{&pool}, .{});

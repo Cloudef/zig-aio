@@ -3,9 +3,10 @@ const std = @import("std");
 const aio = @import("../aio.zig");
 const posix = @import("posix.zig");
 const Operation = @import("ops.zig").Operation;
-const Pool = @import("common.zig").Pool;
-const FixedArrayList = @import("common.zig").FixedArrayList;
-const DoubleBufferedFixedArrayList = @import("common.zig").DoubleBufferedFixedArrayList;
+const ItemPool = @import("minilib").ItemPool;
+const FixedArrayList = @import("minilib").FixedArrayList;
+const DoubleBufferedFixedArrayList = @import("minilib").DoubleBufferedFixedArrayList;
+const DynamicThreadPool = @import("minilib").DynamicThreadPool;
 
 // This tries to emulate io_uring functionality.
 // If something does not match how it works on io_uring on linux, it should be change to match.
@@ -14,11 +15,20 @@ const DoubleBufferedFixedArrayList = @import("common.zig").DoubleBufferedFixedAr
 // However it might be still more pleasant experience than (e)poll/kqueueing away as the behaviour should be
 // more or less consistent.
 
+comptime {
+    if (builtin.single_threaded) {
+        @compileError(
+            \\Fallback backend requires building with threads as otherwise it may block the whole program.
+            \\To only target linux and io_uring, set `aio_options.fallback = .disable` in your root .zig file.
+        );
+    }
+}
+
 pub const EventSource = posix.EventSource;
 
 const Result = struct { failure: Operation.Error, id: u16 };
 
-ops: Pool(Operation.Union, u16),
+ops: ItemPool(Operation.Union, u16),
 prev_id: ?u16 = null, // for linking operations
 next: []u16, // linked operation, points to self if none
 readiness: []posix.Readiness, // readiness fd that gets polled before we perform the operation
@@ -26,7 +36,7 @@ link_lock: std.DynamicBitSetUnmanaged, // operation is waiting for linked operat
 pending: std.DynamicBitSetUnmanaged, // operation is pending on readiness fd (poll)
 started: std.DynamicBitSetUnmanaged, // operation has been queued, it's being performed if pending is false
 pfd: FixedArrayList(posix.pollfd, u32), // current fds that we must poll for wakeup
-tpool: *std.Thread.Pool, // thread pool for performing operations, not all operations will be performed here
+tpool: *DynamicThreadPool, // thread pool for performing operations, not all operations will be performed here
 source: EventSource, // when threads finish, they signal it using this event source
 finished: DoubleBufferedFixedArrayList(Result, u16), // operations that are finished, double buffered to be thread safe
 
@@ -53,7 +63,7 @@ fn minThreads() u32 {
 }
 
 pub fn init(allocator: std.mem.Allocator, n: u16) aio.Error!@This() {
-    var ops = try Pool(Operation.Union, u16).init(allocator, n);
+    var ops = try ItemPool(Operation.Union, u16).init(allocator, n);
     errdefer ops.deinit(allocator);
     const next = try allocator.alloc(u16, n);
     errdefer allocator.free(next);
@@ -67,11 +77,11 @@ pub fn init(allocator: std.mem.Allocator, n: u16) aio.Error!@This() {
     errdefer started.deinit(allocator);
     var pfd = try FixedArrayList(posix.pollfd, u32).init(allocator, n + 1);
     errdefer pfd.deinit(allocator);
-    var tpool = try allocator.create(std.Thread.Pool);
+    var tpool = try allocator.create(DynamicThreadPool);
     errdefer allocator.destroy(tpool);
     const thread_count: u32 = aio.options.num_threads orelse @intCast(@max(minThreads(), std.Thread.getCpuCount() catch 1));
-    tpool.init(.{ .allocator = allocator, .n_jobs = thread_count }) catch |err| return switch (err) {
-        error.LockedMemoryLimitExceeded, error.ThreadQuotaExceeded => error.SystemResources,
+    tpool.init(allocator, .{ .num_threads = thread_count }) catch |err| return switch (err) {
+        error.TimerUnsupported => error.SystemOutdated,
         else => |e| e,
     };
     errdefer tpool.deinit();

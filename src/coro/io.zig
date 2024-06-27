@@ -2,7 +2,18 @@ const std = @import("std");
 const aio = @import("aio");
 const Scheduler = @import("Scheduler.zig");
 const Frame = @import("Frame.zig");
-const common = @import("common.zig");
+
+pub const WholeContext = struct {
+    num_operations: u16,
+    num_errors: u16 = 0,
+    frame: *Frame,
+};
+
+pub const OperationContext = struct {
+    whole: *WholeContext,
+    id: ?aio.Id = null,
+    completed: bool = false,
+};
 
 pub const Error = aio.Error || error{Canceled};
 
@@ -12,8 +23,8 @@ pub fn do(operations: anytype, status: Frame.Status) Error!u16 {
         if (frame.canceled) return error.Canceled;
 
         var work = struct { ops: @TypeOf(operations) }{ .ops = operations };
-        var whole: common.WholeContext = .{ .num_operations = operations.len, .frame = frame };
-        var ctx_list: [operations.len]common.OperationContext = undefined;
+        var whole: WholeContext = .{ .num_operations = operations.len, .frame = frame };
+        var ctx_list: [operations.len]OperationContext = undefined;
 
         inline for (&work.ops, &ctx_list) |*op, *ctx| {
             ctx.* = .{ .whole = &whole };

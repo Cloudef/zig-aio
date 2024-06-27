@@ -2,10 +2,10 @@ const std = @import("std");
 const aio = @import("aio");
 const Fiber = @import("zefi.zig");
 const Scheduler = @import("Scheduler.zig");
-const common = @import("common.zig");
+const Link = @import("minilib").Link;
 const log = std.log.scoped(.coro);
 
-pub const List = std.DoublyLinkedList(common.Link(@This(), "link", .double));
+pub const List = std.DoublyLinkedList(Link(@This(), "link", .double));
 pub const stack_alignment = Fiber.stack_alignment;
 pub const Stack = Fiber.Stack;
 
@@ -23,7 +23,7 @@ pub const Status = enum(u8) {
     }
 };
 
-pub const WaitList = std.SinglyLinkedList(common.Link(@This(), "wait_link", .single));
+pub const WaitList = std.SinglyLinkedList(Link(@This(), "wait_link", .single));
 
 fiber: *Fiber,
 stack: ?Fiber.Stack = null,

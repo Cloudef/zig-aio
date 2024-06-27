@@ -1,7 +1,7 @@
 const std = @import("std");
 const aio = @import("../aio.zig");
 const Operation = @import("ops.zig").Operation;
-const Pool = @import("common.zig").Pool;
+const ItemPool = @import("minilib").ItemPool;
 const posix = @import("posix.zig");
 const linux = @import("posix/linux.zig");
 const log = std.log.scoped(.io_uring);
@@ -37,10 +37,10 @@ const Supported = struct {
 // Could also make io_uring based event source with `IORING_OP_MSG_RING`
 // However I've read some claims that passing messages to other ring has more
 // latency than actually using eventfd. Eventfd is simple and reliable.
-pub const EventSource = posix.EventSource;
+pub const EventSource = linux.EventSource;
 
 io: std.os.linux.IoUring,
-ops: Pool(Operation.Union, u16),
+ops: ItemPool(Operation.Union, u16),
 
 pub inline fn isSupported(op_types: []const type) bool {
     var ops: [op_types.len]std.os.linux.IORING_OP = undefined;
@@ -78,7 +78,7 @@ pub fn init(allocator: std.mem.Allocator, n: u16) aio.Error!@This() {
     const n2 = std.math.ceilPowerOfTwo(u16, n) catch unreachable;
     var io = try uring_init(n2);
     errdefer io.deinit();
-    const ops = try Pool(Operation.Union, u16).init(allocator, n2);
+    const ops = try ItemPool(Operation.Union, u16).init(allocator, n2);
     errdefer ops.deinit(allocator);
     return .{ .io = io, .ops = ops };
 }

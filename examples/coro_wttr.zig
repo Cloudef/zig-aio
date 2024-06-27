@@ -70,7 +70,7 @@ pub fn main() !void {
     const ltask = try scheduler.spawn(loader, .{ &completed, &max }, .{});
 
     var tpool: coro.ThreadPool = .{};
-    try tpool.start(gpa.allocator(), 1);
+    try tpool.start(gpa.allocator(), .{});
     defer tpool.deinit();
 
     var tasks = std.ArrayList(coro.Task.Generic(anyerror![]const u8)).init(allocator);

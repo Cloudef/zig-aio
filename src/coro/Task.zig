@@ -1,7 +1,6 @@
 const std = @import("std");
 const aio = @import("aio");
-const ReturnType = @import("common.zig").ReturnType;
-const ReturnTypeWithError = @import("common.zig").ReturnTypeWithError;
+const ReturnType = @import("minilib").ReturnType;
 const Frame = @import("Frame.zig");
 
 const Task = @This();

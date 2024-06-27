@@ -8,12 +8,19 @@ pub fn build(b: *std.Build) void {
     const fallback = b.option(bool, "fallback", "use fallback event loop") orelse false;
     opts.addOption(bool, "fallback", fallback);
 
+    const minilib = b.addModule("minilib", .{
+        .root_source_file = b.path("src/minilib.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
     const aio = b.addModule("aio", .{
         .root_source_file = b.path("src/aio.zig"),
         .target = target,
         .optimize = optimize,
         .link_libc = target.query.os_tag == .windows,
     });
+    aio.addImport("minilib", minilib);
     aio.addImport("build_options", opts.createModule());
 
     const coro = b.addModule("coro", .{
@@ -21,6 +28,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    coro.addImport("minilib", minilib);
     coro.addImport("aio", aio);
 
     const run_all = b.step("run", "Run all examples");
@@ -48,7 +56,7 @@ pub fn build(b: *std.Build) void {
 
     const test_filter = b.option([]const u8, "test-filter", "Skip tests that do not match any filter") orelse "";
     const test_step = b.step("test", "Run unit tests");
-    inline for (.{ .aio, .coro }) |mod| {
+    inline for (.{ .minilib, .aio, .coro }) |mod| {
         const tst = b.addTest(.{
             .root_source_file = b.path("src/" ++ @tagName(mod) ++ ".zig"),
             .target = target,
@@ -56,6 +64,7 @@ pub fn build(b: *std.Build) void {
             .filters = &.{test_filter},
             .link_libc = target.query.os_tag == .windows,
         });
+        if (mod != .minilib) tst.root_module.addImport("minilib", minilib);
         if (mod == .aio) tst.root_module.addImport("build_options", opts.createModule());
         if (mod == .coro) tst.root_module.addImport("aio", aio);
         const run = b.addRunArtifact(tst);

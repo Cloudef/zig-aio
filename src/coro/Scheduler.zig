@@ -3,9 +3,8 @@ const aio = @import("aio");
 const io = @import("io.zig");
 const Frame = @import("Frame.zig");
 const Task = @import("Task.zig");
-const common = @import("common.zig");
+const ReturnType = @import("minilib").ReturnType;
 const options = @import("../coro.zig").options;
-const ReturnType = common.ReturnType;
 
 allocator: std.mem.Allocator,
 io: aio.Dynamic,
@@ -100,20 +99,22 @@ pub fn run(self: *@This(), mode: CompleteMode) aio.Error!void {
 }
 
 fn ioQueue(uop: aio.Dynamic.Uop, id: aio.Id) void {
+    const OperationContext = @import("io.zig").OperationContext;
     switch (uop) {
         inline else => |*op| {
             std.debug.assert(op.userdata != 0);
-            var ctx: *common.OperationContext = @ptrFromInt(op.userdata);
+            var ctx: *OperationContext = @ptrFromInt(op.userdata);
             ctx.id = id;
         },
     }
 }
 
 fn ioCompletition(uop: aio.Dynamic.Uop, _: aio.Id, failed: bool) void {
+    const OperationContext = @import("io.zig").OperationContext;
     switch (uop) {
         inline else => |*op| {
             std.debug.assert(op.userdata != 0);
-            var ctx: *common.OperationContext = @ptrFromInt(op.userdata);
+            var ctx: *OperationContext = @ptrFromInt(op.userdata);
             var frame: *Frame = ctx.whole.frame;
             std.debug.assert(ctx.whole.num_operations > 0);
             ctx.completed = true;
