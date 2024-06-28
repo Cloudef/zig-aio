@@ -4,7 +4,7 @@ const Operation = @import("ops.zig").Operation;
 const ItemPool = @import("minilib").ItemPool;
 const posix = @import("posix.zig");
 const linux = @import("posix/linux.zig");
-const log = std.log.scoped(.io_uring);
+const log = std.log.scoped(.aio_io_uring);
 
 const Supported = struct {
     var once = std.once(do_once);

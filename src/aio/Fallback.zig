@@ -7,6 +7,7 @@ const ItemPool = @import("minilib").ItemPool;
 const FixedArrayList = @import("minilib").FixedArrayList;
 const DoubleBufferedFixedArrayList = @import("minilib").DoubleBufferedFixedArrayList;
 const DynamicThreadPool = @import("minilib").DynamicThreadPool;
+const log = std.log.scoped(.aio_fallback);
 
 // This tries to emulate io_uring functionality.
 // If something does not match how it works on io_uring on linux, it should be change to match.
@@ -402,7 +403,6 @@ fn debug(comptime fmt: []const u8, args: anytype) void {
         std.debug.print("fallback: " ++ fmt ++ "\n", args);
     } else {
         if (comptime !aio.options.debug) return;
-        const log = std.log.scoped(.fallback);
         log.debug(fmt, args);
     }
 }

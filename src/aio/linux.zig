@@ -2,7 +2,7 @@ const std = @import("std");
 const aio = @import("../aio.zig");
 const IoUring = @import("IoUring.zig");
 const Fallback = @import("Fallback.zig");
-const log = std.log.scoped(.aio);
+const log = std.log.scoped(.aio_linux);
 
 pub const IO = switch (aio.options.fallback) {
     .auto => FallbackSupport, // prefer IoUring, support fallback during runtime
