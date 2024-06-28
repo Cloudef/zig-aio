@@ -6,15 +6,6 @@ const posix = @import("posix.zig");
 const linux = @import("posix/linux.zig");
 const log = std.log.scoped(.io_uring);
 
-fn debug(comptime fmt: []const u8, args: anytype) void {
-    if (@import("builtin").is_test) {
-        std.debug.print("io_uring: " ++ fmt ++ "\n", args);
-    } else {
-        if (comptime !aio.options.debug) return;
-        log.debug(fmt, args);
-    }
-}
-
 const Supported = struct {
     var once = std.once(do_once);
     var waitid: bool = false;
@@ -696,5 +687,14 @@ inline fn uring_handle_completion(op: anytype, cqe: *std.os.linux.io_uring_cqe) 
             }
         },
         .socket => op.out_socket.* = cqe.res,
+    }
+}
+
+fn debug(comptime fmt: []const u8, args: anytype) void {
+    if (@import("builtin").is_test) {
+        std.debug.print("io_uring: " ++ fmt ++ "\n", args);
+    } else {
+        if (comptime !aio.options.debug) return;
+        log.debug(fmt, args);
     }
 }
