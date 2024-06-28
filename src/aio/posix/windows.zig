@@ -165,8 +165,160 @@ pub const INPUT_RECORD = extern struct {
 
 pub extern "kernel32" fn ReadConsoleInputW(hConsoleInput: HANDLE, lpBuffer: *INPUT_RECORD, nLength: DWORD, lpNumberOfEventsRead: *DWORD) callconv(WINAPI) BOOL;
 
-pub fn translateTty(_: std.posix.fd_t, _: []u8, _: *ops.ReadTty.TranslationState) ops.ReadTty.Error!usize {
-    if (true) @panic("TODO");
+pub fn translateTty(fd: std.posix.fd_t, buf: []u8, state: *ops.ReadTty.TranslationState) ops.ReadTty.Error!usize {
+    // This code is mostly from Vaxis, but I'm undoing what Vaxis is doing :)
+    var read: u32 = 0;
+    var record: INPUT_RECORD = undefined;
+    if (ReadConsoleInputW(fd, &record, 1, &read) == 0) {
+        return std.os.windows.unexpectedError(std.os.windows.kernel32.GetLastError());
+    }
+
+    var stream = std.io.fixedBufferStream(buf);
+    switch (record.EventType) {
+        .key => {
+            const ev = record.Event.KeyEvent;
+            const base: u21 = switch (ev.wVirtualKeyCode) {
+                0x00 => 0, // escape seq
+                else => 0,
+            };
+
+            var codepoint: u21 = base;
+            switch (ev.uChar.UnicodeChar) {
+                0x00...0x1F => {},
+                else => |cp| {
+                    codepoint = cp;
+                    // const len = try std.unicode.utf8Encode(cp, &self.buf);
+                    // text = self.buf[0..len];
+                },
+            }
+
+            const press = ev.bKeyDown != 0;
+            _ = press; // autofix
+        },
+        .mouse => {
+            const ev = record.Event.MouseEvent;
+
+            // High word of dwButtonState represents mouse wheel. Positive is wheel_up, negative
+            // is wheel_down
+            // Low word represents button state
+            const mouse_wheel_direction: i16 = blk: {
+                const wheelu32: u32 = ev.dwButtonState >> 16;
+                const wheelu16: u16 = @truncate(wheelu32);
+                break :blk @bitCast(wheelu16);
+            };
+
+            const buttons: u16 = @truncate(ev.dwButtonState);
+            // save the current state when we are done
+            defer state.last_mouse_button_press = buttons;
+            const button_xor = state.last_mouse_button_press ^ buttons;
+
+            const EventType = enum {
+                press,
+                drag,
+                motion,
+                release,
+                unknown,
+            };
+
+            const Button = enum {
+                none,
+                wheel_up,
+                wheel_down,
+                left,
+                right,
+                middle,
+                button_8,
+                button_9,
+                unknown,
+            };
+
+            var event_type: EventType = .press;
+            const btn: Button = switch (button_xor) {
+                0x0000 => blk: {
+                    // Check wheel event
+                    if (ev.dwEventFlags & 0x0004 > 0) {
+                        if (mouse_wheel_direction > 0)
+                            break :blk .wheel_up
+                        else
+                            break :blk .wheel_down;
+                    }
+
+                    // If we have no change but one of the buttons is still pressed we have a
+                    // drag event. Find out which button is held down
+                    if (buttons > 0 and ev.dwEventFlags & 0x0001 > 0) {
+                        event_type = .drag;
+                        if (buttons & 0x0001 > 0) break :blk .left;
+                        if (buttons & 0x0002 > 0) break :blk .right;
+                        if (buttons & 0x0004 > 0) break :blk .middle;
+                        if (buttons & 0x0008 > 0) break :blk .button_8;
+                        if (buttons & 0x0010 > 0) break :blk .button_9;
+                    }
+
+                    if (ev.dwEventFlags & 0x0001 > 0) event_type = .motion;
+                    break :blk .none;
+                },
+                0x0001 => blk: {
+                    if (buttons & 0x0001 == 0) event_type = .release;
+                    break :blk .left;
+                },
+                0x0002 => blk: {
+                    if (buttons & 0x0002 == 0) event_type = .release;
+                    break :blk .right;
+                },
+                0x0004 => blk: {
+                    if (buttons & 0x0004 == 0) event_type = .release;
+                    break :blk .middle;
+                },
+                0x0008 => blk: {
+                    if (buttons & 0x0008 == 0) event_type = .release;
+                    break :blk .button_8;
+                },
+                0x0010 => blk: {
+                    if (buttons & 0x0010 == 0) event_type = .release;
+                    break :blk .button_9;
+                },
+                else => .unknown,
+            };
+            _ = btn; // autofix
+
+            const Mods = packed struct {
+                shift: bool,
+                alt: bool,
+                ctrl: bool,
+            };
+
+            const shift: u32 = 0x0010;
+            const alt: u32 = 0x0001 | 0x0002;
+            const ctrl: u32 = 0x0004 | 0x0008;
+            const mods: Mods = .{
+                .shift = ev.dwControlKeyState & shift > 0,
+                .alt = ev.dwControlKeyState & alt > 0,
+                .ctrl = ev.dwControlKeyState & ctrl > 0,
+            };
+            _ = mods; // autofix
+        },
+        .resize => {
+            // NOTE: Even though the event comes with a size, it may not be accurate. We ask for
+            // the size directly when we get this event
+            var console_info: std.os.windows.CONSOLE_SCREEN_BUFFER_INFO = undefined;
+            if (std.os.windows.kernel32.GetConsoleScreenBufferInfo(state.stdout.handle, &console_info) == 0) {
+                return std.os.windows.unexpectedError(std.os.windows.kernel32.GetLastError());
+            }
+            const window_rect = console_info.srWindow;
+            const width = window_rect.Right - window_rect.Left;
+            const height = window_rect.Bottom - window_rect.Top;
+            _ = try stream.writer().print(.{0x1b} ++ "[8;{};{}t", .{ width, height });
+        },
+        .focus => {
+            const ev = record.Event.FocusEvent;
+            const focus_in = ev.bSetFocus != 0;
+            if (focus_in) {
+                _ = try stream.write(.{0x1b} ++ "[I");
+            } else {
+                _ = try stream.write(.{0x1b} ++ "[0");
+            }
+        },
+    }
     return 0;
 }
 
