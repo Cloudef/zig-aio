@@ -79,9 +79,9 @@ pub fn init(allocator: std.mem.Allocator, n: u16) aio.Error!@This() {
     const n2 = std.math.ceilPowerOfTwo(u16, n) catch unreachable;
     var io = try uring_init(n2);
     errdefer io.deinit();
-    var ops = try ItemPool(Operation.Union, u16).init(allocator, n2);
+    var ops = try ItemPool(Operation.Union, u16).init(allocator, @intCast(io.sq.sqes.len));
     errdefer ops.deinit(allocator);
-    const cqes = try allocator.alloc(std.os.linux.io_uring_cqe, n2);
+    const cqes = try allocator.alloc(std.os.linux.io_uring_cqe, @intCast(io.cq.cqes.len));
     errdefer allocator.free(cqes);
     return .{ .io = io, .ops = ops, .cqes = cqes };
 }
