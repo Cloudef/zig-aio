@@ -174,9 +174,9 @@ pub inline fn perform(op: anytype, readiness: Readiness) Operation.Error!void {
     switch (comptime Operation.tagFromPayloadType(@TypeOf(op.*))) {
         .fsync => _ = try std.posix.fsync(op.file.handle),
         .read_tty => op.out_read.* = try readTty(op.tty.handle, op.buffer, op.mode),
-        .read => op.out_read.* = try readUring(op.file.handle, op.buffer, op.offset),
+        .read => op.out_read.* = try readUring(op.file.handle, op.buffer, @intCast(op.offset)),
         .write => {
-            const written = try writeUring(op.file.handle, op.buffer, op.offset);
+            const written = try writeUring(op.file.handle, op.buffer, @intCast(op.offset));
             if (op.out_written) |w| w.* = written;
         },
         .accept => op.out_socket.* = try std.posix.accept(op.socket, op.addr, op.inout_addrlen, 0),

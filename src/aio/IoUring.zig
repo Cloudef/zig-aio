@@ -247,7 +247,7 @@ inline fn uring_queue(io: *std.os.linux.IoUring, op: anytype, user_data: u64) ai
         .close_file => try io.close(user_data, op.file.handle),
         .close_dir => try io.close(user_data, op.dir.fd),
         .timeout => blk: {
-            const ts: std.os.linux.timespec = .{
+            const ts: std.os.linux.kernel_timespec = .{
                 .tv_sec = @intCast(op.ns / std.time.ns_per_s),
                 .tv_nsec = @intCast(op.ns % std.time.ns_per_s),
             };
