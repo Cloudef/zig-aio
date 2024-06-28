@@ -65,6 +65,7 @@ pub inline fn isSupported(op_types: []const type) bool {
     return uring_is_supported(&ops);
 }
 
+/// TODO: give options perhaps? More customization?
 pub fn init(allocator: std.mem.Allocator, n: u16) aio.Error!@This() {
     Supported.query();
     const n2 = std.math.ceilPowerOfTwo(u16, n) catch unreachable;
@@ -105,6 +106,7 @@ pub fn queue(self: *@This(), comptime len: u16, work: anytype, cb: ?aio.Dynamic.
 
 pub const NOP = std.math.maxInt(u64);
 
+/// TODO: give options perhaps? More customization?
 pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode, cb: ?aio.Dynamic.CompletionCallback) aio.Error!aio.CompletionResult {
     if (self.ops.empty()) return .{};
 
