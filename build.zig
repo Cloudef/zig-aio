@@ -1,3 +1,4 @@
+const builtin = @import("builtin");
 const std = @import("std");
 
 pub fn build(b: *std.Build) void {
@@ -18,12 +19,12 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/aio.zig"),
         .target = target,
         .optimize = optimize,
-        .link_libc = switch (target.query.os_tag orelse .other) {
+        .link_libc = switch (target.query.os_tag orelse builtin.os.tag) {
             .windows => true,
             .freebsd, .openbsd, .dragonfly, .netbsd => true,
             else => false,
         },
-        .single_threaded = switch (target.query.os_tag orelse .other) {
+        .single_threaded = switch (target.query.os_tag orelse builtin.os.tag) {
             .linux => null, // io_uring backend can be used without threads
             else => false,
         },
