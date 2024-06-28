@@ -27,8 +27,8 @@
         echo "zig build test"
         zig build test
         if [[ "$(uname)" == "Linux" ]]; then
-          echo "zig build test -Dfallback=true"
-          zig build test -Dfallback=true
+          echo "zig build test -Dfallback=force"
+          zig build test -Dfallback=force
         fi
       '';
 

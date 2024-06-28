@@ -19,11 +19,7 @@ pub const Options = struct {
     /// This is unused if fallback is disabled, in that case you should check for a support manually.
     required_ops: []const type = @import("aio/ops.zig").Operation.Types,
     /// Choose a fallback mode.
-    fallback: enum {
-        auto,
-        force,
-        disable,
-    } = if (build_options.fallback) .force else .auto,
+    fallback: enum { auto, force, disable } = @enumFromInt(@intFromEnum(build_options.fallback)),
     /// Max kludge threads for the fallback backend.
     /// Kludge threads are used when operation cannot be polled for readiness.
     /// One example is macos's /dev/tty which can only be queried for readiness using select/pselect.
@@ -185,6 +181,7 @@ pub const EventSource = struct {
 
 const IO = switch (@import("builtin").target.os.tag) {
     .linux => @import("aio/linux.zig").IO,
+    .windows => @import("aio/windows.zig").IO,
     else => @import("aio/Fallback.zig"),
 };
 

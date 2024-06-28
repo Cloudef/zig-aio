@@ -5,9 +5,10 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+    const FallbackMode = enum { auto, force, disable };
     var opts = b.addOptions();
-    const fallback = b.option(bool, "fallback", "use fallback event loop") orelse false;
-    opts.addOption(bool, "fallback", fallback);
+    const fallback = b.option(FallbackMode, "fallback", "fallback mode [auto, force, disable]") orelse .auto;
+    opts.addOption(FallbackMode, "fallback", fallback);
 
     const minilib = b.addModule("minilib", .{
         .root_source_file = b.path("src/minilib.zig"),
