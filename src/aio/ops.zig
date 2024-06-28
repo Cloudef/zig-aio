@@ -19,7 +19,7 @@ const SharedError = error{
     Unexpected,
 };
 
-// TODO: Support rest of the ops from <https://man.archlinux.org/man/io_uring_enter.2.en>
+// TODO: Support rest of the ops from <https://unixism.net/loti/ref-iouring/io_uring_enter.html>
 //       Even linux/io_uring only ops
 
 /// Can be used to wakeup the backend, custom notifications, etc...
