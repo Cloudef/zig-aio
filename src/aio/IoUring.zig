@@ -104,24 +104,15 @@ pub fn queue(self: *@This(), comptime len: u16, work: anytype, cb: ?aio.Dynamic.
     }
 }
 
-pub const NOP = std.math.maxInt(u64);
-
 /// TODO: give options perhaps? More customization?
 pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode, cb: ?aio.Dynamic.CompletionCallback) aio.Error!aio.CompletionResult {
     if (self.ops.empty()) return .{};
 
-    if (mode == .nonblocking) {
-        _ = self.io.nop(NOP) catch |err| return switch (err) {
-            error.SubmissionQueueFull => .{},
-        };
-    }
-
     _ = try uring_submit(&self.io);
 
     var result: aio.CompletionResult = .{};
-    const n = try uring_copy_cqes(&self.io, self.cqes, 1);
+    const n = try uring_copy_cqes(&self.io, self.cqes, if (mode == .nonblocking) 0 else 1);
     for (self.cqes[0..n]) |*cqe| {
-        if (cqe.user_data == NOP) continue;
         const uop = self.ops.get(@intCast(cqe.user_data)).*;
         var failed: bool = false;
         switch (uop) {
@@ -134,7 +125,7 @@ pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode, cb: ?aio.Dynam
         if (cb) |f| f(uop, @enumFromInt(cqe.user_data), failed);
     }
 
-    result.num_completed = n - @intFromBool(mode == .nonblocking);
+    result.num_completed = n;
     return result;
 }
 
