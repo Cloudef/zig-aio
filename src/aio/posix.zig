@@ -93,9 +93,16 @@ pub fn readTty(fd: std.posix.fd_t, buf: []u8, mode: ops.ReadTty.Mode) ops.ReadTt
 }
 
 pub fn readUring(fd: std.posix.fd_t, buf: []u8, off: usize) ops.Read.Error!usize {
-    const res = std.posix.pread(fd, buf, off) catch |err| switch (err) {
-        error.Unseekable => |e| if (off == 0) std.posix.read(fd, buf) else e,
-        else => |e| return e,
+    const res = blk: {
+        if (off == ops.OFFSET_CURRENT_POS) {
+            break :blk std.posix.read(fd, buf);
+        } else {
+            break :blk std.posix.pread(fd, buf, off) catch |err| switch (err) {
+                // matches io_uring behaviour
+                error.Unseekable => |e| if (off == 0) std.posix.read(fd, buf) else e,
+                else => |e| return e,
+            };
+        }
     };
     return res catch |err| switch (err) {
         error.Unexpected => |e| if (builtin.target.os.tag == .windows) error.NotOpenForReading else e,
@@ -104,9 +111,16 @@ pub fn readUring(fd: std.posix.fd_t, buf: []u8, off: usize) ops.Read.Error!usize
 }
 
 pub fn writeUring(fd: std.posix.fd_t, buf: []const u8, off: usize) ops.Write.Error!usize {
-    const res = std.posix.pwrite(fd, buf, off) catch |err| switch (err) {
-        error.Unseekable => |e| if (off == 0) std.posix.write(fd, buf) else e,
-        else => |e| e,
+    const res = blk: {
+        if (off == ops.OFFSET_CURRENT_POS) {
+            break :blk std.posix.write(fd, buf);
+        } else {
+            break :blk std.posix.pwrite(fd, buf, off) catch |err| switch (err) {
+                // matches io_uring behaviour
+                error.Unseekable => |e| if (off == 0) std.posix.write(fd, buf) else e,
+                else => |e| e,
+            };
+        }
     };
     return res catch |err| switch (err) {
         error.Unexpected => |e| if (builtin.target.os.tag == .windows) error.NotOpenForWriting else e,

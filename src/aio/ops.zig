@@ -85,6 +85,9 @@ pub const ReadTty = struct {
     userdata: usize = 0,
 };
 
+/// See IORING_FEAT_RW_CUR_POS
+pub const OFFSET_CURRENT_POS = std.math.maxInt(u64);
+
 /// std.fs.File.read
 pub const Read = struct {
     pub const Error = std.posix.PReadError || SharedError;
