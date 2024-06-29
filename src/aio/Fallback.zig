@@ -37,8 +37,8 @@ link_lock: std.DynamicBitSetUnmanaged, // operation is waiting for linked operat
 pending: std.DynamicBitSetUnmanaged, // operation is pending on readiness fd (poll)
 started: std.DynamicBitSetUnmanaged, // operation has been queued, it's being performed if pending is false
 pfd: FixedArrayList(posix.pollfd, u32), // current fds that we must poll for wakeup
-tpool: *DynamicThreadPool, // thread pool for performing operations, not all operations will be performed here
-kludge_tpool: *DynamicThreadPool, // thread pool for performing operations which can't be polled for readiness
+tpool: DynamicThreadPool, // thread pool for performing operations, not all operations will be performed here
+kludge_tpool: DynamicThreadPool, // thread pool for performing operations which can't be polled for readiness
 source: EventSource, // when threads finish, they signal it using this event source
 finished: DoubleBufferedFixedArrayList(Result, u16), // operations that are finished, double buffered to be thread safe
 
@@ -61,16 +61,12 @@ pub fn init(allocator: std.mem.Allocator, n: u16) aio.Error!@This() {
     errdefer started.deinit(allocator);
     var pfd = try FixedArrayList(posix.pollfd, u32).init(allocator, n + 1);
     errdefer pfd.deinit(allocator);
-    var tpool = try allocator.create(DynamicThreadPool);
-    errdefer allocator.destroy(tpool);
-    tpool.init(allocator, .{ .max_threads = aio.options.max_threads }) catch |err| return switch (err) {
+    var tpool = DynamicThreadPool.init(allocator, .{ .max_threads = aio.options.max_threads }) catch |err| return switch (err) {
         error.TimerUnsupported => error.SystemOutdated,
         else => |e| e,
     };
     errdefer tpool.deinit();
-    var kludge_tpool = try allocator.create(DynamicThreadPool);
-    errdefer allocator.destroy(kludge_tpool);
-    kludge_tpool.init(allocator, .{ .max_threads = aio.options.fallback_max_kludge_threads }) catch |err| return switch (err) {
+    var kludge_tpool = DynamicThreadPool.init(allocator, .{ .max_threads = aio.options.fallback_max_kludge_threads }) catch |err| return switch (err) {
         error.TimerUnsupported => error.SystemOutdated,
         else => |e| e,
     };
@@ -96,9 +92,7 @@ pub fn init(allocator: std.mem.Allocator, n: u16) aio.Error!@This() {
 
 pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
     self.tpool.deinit();
-    allocator.destroy(self.tpool);
     self.kludge_tpool.deinit();
-    allocator.destroy(self.kludge_tpool);
     var iter = self.ops.iterator();
     while (iter.next()) |e| uopUnwrapCall(e.v, posix.closeReadiness, .{self.readiness[e.k]});
     self.ops.deinit(allocator);

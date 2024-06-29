@@ -20,7 +20,7 @@ idling_threads: u32 = 0,
 active_threads: u32 = 0,
 timeout: u64,
 // used to serialize the acquisition order
-serial: std.DynamicBitSetUnmanaged align(std.atomic.cache_line) = undefined,
+serial: std.DynamicBitSetUnmanaged align(std.atomic.cache_line),
 
 const RunQueue = std.SinglyLinkedList(Runnable);
 const Runnable = struct { runFn: RunProto };
@@ -35,24 +35,25 @@ pub const Options = struct {
 
 pub const InitError = error{OutOfMemory} || std.time.Timer.Error;
 
-pub fn init(self: *@This(), allocator: std.mem.Allocator, options: Options) InitError!void {
-    self.* = .{
-        .allocator = allocator,
-        .timeout = options.timeout,
-    };
-
+pub fn init(allocator: std.mem.Allocator, options: Options) InitError!@This() {
     if (builtin.single_threaded) {
-        return;
+        return .{ .allocator = undefined, .timeout = undefined, .serial = undefined };
     }
 
     _ = try std.time.Timer.start(); // check that we have a timer
 
     const thread_count = options.max_threads orelse @max(1, std.Thread.getCpuCount() catch 1);
-    self.serial = try std.DynamicBitSetUnmanaged.initEmpty(allocator, thread_count);
-    errdefer self.serial.deinit(allocator);
-    self.threads = try allocator.alloc(DynamicThread, thread_count);
-    errdefer allocator.free(self.threads);
-    @memset(self.threads, .{});
+    var serial = try std.DynamicBitSetUnmanaged.initEmpty(allocator, thread_count);
+    errdefer serial.deinit(allocator);
+    const threads = try allocator.alloc(DynamicThread, thread_count);
+    errdefer allocator.free(threads);
+    @memset(threads, .{});
+    return .{
+        .allocator = allocator,
+        .timeout = options.timeout,
+        .serial = serial,
+        .threads = threads,
+    };
 }
 
 pub fn deinit(self: *@This()) void {
@@ -118,6 +119,8 @@ pub fn spawn(self: *@This(), comptime func: anytype, args: anytype) SpawnError!v
             }
         }
 
+        // TODO: Optimize closure allocations
+        //       Closures are often same size, so they can be bucketed and reused
         const closure = try self.allocator.create(Closure);
         closure.* = .{ .arguments = args };
         self.run_queue.prepend(&closure.run_node);

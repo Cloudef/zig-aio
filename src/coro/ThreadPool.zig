@@ -8,18 +8,19 @@ const DynamicThreadPool = @import("minilib").DynamicThreadPool;
 const ReturnType = @import("minilib").ReturnType;
 const ReturnTypeMixedWithErrorSet = @import("minilib").ReturnTypeMixedWithErrorSet;
 
-pool: DynamicThreadPool = undefined,
-source: aio.EventSource = undefined,
+pool: DynamicThreadPool,
+source: aio.EventSource,
 num_tasks: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
 
-/// Spin up the pool, `allocator` is used to allocate the tasks
-pub fn start(self: *@This(), allocator: std.mem.Allocator, options: DynamicThreadPool.Options) !void {
-    self.* = .{
-        .pool = undefined,
-        .source = try aio.EventSource.init(),
-    };
-    errdefer self.source.deinit();
-    try self.pool.init(allocator, options);
+pub const InitError = DynamicThreadPool.InitError || aio.EventSource.Error;
+
+/// `allocator` is used to allocate the tasks
+pub fn init(allocator: std.mem.Allocator, options: DynamicThreadPool.Options) InitError!@This() {
+    var pool = try DynamicThreadPool.init(allocator, options);
+    errdefer pool.deinit();
+    var source = try aio.EventSource.init();
+    errdefer source.deinit();
+    return .{ .pool = pool, .source = source };
 }
 
 pub fn deinit(self: *@This()) void {
@@ -75,6 +76,7 @@ pub fn yieldForCompletition(self: *@This(), func: anytype, args: anytype) Return
 /// Spawn a new coroutine which will immediately call `yieldForCompletition` for later collection of the result
 /// Normally one would use the `spawnForCompletition` method, but in case a generic functions return type can't be deduced, use this any variant.
 pub fn spawnAnyForCompletition(self: *@This(), scheduler: *Scheduler, Result: type, func: anytype, args: anytype, opts: Scheduler.SpawnOptions) Scheduler.SpawnError!Task {
+    // TODO: optimize the stack size
     return scheduler.spawnAny(Result, yieldForCompletition, .{ self, func, args }, opts);
 }
 
@@ -119,8 +121,7 @@ test "ThreadPool" {
     var scheduler = try Scheduler.init(std.testing.allocator, .{});
     defer scheduler.deinit();
 
-    var pool: ThreadPool = .{};
-    try pool.start(std.testing.allocator, .{});
+    var pool: ThreadPool = try ThreadPool.init(std.testing.allocator, .{});
     defer pool.deinit();
 
     for (0..10) |_| _ = try scheduler.spawn(Test.task, .{&pool}, .{});
