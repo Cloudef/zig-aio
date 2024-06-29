@@ -2,57 +2,41 @@ const std = @import("std");
 const posix = @import("../posix.zig");
 const ops = @import("../ops.zig");
 const log = std.log.scoped(.aio_windows);
+const win32 = @import("win32");
 
-const WINAPI = std.os.windows.WINAPI;
-const HANDLE = std.os.windows.HANDLE;
-const CHAR = std.os.windows.CHAR;
-const WCHAR = std.os.windows.WCHAR;
-const BOOL = std.os.windows.BOOL;
-const UINT = std.os.windows.UINT;
-const WORD = std.os.windows.WORD;
-const DWORD = std.os.windows.DWORD;
-const LONG = std.os.windows.LONG;
-const LARGE_INTEGER = packed struct(std.os.windows.LARGE_INTEGER) {
-    dwLowDateTime: DWORD,
-    dwHighDateTime: DWORD,
-};
-const COORD = std.os.windows.COORD;
-const LPCWSTR = std.os.windows.LPCWSTR;
-const INFINITE = std.os.windows.INFINITE;
-const MAXIMUM_WAIT_OBJECTS = std.os.windows.MAXIMUM_WAIT_OBJECTS;
-const SECURITY_ATTRIBUTES = std.os.windows.SECURITY_ATTRIBUTES;
+pub fn unexpectedError(err: win32.foundation.WIN32_ERROR) error{Unexpected} {
+    return std.os.windows.unexpectedError(@enumFromInt(@intFromEnum(err)));
+}
 
-pub extern "kernel32" fn SetEvent(hEvent: HANDLE) callconv(WINAPI) BOOL;
-pub extern "kernel32" fn ResetEvent(hEvent: HANDLE) callconv(WINAPI) BOOL;
+pub fn unexpectedWSAError(err: win32.networking.win_sock.WSA_ERROR) error{Unexpected} {
+    return std.os.windows.unexpectedWSAError(@enumFromInt(@intFromEnum(err)));
+}
 
-pub const TIMER_ALL_ACCESS = 0x1F0003;
-pub const CREATE_WAITABLE_TIMER_HIGH_RESOLUTION = 0x00000002;
-pub extern "kernel32" fn CreateWaitableTimerExW(attributes: ?*SECURITY_ATTRIBUTES, nameW: ?LPCWSTR, flags: DWORD, access: DWORD) callconv(WINAPI) HANDLE;
-pub extern "kernel32" fn SetWaitableTimer(hTimer: HANDLE, due: *const LARGE_INTEGER, period: LONG, cb: ?*anyopaque, cb_arg: ?*anyopaque, restore_system: BOOL) callconv(WINAPI) BOOL;
+pub fn checked(ret: win32.foundation.BOOL) void {
+    if (ret == 0) {
+        unexpectedError(win32.foundation.GetLastError()) catch {};
+        unreachable;
+    }
+}
 
 pub const EventSource = struct {
-    fd: HANDLE,
+    fd: std.posix.fd_t,
     counter: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
 
     pub inline fn init() !@This() {
         return .{
-            .fd = try std.os.windows.CreateEventExW(
-                null,
-                null,
-                std.os.windows.CREATE_EVENT_MANUAL_RESET,
-                std.os.windows.EVENT_ALL_ACCESS,
-            ),
+            .fd = try (win32.system.threading.CreateEventW(null, 1, 1, null) orelse error.SystemResources),
         };
     }
 
     pub inline fn deinit(self: *@This()) void {
-        std.os.windows.CloseHandle(self.fd);
+        checked(win32.foundation.CloseHandle(self.fd));
         self.* = undefined;
     }
 
     pub inline fn notify(self: *@This()) void {
         if (self.counter.fetchAdd(1, .monotonic) == 0) {
-            std.debug.assert(SetEvent(self.fd) != 0);
+            checked(win32.system.threading.SetEvent(self.fd));
         }
     }
 
@@ -64,10 +48,10 @@ pub const EventSource = struct {
         const v = self.counter.load(.acquire);
         if (v > 0) {
             if (self.counter.fetchSub(1, .release) == 1) {
-                std.debug.assert(ResetEvent(self.fd) != 0);
+                checked(win32.system.threading.ResetEvent(self.fd));
             }
         } else {
-            std.os.windows.WaitForSingleObject(self.fd, INFINITE) catch unreachable;
+            _ = win32.system.threading.WaitForSingleObject(self.fd, win32.system.windows_programming.INFINITE);
         }
     }
 
@@ -99,71 +83,37 @@ pub const Timer = struct {
     clock: posix.Clock,
 
     pub fn init(clock: posix.Clock) !@This() {
-        return .{ .fd = CreateWaitableTimerExW(null, null, 0, TIMER_ALL_ACCESS), .clock = clock };
+        return .{
+            .fd = try (win32.system.threading.CreateWaitableTimerW(null, 0, null) orelse error.SystemResources),
+            .clock = clock,
+        };
+    }
+
+    fn nanoSecondsToTimerTime(ns: i128) win32.foundation.LARGE_INTEGER {
+        const LARGE_INTEGER = packed struct(u64) { l: u32, h: u32 };
+        const signed: i64 = @intCast(@divFloor(ns, 100));
+        const adjusted: u64 = @bitCast(signed);
+        return .{
+            .QuadPart = @bitCast(LARGE_INTEGER{
+                .l = @as(u32, @truncate(adjusted >> 32)),
+                .h = @as(u32, @truncate(adjusted)),
+            }),
+        };
     }
 
     pub fn set(self: *@This(), ns: u128) !void {
         const rel_time: i128 = @intCast(ns);
         const li = nanoSecondsToTimerTime(-rel_time);
-        if (SetWaitableTimer(self.fd, &li, 0, null, null, 0) == 0) {
-            return error.Unexpected;
+        if (win32.system.threading.SetWaitableTimer(self.fd, &li, 0, null, null, 0) == 0) {
+            return unexpectedError(win32.foundation.GetLastError());
         }
     }
 
     pub fn deinit(self: *@This()) void {
-        std.os.windows.CloseHandle(self.fd);
+        checked(win32.foundation.CloseHandle(self.fd));
         self.* = undefined;
     }
 };
-
-pub const KEY_EVENT_RECORD = extern struct {
-    bKeyDown: BOOL,
-    wRepeatCount: WORD,
-    wVirtualKeyCode: WORD,
-    wVirtualScanCode: WORD,
-    uChar: extern union {
-        UnicodeChar: WCHAR,
-        AsciiChar: CHAR,
-    },
-    dwControlKeyState: DWORD,
-};
-
-pub const MOUSE_EVENT_RECORD = extern struct {
-    dwMousePosition: COORD,
-    dwButtonState: DWORD,
-    dwControlKeyState: DWORD,
-    dwEventFlags: DWORD,
-};
-
-pub const WINDOW_BUFFER_SIZE_RECORD = extern struct {
-    dwSize: COORD,
-};
-
-pub const MENU_EVENT_RECORD = extern struct {
-    dwCommandId: UINT,
-};
-
-pub const FOCUS_EVENT_RECORD = extern struct {
-    bSetFocus: BOOL,
-};
-
-pub const INPUT_RECORD = extern struct {
-    EventType: enum(WORD) {
-        key = 0x0001,
-        mouse = 0x0002,
-        resize = 0x0004,
-        focus = 0x0010,
-    },
-    Event: extern union {
-        KeyEvent: KEY_EVENT_RECORD,
-        MouseEvent: MOUSE_EVENT_RECORD,
-        WindowBufferSizeEvent: WINDOW_BUFFER_SIZE_RECORD,
-        MenuEvent: MENU_EVENT_RECORD,
-        FocusEvent: FOCUS_EVENT_RECORD,
-    },
-};
-
-pub extern "kernel32" fn ReadConsoleInputW(hConsoleInput: HANDLE, lpBuffer: *INPUT_RECORD, nLength: DWORD, lpNumberOfEventsRead: *DWORD) callconv(WINAPI) BOOL;
 
 pub fn translateTty(_: std.posix.fd_t, _: []u8, _: *ops.ReadTty.TranslationState) ops.ReadTty.Error!usize {
     if (true) @panic("TODO");
@@ -173,22 +123,22 @@ pub fn translateTty(_: std.posix.fd_t, _: []u8, _: *ops.ReadTty.TranslationState
 pub fn readTty(fd: std.posix.fd_t, buf: []u8, mode: ops.ReadTty.Mode) ops.ReadTty.Error!usize {
     return switch (mode) {
         .direct => {
-            if (buf.len < @sizeOf(INPUT_RECORD)) {
+            if (buf.len < @sizeOf(win32.system.console.INPUT_RECORD)) {
                 return error.NoSpaceLeft;
             }
             var read: u32 = 0;
-            const n_fits: u32 = @intCast(buf.len / @sizeOf(INPUT_RECORD));
-            if (ReadConsoleInputW(fd, @ptrCast(@alignCast(buf.ptr)), n_fits, &read) == 0) {
-                return std.os.windows.unexpectedError(std.os.windows.kernel32.GetLastError());
+            const n_fits: u32 = @intCast(buf.len / @sizeOf(win32.system.console.INPUT_RECORD));
+            if (win32.system.console.ReadConsoleInputW(fd, @ptrCast(@alignCast(buf.ptr)), n_fits, &read) == 0) {
+                return unexpectedError(win32.foundation.GetLastError());
             }
-            return read * @sizeOf(INPUT_RECORD);
+            return read * @sizeOf(win32.system.console.INPUT_RECORD);
         },
         .translation => |state| translateTty(fd, buf, state),
     };
 }
 
 pub const pollfd = struct {
-    fd: HANDLE,
+    fd: std.posix.fd_t,
     events: i16,
     revents: i16,
 };
@@ -200,21 +150,27 @@ pub fn poll(pfds: []pollfd, timeout: i32) std.posix.PollError!usize {
         outs += 1;
     };
     if (outs > 0) return outs;
-    std.debug.assert(pfds.len <= MAXIMUM_WAIT_OBJECTS); // rip windows
-    var handles: [MAXIMUM_WAIT_OBJECTS]HANDLE = undefined;
+    // rip windows
+    // this is only used by fallback backend, on fallback backend all file and socket operations are thread pooled
+    // thus this limit isn't that bad, but Timer and EventSource are polled using this function, so you can still
+    // hit this limit
+    std.debug.assert(pfds.len <= win32.system.system_services.MAXIMUM_WAIT_OBJECTS);
+    var handles: [win32.system.system_services.MAXIMUM_WAIT_OBJECTS]std.posix.fd_t = undefined;
     for (handles[0..pfds.len], pfds[0..]) |*h, *pfd| h.* = pfd.fd;
+    // std.os has nicer api for this
     const idx = std.os.windows.WaitForMultipleObjectsEx(
         handles[0..pfds.len],
         false,
-        if (timeout < 0) INFINITE else @intCast(timeout),
+        if (timeout < 0) win32.system.windows_programming.INFINITE else @intCast(timeout),
         false,
     ) catch |err| switch (err) {
         error.WaitAbandoned, error.WaitTimeOut => return 0,
         error.Unexpected => blk: {
-            // find out the handle that caused the error
-            // then let the Fallback perform it anyways so we can collect the real error
             for (handles[0..pfds.len], 0..) |h, idx| {
-                std.os.windows.WaitForSingleObject(h, 0) catch break :blk idx;
+                if (win32.system.threading.WaitForSingleObject(h, 0) == 0) {
+                    pfds[idx].events |= std.posix.POLL.NVAL;
+                    break :blk idx;
+                }
             }
             unreachable;
         },
@@ -224,44 +180,34 @@ pub fn poll(pfds: []pollfd, timeout: i32) std.posix.PollError!usize {
     return 1;
 }
 
-pub fn nanoSecondsToTimerTime(ns: i128) LARGE_INTEGER {
-    const signed: i64 = @intCast(@divFloor(ns, 100));
-    const adjusted: u64 = @bitCast(signed);
-    return LARGE_INTEGER{
-        .dwHighDateTime = @as(u32, @truncate(adjusted >> 32)),
-        .dwLowDateTime = @as(u32, @truncate(adjusted)),
-    };
-}
-
-pub const msghdr = std.os.windows.ws2_32.msghdr;
-pub const msghdr_const = std.os.windows.ws2_32.msghdr_const;
+pub const msghdr = win32.networking.win_sock.WSAMSG;
+pub const msghdr_const = win32.networking.win_sock.WSAMSG;
 
 pub fn sendmsg(sockfd: std.posix.socket_t, msg: *const msghdr_const, flags: u32) !usize {
     var written: u32 = 0;
     while (true) {
-        const rc = std.os.windows.ws2_32.WSASendMsg(sockfd, @constCast(msg), flags, &written, null, null);
-        if (rc == std.os.windows.ws2_32.SOCKET_ERROR) {
-            switch (std.os.windows.ws2_32.WSAGetLastError()) {
-                .WSAEWOULDBLOCK, .WSAEINTR => continue,
-                .WSAEACCES => return error.AccessDenied,
-                .WSAEADDRNOTAVAIL => return error.AddressNotAvailable,
-                .WSAECONNRESET => return error.ConnectionResetByPeer,
-                .WSAEMSGSIZE => return error.MessageTooBig,
-                .WSAENOBUFS => return error.SystemResources,
-                .WSAENOTSOCK => return error.FileDescriptorNotASocket,
-                .WSAEAFNOSUPPORT => return error.AddressFamilyNotSupported,
-                .WSAEDESTADDRREQ => unreachable, // A destination address is required.
-                .WSAEFAULT => unreachable, // The lpBuffers, lpTo, lpOverlapped, lpNumberOfBytesSent, or lpCompletionRoutine parameters are not part of the user address space, or the lpTo parameter is too small.
-                .WSAEHOSTUNREACH => return error.NetworkUnreachable,
-                // TODO: WSAEINPROGRESS
-                .WSAEINVAL => unreachable,
-                .WSAENETDOWN => return error.NetworkSubsystemFailed,
-                .WSAENETRESET => return error.ConnectionResetByPeer,
-                .WSAENETUNREACH => return error.NetworkUnreachable,
-                .WSAENOTCONN => return error.SocketNotConnected,
-                .WSAESHUTDOWN => unreachable, // The socket has been shut down; it is not possible to WSASendTo on a socket after shutdown has been invoked with how set to SD_SEND or SD_BOTH.
-                .WSANOTINITIALISED => unreachable, // A successful WSAStartup call must occur before using this function.
-                else => |err| return std.os.windows.unexpectedWSAError(err),
+        const rc = win32.networking.win_sock.WSASendMsg(sockfd, @constCast(msg), flags, &written, null, null);
+        if (rc == win32.networking.win_sock.SOCKET_ERROR) {
+            switch (win32.networking.win_sock.WSAGetLastError()) {
+                .EWOULDBLOCK, .EINTR, .EINPROGRESS => continue,
+                .EACCES => return error.AccessDenied,
+                .EADDRNOTAVAIL => return error.AddressNotAvailable,
+                .ECONNRESET => return error.ConnectionResetByPeer,
+                .EMSGSIZE => return error.MessageTooBig,
+                .ENOBUFS => return error.SystemResources,
+                .ENOTSOCK => return error.FileDescriptorNotASocket,
+                .EAFNOSUPPORT => return error.AddressFamilyNotSupported,
+                .EDESTADDRREQ => unreachable, // A destination address is required.
+                .EFAULT => unreachable, // The lpBuffers, lpTo, lpOverlapped, lpNumberOfBytesSent, or lpCompletionRoutine parameters are not part of the user address space, or the lpTo parameter is too small.
+                .EHOSTUNREACH => return error.NetworkUnreachable,
+                .EINVAL => unreachable,
+                .ENETDOWN => return error.NetworkSubsystemFailed,
+                .ENETRESET => return error.ConnectionResetByPeer,
+                .ENETUNREACH => return error.NetworkUnreachable,
+                .ENOTCONN => return error.SocketNotConnected,
+                .ESHUTDOWN => unreachable, // The socket has been shut down; it is not possible to WSASendTo on a socket after shutdown has been invoked with how set to SD_SEND or SD_BOTH.
+                .NOTINITIALISED => unreachable, // A successful WSAStartup call must occur before using this function.
+                else => |err| return unexpectedWSAError(err),
             }
         }
         break;
@@ -272,16 +218,17 @@ pub fn sendmsg(sockfd: std.posix.socket_t, msg: *const msghdr_const, flags: u32)
 pub fn recvmsg(sockfd: std.posix.socket_t, msg: *msghdr, _: u32) !usize {
     const DumbStuff = struct {
         var once = std.once(do_once);
-        var fun: std.os.windows.ws2_32.LPFN_WSARECVMSG = undefined;
+        var fun: win32.networking.win_sock.LPFN_WSARECVMSG = undefined;
         var have_fun = false;
         fn do_once() void {
             const sock = std.posix.socket(std.posix.AF.INET, std.posix.SOCK.DGRAM, 0) catch unreachable;
             defer std.posix.close(sock);
-            var trash: DWORD = 0;
-            const res = std.os.windows.ws2_32.WSAIoctl(
+            var trash: u32 = 0;
+            const res = win32.networking.win_sock.WSAIoctl(
                 sock,
-                std.os.windows.ws2_32.SIO_GET_EXTENSION_FUNCTION_POINTER,
-                &std.os.windows.ws2_32.WSAID_WSARECVMSG.Data4,
+                win32.networking.win_sock.SIO_GET_EXTENSION_FUNCTION_POINTER,
+                // not in zigwin32
+                @constCast(@ptrCast(&std.os.windows.ws2_32.WSAID_WSARECVMSG.Data4)),
                 std.os.windows.ws2_32.WSAID_WSARECVMSG.Data4.len,
                 @ptrCast(&fun),
                 @sizeOf(@TypeOf(fun)),
@@ -289,7 +236,7 @@ pub fn recvmsg(sockfd: std.posix.socket_t, msg: *msghdr, _: u32) !usize {
                 null,
                 null,
             );
-            have_fun = res != std.os.windows.ws2_32.SOCKET_ERROR;
+            have_fun = res != win32.networking.win_sock.SOCKET_ERROR;
         }
     };
     DumbStuff.once.call();
@@ -297,28 +244,27 @@ pub fn recvmsg(sockfd: std.posix.socket_t, msg: *msghdr, _: u32) !usize {
     var read: u32 = 0;
     while (true) {
         const rc = DumbStuff.fun(sockfd, msg, &read, null, null);
-        if (rc == std.os.windows.ws2_32.SOCKET_ERROR) {
-            switch (std.os.windows.ws2_32.WSAGetLastError()) {
-                .WSAEWOULDBLOCK, .WSAEINTR => continue,
-                .WSAEACCES => return error.AccessDenied,
-                .WSAEADDRNOTAVAIL => return error.AddressNotAvailable,
-                .WSAECONNRESET => return error.ConnectionResetByPeer,
-                .WSAEMSGSIZE => return error.MessageTooBig,
-                .WSAENOBUFS => return error.SystemResources,
-                .WSAENOTSOCK => return error.FileDescriptorNotASocket,
-                .WSAEAFNOSUPPORT => return error.AddressFamilyNotSupported,
-                .WSAEDESTADDRREQ => unreachable, // A destination address is required.
-                .WSAEFAULT => unreachable, // The lpBuffers, lpTo, lpOverlapped, lpNumberOfBytesSent, or lpCompletionRoutine parameters are not part of the user address space, or the lpTo parameter is too small.
-                .WSAEHOSTUNREACH => return error.NetworkUnreachable,
-                // TODO: WSAEINPROGRESS
-                .WSAEINVAL => unreachable,
-                .WSAENETDOWN => return error.NetworkSubsystemFailed,
-                .WSAENETRESET => return error.ConnectionResetByPeer,
-                .WSAENETUNREACH => return error.NetworkUnreachable,
-                .WSAENOTCONN => return error.SocketNotConnected,
-                .WSAESHUTDOWN => unreachable, // The socket has been shut down; it is not possible to WSASendTo on a socket after shutdown has been invoked with how set to SD_SEND or SD_BOTH.
-                .WSANOTINITIALISED => unreachable, // A successful WSAStartup call must occur before using this function.
-                else => |err| return std.os.windows.unexpectedWSAError(err),
+        if (rc == win32.networking.win_sock.SOCKET_ERROR) {
+            switch (win32.networking.win_sock.WSAGetLastError()) {
+                .EWOULDBLOCK, .EINTR, .EINPROGRESS => continue,
+                .EACCES => return error.AccessDenied,
+                .EADDRNOTAVAIL => return error.AddressNotAvailable,
+                .ECONNRESET => return error.ConnectionResetByPeer,
+                .EMSGSIZE => return error.MessageTooBig,
+                .ENOBUFS => return error.SystemResources,
+                .ENOTSOCK => return error.FileDescriptorNotASocket,
+                .EAFNOSUPPORT => return error.AddressFamilyNotSupported,
+                .EDESTADDRREQ => unreachable, // A destination address is required.
+                .EFAULT => unreachable, // The lpBuffers, lpTo, lpOverlapped, lpNumberOfBytesSent, or lpCompletionRoutine parameters are not part of the user address space, or the lpTo parameter is too small.
+                .EHOSTUNREACH => return error.NetworkUnreachable,
+                .EINVAL => unreachable,
+                .ENETDOWN => return error.NetworkSubsystemFailed,
+                .ENETRESET => return error.ConnectionResetByPeer,
+                .ENETUNREACH => return error.NetworkUnreachable,
+                .ENOTCONN => return error.SocketNotConnected,
+                .ESHUTDOWN => unreachable, // The socket has been shut down; it is not possible to WSASendTo on a socket after shutdown has been invoked with how set to SD_SEND or SD_BOTH.
+                .NOTINITIALISED => unreachable, // A successful WSAStartup call must occur before using this function.
+                else => |err| return unexpectedWSAError(err),
             }
         }
         break;

@@ -1,7 +1,13 @@
 .{
     .name = "zig-aio",
     .version = "0.0.0",
-    .dependencies = .{},
+    .dependencies = .{
+        .zigwin32 = .{
+            .url = "git+https://github.com/marlersoft/zigwin32.git#4a78e716ae6496f52d9ddaf4fda2c4bb692631cd",
+            .hash = "1220da4cab188b7b0e351de67626ca0dcadceddd16ca5997cfb578697f0525a59dac",
+            .lazy = true,
+        },
+    },
     .paths = .{
         "build.zig",
         "build.zig.zon",

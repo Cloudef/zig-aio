@@ -5,8 +5,8 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const FallbackMode = enum { auto, force, disable };
     var opts = b.addOptions();
+    const FallbackMode = enum { auto, force, disable };
     const fallback = b.option(FallbackMode, "fallback", "fallback mode [auto, force, disable]") orelse .auto;
     opts.addOption(FallbackMode, "fallback", fallback);
 
@@ -32,6 +32,12 @@ pub fn build(b: *std.Build) void {
     });
     aio.addImport("minilib", minilib);
     aio.addImport("build_options", opts.createModule());
+
+    if (target.query.os_tag orelse builtin.os.tag == .windows) {
+        if (b.lazyDependency("zigwin32", .{})) |zigwin32| {
+            aio.addImport("win32", zigwin32.module("zigwin32"));
+        }
+    }
 
     const coro = b.addModule("coro", .{
         .root_source_file = b.path("src/coro.zig"),
