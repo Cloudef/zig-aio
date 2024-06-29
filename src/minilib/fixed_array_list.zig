@@ -60,6 +60,12 @@ pub fn DoubleBufferedFixedArrayList(T: type, SZ: type) type {
             try self.safe.add(item);
         }
 
+        pub fn len(self: *@This()) SZ {
+            self.mutex.lock();
+            defer self.mutex.unlock();
+            return self.safe.len;
+        }
+
         pub fn reset(self: *@This()) void {
             self.mutex.lock();
             defer self.mutex.unlock();

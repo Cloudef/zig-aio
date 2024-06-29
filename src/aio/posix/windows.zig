@@ -4,6 +4,13 @@ const ops = @import("../ops.zig");
 const log = std.log.scoped(.aio_windows);
 const win32 = @import("win32");
 
+const INFINITE = win32.system.windows_programming.INFINITE;
+const GetLastError = win32.foundation.GetLastError;
+const CloseHandle = win32.foundation.CloseHandle;
+const threading = win32.system.threading;
+const console = win32.system.console;
+const win_sock = win32.networking.win_sock;
+
 pub fn unexpectedError(err: win32.foundation.WIN32_ERROR) error{Unexpected} {
     return std.os.windows.unexpectedError(@enumFromInt(@intFromEnum(err)));
 }
@@ -14,7 +21,7 @@ pub fn unexpectedWSAError(err: win32.networking.win_sock.WSA_ERROR) error{Unexpe
 
 pub fn checked(ret: win32.foundation.BOOL) void {
     if (ret == 0) {
-        unexpectedError(win32.foundation.GetLastError()) catch {};
+        unexpectedError(GetLastError()) catch {};
         unreachable;
     }
 }
@@ -25,18 +32,18 @@ pub const EventSource = struct {
 
     pub inline fn init() !@This() {
         return .{
-            .fd = try (win32.system.threading.CreateEventW(null, 1, 1, null) orelse error.SystemResources),
+            .fd = try (threading.CreateEventW(null, 1, 1, null) orelse error.SystemResources),
         };
     }
 
     pub inline fn deinit(self: *@This()) void {
-        checked(win32.foundation.CloseHandle(self.fd));
+        checked(CloseHandle(self.fd));
         self.* = undefined;
     }
 
     pub inline fn notify(self: *@This()) void {
         if (self.counter.fetchAdd(1, .monotonic) == 0) {
-            checked(win32.system.threading.SetEvent(self.fd));
+            checked(threading.SetEvent(self.fd));
         }
     }
 
@@ -48,10 +55,10 @@ pub const EventSource = struct {
         const v = self.counter.load(.acquire);
         if (v > 0) {
             if (self.counter.fetchSub(1, .release) == 1) {
-                checked(win32.system.threading.ResetEvent(self.fd));
+                checked(threading.ResetEvent(self.fd));
             }
         } else {
-            _ = win32.system.threading.WaitForSingleObject(self.fd, win32.system.windows_programming.INFINITE);
+            _ = threading.WaitForSingleObject(self.fd, INFINITE);
         }
     }
 
@@ -84,7 +91,7 @@ pub const Timer = struct {
 
     pub fn init(clock: posix.Clock) !@This() {
         return .{
-            .fd = try (win32.system.threading.CreateWaitableTimerW(null, 0, null) orelse error.SystemResources),
+            .fd = try (threading.CreateWaitableTimerW(null, 0, null) orelse error.SystemResources),
             .clock = clock,
         };
     }
@@ -104,13 +111,13 @@ pub const Timer = struct {
     pub fn set(self: *@This(), ns: u128) !void {
         const rel_time: i128 = @intCast(ns);
         const li = nanoSecondsToTimerTime(-rel_time);
-        if (win32.system.threading.SetWaitableTimer(self.fd, &li, 0, null, null, 0) == 0) {
-            return unexpectedError(win32.foundation.GetLastError());
+        if (threading.SetWaitableTimer(self.fd, &li, 0, null, null, 0) == 0) {
+            return unexpectedError(GetLastError());
         }
     }
 
     pub fn deinit(self: *@This()) void {
-        checked(win32.foundation.CloseHandle(self.fd));
+        checked(CloseHandle(self.fd));
         self.* = undefined;
     }
 };
@@ -123,15 +130,15 @@ pub fn translateTty(_: std.posix.fd_t, _: []u8, _: *ops.ReadTty.TranslationState
 pub fn readTty(fd: std.posix.fd_t, buf: []u8, mode: ops.ReadTty.Mode) ops.ReadTty.Error!usize {
     return switch (mode) {
         .direct => {
-            if (buf.len < @sizeOf(win32.system.console.INPUT_RECORD)) {
+            if (buf.len < @sizeOf(console.INPUT_RECORD)) {
                 return error.NoSpaceLeft;
             }
             var read: u32 = 0;
-            const n_fits: u32 = @intCast(buf.len / @sizeOf(win32.system.console.INPUT_RECORD));
-            if (win32.system.console.ReadConsoleInputW(fd, @ptrCast(@alignCast(buf.ptr)), n_fits, &read) == 0) {
-                return unexpectedError(win32.foundation.GetLastError());
+            const n_fits: u32 = @intCast(buf.len / @sizeOf(console.INPUT_RECORD));
+            if (console.ReadConsoleInputW(fd, @ptrCast(@alignCast(buf.ptr)), n_fits, &read) == 0) {
+                return unexpectedError(GetLastError());
             }
-            return read * @sizeOf(win32.system.console.INPUT_RECORD);
+            return read * @sizeOf(console.INPUT_RECORD);
         },
         .translation => |state| translateTty(fd, buf, state),
     };
@@ -161,13 +168,13 @@ pub fn poll(pfds: []pollfd, timeout: i32) std.posix.PollError!usize {
     const idx = std.os.windows.WaitForMultipleObjectsEx(
         handles[0..pfds.len],
         false,
-        if (timeout < 0) win32.system.windows_programming.INFINITE else @intCast(timeout),
+        if (timeout < 0) INFINITE else @intCast(timeout),
         false,
     ) catch |err| switch (err) {
         error.WaitAbandoned, error.WaitTimeOut => return 0,
         error.Unexpected => blk: {
             for (handles[0..pfds.len], 0..) |h, idx| {
-                if (win32.system.threading.WaitForSingleObject(h, 0) == 0) {
+                if (threading.WaitForSingleObject(h, 0) == 0) {
                     pfds[idx].events |= std.posix.POLL.NVAL;
                     break :blk idx;
                 }
@@ -180,15 +187,15 @@ pub fn poll(pfds: []pollfd, timeout: i32) std.posix.PollError!usize {
     return 1;
 }
 
-pub const msghdr = win32.networking.win_sock.WSAMSG;
-pub const msghdr_const = win32.networking.win_sock.WSAMSG;
+pub const msghdr = win_sock.WSAMSG;
+pub const msghdr_const = win_sock.WSAMSG;
 
 pub fn sendmsg(sockfd: std.posix.socket_t, msg: *const msghdr_const, flags: u32) !usize {
     var written: u32 = 0;
     while (true) {
-        const rc = win32.networking.win_sock.WSASendMsg(sockfd, @constCast(msg), flags, &written, null, null);
-        if (rc == win32.networking.win_sock.SOCKET_ERROR) {
-            switch (win32.networking.win_sock.WSAGetLastError()) {
+        const rc = win_sock.WSASendMsg(sockfd, @constCast(msg), flags, &written, null, null);
+        if (rc == win_sock.SOCKET_ERROR) {
+            switch (win_sock.WSAGetLastError()) {
                 .EWOULDBLOCK, .EINTR, .EINPROGRESS => continue,
                 .EACCES => return error.AccessDenied,
                 .EADDRNOTAVAIL => return error.AddressNotAvailable,
@@ -218,15 +225,15 @@ pub fn sendmsg(sockfd: std.posix.socket_t, msg: *const msghdr_const, flags: u32)
 pub fn recvmsg(sockfd: std.posix.socket_t, msg: *msghdr, _: u32) !usize {
     const DumbStuff = struct {
         var once = std.once(do_once);
-        var fun: win32.networking.win_sock.LPFN_WSARECVMSG = undefined;
+        var fun: win_sock.LPFN_WSARECVMSG = undefined;
         var have_fun = false;
         fn do_once() void {
             const sock = std.posix.socket(std.posix.AF.INET, std.posix.SOCK.DGRAM, 0) catch unreachable;
             defer std.posix.close(sock);
             var trash: u32 = 0;
-            const res = win32.networking.win_sock.WSAIoctl(
+            const res = win_sock.WSAIoctl(
                 sock,
-                win32.networking.win_sock.SIO_GET_EXTENSION_FUNCTION_POINTER,
+                win_sock.SIO_GET_EXTENSION_FUNCTION_POINTER,
                 // not in zigwin32
                 @constCast(@ptrCast(&std.os.windows.ws2_32.WSAID_WSARECVMSG.Data4)),
                 std.os.windows.ws2_32.WSAID_WSARECVMSG.Data4.len,
@@ -236,7 +243,7 @@ pub fn recvmsg(sockfd: std.posix.socket_t, msg: *msghdr, _: u32) !usize {
                 null,
                 null,
             );
-            have_fun = res != win32.networking.win_sock.SOCKET_ERROR;
+            have_fun = res != win_sock.SOCKET_ERROR;
         }
     };
     DumbStuff.once.call();
@@ -244,8 +251,8 @@ pub fn recvmsg(sockfd: std.posix.socket_t, msg: *msghdr, _: u32) !usize {
     var read: u32 = 0;
     while (true) {
         const rc = DumbStuff.fun(sockfd, msg, &read, null, null);
-        if (rc == win32.networking.win_sock.SOCKET_ERROR) {
-            switch (win32.networking.win_sock.WSAGetLastError()) {
+        if (rc == win_sock.SOCKET_ERROR) {
+            switch (win_sock.WSAGetLastError()) {
                 .EWOULDBLOCK, .EINTR, .EINPROGRESS => continue,
                 .EACCES => return error.AccessDenied,
                 .EADDRNOTAVAIL => return error.AddressNotAvailable,

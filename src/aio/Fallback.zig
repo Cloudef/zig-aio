@@ -241,7 +241,8 @@ fn onThreadExecutor(self: *@This(), id: u16, uop: *Operation.Union, readiness: p
 }
 
 fn start(self: *@This(), id: u16) !void {
-    if (self.link_lock.isSet(id)) return; // previous op hasn't finished yet
+    // previous op hasn't finished yet, or already started
+    if (self.link_lock.isSet(id)) return;
 
     self.started.set(id);
     if (self.readiness[id].mode == .nopoll or self.readiness[id].mode == .kludge or self.pending.isSet(id)) {
