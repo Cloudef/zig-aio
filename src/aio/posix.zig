@@ -230,16 +230,16 @@ pub inline fn openReadiness(op: anytype) OpenReadinessError!Readiness {
         .nop => .{},
         .fsync => .{},
         .write => switch (builtin.target.os.tag) {
-            .windows => .{},
+            .windows => .{ .mode = .kludge },
             else => .{ .fd = op.file.handle, .mode = .out },
         },
         .read_tty => switch (builtin.target.os.tag) {
-            .windows => .{},
+            .windows => .{ .mode = .kludge },
             .macos, .ios, .watchos, .visionos, .tvos => .{ .mode = .kludge },
             else => .{ .fd = op.tty.handle, .mode = .in },
         },
         .read => switch (builtin.target.os.tag) {
-            .windows => .{},
+            .windows => .{ .mode = .kludge },
             else => .{ .fd = op.file.handle, .mode = .in },
         },
         .accept, .recv, .recv_msg => switch (builtin.target.os.tag) {
