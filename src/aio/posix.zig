@@ -277,6 +277,7 @@ pub inline fn armReadiness(op: anytype, readiness: Readiness) ArmReadinessError!
 }
 
 pub inline fn closeReadiness(op: anytype, readiness: Readiness) void {
+    if (readiness.fd == invalid_fd) return;
     switch (comptime Operation.tagFromPayloadType(@TypeOf(op.*))) {
         .timeout, .link_timeout => {
             var timer: Timer = .{ .fd = readiness.fd, .clock = .monotonic };
@@ -292,7 +293,7 @@ pub inline fn closeReadiness(op: anytype, readiness: Readiness) void {
 
 pub const invalid_fd = switch (builtin.target.os.tag) {
     .windows => std.os.windows.INVALID_HANDLE_VALUE,
-    else => 0,
+    else => -1,
 };
 
 pub const pollfd = switch (builtin.target.os.tag) {

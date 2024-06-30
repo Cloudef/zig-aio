@@ -74,15 +74,17 @@ pub const Dynamic = struct {
         const ti = @typeInfo(@TypeOf(operations));
         if (comptime ti == .Struct and ti.Struct.is_tuple) {
             if (comptime operations.len == 0) @compileError("no work to be done");
-            var work = struct { ops: @TypeOf(operations) }{ .ops = operations };
-            return self.io.queue(operations.len, &work, self.queue_callback);
+            var uops: [operations.len]ops.Operation.Union = undefined;
+            inline for (operations, &uops) |op, *uop| uop.* = ops.Operation.uopFromOp(op);
+            return self.io.queue(operations.len, &uops, self.queue_callback);
         } else if (comptime ti == .Array) {
             if (comptime operations.len == 0) @compileError("no work to be done");
-            var work = struct { ops: @TypeOf(operations) }{ .ops = operations };
-            return self.io.queue(operations.len, &work, self.queue_callback);
+            var uops: [operations.len]ops.Operation.Union = undefined;
+            inline for (operations, &uops) |op, *uop| uop.* = ops.Operation.uopFromOp(op);
+            return self.io.queue(operations.len, &uops, self.queue_callback);
         } else {
-            var work = struct { ops: @TypeOf(.{operations}) }{ .ops = .{operations} };
-            return self.io.queue(1, &work, self.queue_callback);
+            var uops: [1]ops.Operation.Union = .{ops.Operation.uopFromOp(operations)};
+            return self.io.queue(1, &uops, self.queue_callback);
         }
     }
 
@@ -119,12 +121,14 @@ pub inline fn complete(operations: anytype) Error!u16 {
     const ti = @typeInfo(@TypeOf(operations));
     if (comptime ti == .Struct and ti.Struct.is_tuple) {
         if (comptime operations.len == 0) @compileError("no work to be done");
-        var work = struct { ops: @TypeOf(operations) }{ .ops = operations };
-        return IO.immediate(operations.len, &work);
+        var uops: [operations.len]ops.Operation.Union = undefined;
+        inline for (operations, &uops) |op, *uop| uop.* = ops.Operation.uopFromOp(op);
+        return IO.immediate(operations.len, &uops);
     } else if (comptime ti == .Array) {
         if (comptime operations.len == 0) @compileError("no work to be done");
-        var work = struct { ops: @TypeOf(operations) }{ .ops = operations };
-        return IO.immediate(operations.len, &work);
+        var uops: [operations.len]ops.Operation.Union = undefined;
+        inline for (operations, &uops) |op, *uop| uop.* = ops.Operation.uopFromOp(op);
+        return IO.immediate(operations.len, &uops);
     } else {
         @compileError("expected a tuple or array of operations");
     }

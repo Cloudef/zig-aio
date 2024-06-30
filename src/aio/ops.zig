@@ -482,6 +482,11 @@ pub const Operation = enum {
         });
     };
 
+    pub fn uopFromOp(op: anytype) Union {
+        const tag = @tagName(comptime tagFromPayloadType(@TypeOf(op)));
+        return @unionInit(Union, tag, op);
+    }
+
     pub const Error = blk: {
         var set = error{};
         for (Operation.map.values) |v| set = set || v.Error;

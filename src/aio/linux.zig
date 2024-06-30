@@ -1,5 +1,6 @@
 const std = @import("std");
 const aio = @import("../aio.zig");
+const Operation = @import("ops.zig").Operation;
 const IoUring = @import("IoUring.zig");
 const Fallback = @import("Fallback.zig");
 const log = std.log.scoped(.aio_linux);
@@ -54,9 +55,9 @@ const FallbackSupport = union(enum) {
         }
     }
 
-    pub inline fn queue(self: *@This(), comptime len: u16, work: anytype, cb: ?aio.Dynamic.QueueCallback) aio.Error!void {
+    pub inline fn queue(self: *@This(), comptime len: u16, uops: []Operation.Union, cb: ?aio.Dynamic.QueueCallback) aio.Error!void {
         return switch (self.*) {
-            inline else => |*io| io.queue(len, work, cb),
+            inline else => |*io| io.queue(len, uops, cb),
         };
     }
 
@@ -66,11 +67,11 @@ const FallbackSupport = union(enum) {
         };
     }
 
-    pub inline fn immediate(comptime len: u16, work: anytype) aio.Error!u16 {
+    pub inline fn immediate(comptime len: u16, uops: []Operation.Union) aio.Error!u16 {
         once.call();
         return if (io_uring_supported)
-            IoUring.immediate(len, work)
+            IoUring.immediate(len, uops)
         else
-            Fallback.immediate(len, work);
+            Fallback.immediate(len, uops);
     }
 };

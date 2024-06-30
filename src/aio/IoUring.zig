@@ -85,21 +85,22 @@ pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
     self.* = undefined;
 }
 
-inline fn queueOperation(self: *@This(), op: anytype) aio.Error!u16 {
+inline fn queueOperation(self: *@This(), uop: *Operation.Union) aio.Error!u16 {
     const n = self.ops.next() orelse return error.OutOfMemory;
-    try uring_queue(&self.io, op, n);
-    const tag = @tagName(comptime Operation.tagFromPayloadType(@TypeOf(op.*)));
-    return self.ops.add(@unionInit(Operation.Union, tag, op.*)) catch unreachable;
+    switch (uop.*) {
+        inline else => |*op| try uring_queue(&self.io, op, n),
+    }
+    return self.ops.add(uop.*) catch unreachable;
 }
 
-pub fn queue(self: *@This(), comptime len: u16, work: anytype, cb: ?aio.Dynamic.QueueCallback) aio.Error!void {
+pub fn queue(self: *@This(), comptime len: u16, uops: []Operation.Union, cb: ?aio.Dynamic.QueueCallback) aio.Error!void {
     if (comptime len == 1) {
-        const id = try self.queueOperation(&work.ops[0]);
+        const id = try self.queueOperation(&uops[0]);
         if (cb) |f| f(self.ops.nodes[id].used, @enumFromInt(id));
     } else {
         var ids: std.BoundedArray(u16, len) = .{};
         errdefer for (ids.constSlice()) |id| self.ops.remove(id);
-        inline for (&work.ops) |*op| ids.append(try self.queueOperation(op)) catch unreachable;
+        inline for (0..len) |i| ids.append(try self.queueOperation(&uops[i])) catch unreachable;
         if (cb) |f| for (ids.constSlice()) |id| f(self.ops.nodes[id].used, @enumFromInt(id));
     }
 }
@@ -121,29 +122,33 @@ pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode, cb: ?aio.Dynam
                 failed = true;
             },
         }
-        self.ops.remove(@intCast(cqe.user_data));
         if (cb) |f| f(uop, @enumFromInt(cqe.user_data), failed);
+        self.ops.remove(@intCast(cqe.user_data));
     }
 
     result.num_completed = n;
     return result;
 }
 
-pub fn immediate(comptime len: u16, work: anytype) aio.Error!u16 {
+pub fn immediate(comptime len: u16, uops: []Operation.Union) aio.Error!u16 {
     Supported.query();
     var io = try uring_init(std.math.ceilPowerOfTwo(u16, len) catch unreachable);
     defer io.deinit();
-    inline for (&work.ops, 0..) |*op, idx| try uring_queue(&io, op, idx);
+    inline for (0..len) |i| switch (uops[i]) {
+        inline else => |*op| try uring_queue(&io, op, i),
+    };
     var num = try uring_submit(&io);
     var num_errors: u16 = 0;
     var cqes: [len]std.os.linux.io_uring_cqe = undefined;
     while (num > 0) {
         const n = try uring_copy_cqes(&io, &cqes, num);
         for (cqes[0..n]) |*cqe| {
-            inline for (&work.ops, 0..) |*op, idx| if (idx == cqe.user_data) {
-                uring_handle_completion(op, cqe) catch {
-                    num_errors += 1;
-                };
+            inline for (0..len) |i| if (i == cqe.user_data) {
+                switch (uops[i]) {
+                    inline else => |*op| uring_handle_completion(op, cqe) catch {
+                        num_errors += 1;
+                    },
+                }
             };
         }
         num -= n;
@@ -240,7 +245,7 @@ inline fn uring_queue(io: *std.os.linux.IoUring, op: anytype, user_data: u64) ai
         .send_msg => try io.sendmsg(user_data, op.socket, op.msg, 0),
         .shutdown => try io.shutdown(user_data, op.socket, switch (op.how) {
             .recv => std.posix.SHUT.RD,
-            .send => std.posix.SHUT.RW,
+            .send => std.posix.SHUT.WR,
             .both => std.posix.SHUT.RDWR,
         }),
         .open_at => try io.openat(user_data, op.dir.fd, op.path, posix.convertOpenFlags(op.flags), 0),
