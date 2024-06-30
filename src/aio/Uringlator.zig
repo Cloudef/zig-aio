@@ -25,7 +25,7 @@ pub fn init(allocator: std.mem.Allocator, n: u16) aio.Error!@This() {
     errdefer allocator.free(next);
     var link_lock = try std.DynamicBitSetUnmanaged.initEmpty(allocator, n);
     errdefer link_lock.deinit(allocator);
-    var started = try std.DynamicBitSetUnmanaged.initEmpty(allocator, n);
+    var started = try std.DynamicBitSetUnmanaged.initFull(allocator, n);
     errdefer started.deinit(allocator);
     var finished = try DoubleBufferedFixedArrayList(Result, u16).init(allocator, n);
     errdefer finished.deinit(allocator);
@@ -88,7 +88,7 @@ fn queueOperation(
         inline else => |*op| {
             debug("queue: {}: {}, {s} ({?})", .{ id, std.meta.activeTag(uop), @tagName(op.link), self.prev_id });
             if (op.link != .unlinked) self.prev_id = id else self.prev_id = null;
-        }
+        },
     }
     try queue_cb(ctx, id, &self.ops.nodes[id].used);
     return id;
@@ -119,33 +119,30 @@ pub fn submit(
     Ctx: type,
     ctx: Ctx,
     start_cb: fn (ctx: Ctx, id: u16, uop: *Operation.Union) aio.Error!void,
-    pending_cb: fn (ctx: Ctx, id: u16, uop: *Operation.Union) aio.Error!void,
     can_cancel_cb: fn (ctx: Ctx, id: u16, uop: *Operation.Union) bool,
 ) aio.Error!bool {
     if (self.ops.empty()) return false;
     self.prev_id = null;
-    var iter = self.ops.iterator();
-    while (iter.next()) |e| {
-        if (self.link_lock.isSet(e.k)) {
+    var iter = self.started.iterator(.{ .kind = .unset });
+    while (iter.next()) |id| {
+        if (id >= self.ops.num_used) {
+            break;
+        }
+
+        if (self.link_lock.isSet(id) or self.started.isSet(id)) {
             continue;
         }
 
-        if (!self.started.isSet(e.k)) {
-            try self.start(e.k, Ctx, ctx, start_cb, can_cancel_cb);
-            self.started.set(e.k);
+        try self.start(@truncate(id), Ctx, ctx, start_cb, can_cancel_cb);
+        self.started.set(id);
 
-            // start linked timeout immediately as well if there's one
-            if (self.next[e.k] != e.k and self.ops.nodes[self.next[e.k]].used == .link_timeout) {
-                self.link_lock.unset(self.next[e.k]);
-                if (!self.started.isSet(self.next[e.k])) {
-                    try self.start(self.next[e.k], Ctx, ctx, start_cb, can_cancel_cb);
-                    self.started.set(self.next[e.k]);
-                }
+        // start linked timeout immediately as well if there's one
+        if (self.next[id] != id and self.ops.nodes[self.next[id]].used == .link_timeout) {
+            self.link_lock.unset(self.next[id]);
+            if (!self.started.isSet(self.next[id])) {
+                try self.start(self.next[id], Ctx, ctx, start_cb, can_cancel_cb);
+                self.started.set(self.next[id]);
             }
-        }
-
-        if (self.started.isSet(e.k)) {
-            try pending_cb(ctx, e.k, &self.ops.nodes[e.k].used);
         }
     }
     return true;
@@ -153,7 +150,7 @@ pub fn submit(
 
 pub fn finishLinkTimeout(self: *@This(), id: u16) void {
     var iter = self.ops.iterator();
-    const res: enum {ok, not_found} = blk: {
+    const res: enum { ok, not_found } = blk: {
         while (iter.next()) |e| {
             if (e.k != id and self.next[e.k] == id) {
                 self.finish(e.k, error.Canceled);

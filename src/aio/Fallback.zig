@@ -61,6 +61,7 @@ pub fn init(allocator: std.mem.Allocator, n: u16) aio.Error!@This() {
     errdefer pending_set.deinit(allocator);
     var uringlator = try Uringlator.init(allocator, n);
     errdefer uringlator.deinit(allocator);
+    pfd.add(.{ .fd = uringlator.source.fd, .events = std.posix.POLL.IN, .revents = 0 }) catch unreachable;
     return .{
         .readiness = readiness,
         .pfd = pfd,
@@ -98,10 +99,7 @@ pub fn queue(self: *@This(), comptime len: u16, uops: []Operation.Union, cb: ?ai
 }
 
 pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode, cb: ?aio.Dynamic.CompletionCallback) aio.Error!aio.CompletionResult {
-    if (!try self.uringlator.submit(*@This(), self, start, pending, cancelable)) return .{};
-    defer self.pfd.reset();
-
-    self.pfd.add(.{ .fd = self.uringlator.source.fd, .events = std.posix.POLL.IN, .revents = 0 }) catch unreachable;
+    if (!try self.uringlator.submit(*@This(), self, start, cancelable)) return .{};
 
     // I was thinking if we should use epoll/kqueue if available
     // The pros is that we don't have to iterate the self.pfd.items
@@ -200,22 +198,17 @@ fn start(self: *@This(), id: u16, uop: *Operation.Union) !void {
         }
         std.debug.assert(self.readiness[id].fd != posix.invalid_fd);
         try Uringlator.uopUnwrapCall(uop, posix.armReadiness, .{self.readiness[id]});
+        self.pfd.add(.{
+            .fd = self.readiness[id].fd,
+            .events = switch (self.readiness[id].mode) {
+                .nopoll, .kludge => unreachable,
+                .in => std.posix.POLL.IN,
+                .out => std.posix.POLL.OUT,
+            },
+            .revents = 0,
+        }) catch unreachable;
         self.pending.set(id);
     }
-}
-
-fn pending(self: *@This(), id: u16, _: *const Operation.Union) !void {
-    if (!self.pending.isSet(id)) return;
-    std.debug.assert(self.readiness[id].fd != posix.invalid_fd);
-    self.pfd.add(.{
-        .fd = self.readiness[id].fd,
-        .events = switch (self.readiness[id].mode) {
-            .nopoll, .kludge => unreachable,
-            .in => std.posix.POLL.IN,
-            .out => std.posix.POLL.OUT,
-        },
-        .revents = 0,
-    }) catch unreachable;
 }
 
 fn cancelable(self: *@This(), id: u16, _: *Operation.Union) bool {
@@ -223,7 +216,15 @@ fn cancelable(self: *@This(), id: u16, _: *Operation.Union) bool {
 }
 
 fn completion(self: *@This(), id: u16, uop: *Operation.Union) void {
-    Uringlator.uopUnwrapCall(uop, posix.closeReadiness, .{self.readiness[id]});
-    self.pending.unset(id);
-    self.readiness[id] = .{};
+    if (self.readiness[id].fd != posix.invalid_fd) {
+        for (self.pfd.items[0..self.pfd.len], 0..) |pfd, idx| {
+            if (pfd.fd == self.readiness[id].fd) {
+                self.pfd.swapRemove(@truncate(idx));
+                break;
+            }
+        }
+        Uringlator.uopUnwrapCall(uop, posix.closeReadiness, .{self.readiness[id]});
+        self.pending.unset(id);
+        self.readiness[id] = .{};
+    }
 }

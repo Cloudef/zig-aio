@@ -26,6 +26,11 @@ pub fn FixedArrayList(T: type, SZ: type) type {
             self.len += 1;
         }
 
+        pub fn swapRemove(self: *@This(), idx: SZ) void {
+            self.items[idx] = self.items[self.len - 1];
+            self.len -= 1;
+        }
+
         pub fn reset(self: *@This()) void {
             self.len = 0;
         }

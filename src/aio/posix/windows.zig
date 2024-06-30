@@ -152,10 +152,13 @@ pub const pollfd = struct {
 
 pub fn poll(pfds: []pollfd, timeout: i32) std.posix.PollError!usize {
     var outs: usize = 0;
-    for (pfds) |*pfd| if (pfd.events & std.posix.POLL.OUT != 0) {
-        pfd.revents = std.posix.POLL.OUT;
-        outs += 1;
-    };
+    for (pfds) |*pfd| {
+        pfd.revents = 0;
+        if (pfd.events & std.posix.POLL.OUT != 0) {
+            pfd.revents = std.posix.POLL.OUT;
+            outs += 1;
+        }
+    }
     if (outs > 0) return outs;
     // rip windows
     // this is only used by fallback backend, on fallback backend all file and socket operations are thread pooled

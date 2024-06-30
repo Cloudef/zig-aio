@@ -79,7 +79,7 @@ pub fn queue(self: *@This(), comptime len: u16, work: anytype, cb: ?aio.Dynamic.
 }
 
 pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode, cb: ?aio.Dynamic.CompletionCallback) aio.Error!aio.CompletionResult {
-    if (!try self.uringlator.submit(*@This(), self, start, pending, cancelable)) return .{};
+    if (!try self.uringlator.submit(*@This(), self, start, cancelable)) return .{};
 
     const num_finished = self.uringlator.finished.len();
     if (mode == .blocking and num_finished == 0) {
@@ -125,8 +125,6 @@ fn start(self: *@This(), id: u16, uop: *Operation.Union) !void {
         },
     }
 }
-
-fn pending(_: *@This(), _: u16, _: *Operation.Union) !void {}
 
 fn cancelable(_: *@This(), _: u16, _: *Operation.Union) bool {
     return false;
