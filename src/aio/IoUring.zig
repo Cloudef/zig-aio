@@ -143,6 +143,7 @@ pub fn immediate(comptime len: u16, uops: []Operation.Union) aio.Error!u16 {
     while (num > 0) {
         const n = try uring_copy_cqes(&io, &cqes, num);
         for (cqes[0..n]) |*cqe| {
+            @setEvalBranchQuota(1000 * len);
             inline for (0..len) |i| if (i == cqe.user_data) {
                 switch (uops[i]) {
                     inline else => |*op| uring_handle_completion(op, cqe) catch {
