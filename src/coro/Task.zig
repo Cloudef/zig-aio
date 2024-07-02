@@ -38,6 +38,14 @@ pub inline fn state(self: @This(), T: type) T {
 
 pub const YieldError = error{Canceled};
 
+pub inline fn setCancelable(cancelable: bool) YieldError!void {
+    if (Frame.current()) |frame| {
+        try frame.setCancelable(cancelable);
+    } else {
+        unreachable;
+    }
+}
+
 pub inline fn yield(yield_state: anytype) YieldError!void {
     if (Frame.current()) |frame| {
         frame.yield_state = @intFromEnum(yield_state);

@@ -29,6 +29,7 @@ pub const ResetEvent = Sync.ResetEvent;
 // Aliases
 pub const current = Task.current;
 pub const yield = Task.yield;
+pub const setCancelable = Task.setCancelable;
 
 /// Nonblocking IO (on a task)
 pub const io = struct {

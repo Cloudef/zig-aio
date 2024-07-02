@@ -30,6 +30,7 @@ stack: ?Fiber.Stack = null,
 result: *anyopaque,
 scheduler: *Scheduler,
 canceled: bool = false,
+cancelable: bool = true,
 status: Status = .active,
 yield_state: u8 = 0,
 link: List.Node = .{ .data = .{} },
@@ -158,7 +159,7 @@ pub fn complete(self: *@This(), mode: CompleteMode, comptime Result: type) Resul
         var timer: ?std.time.Timer = std.time.Timer.start() catch null;
         while (self.status != .completed) {
             if (mode == .cancel and tryCancel(self)) break;
-            if (timer != null and self.status != .io_cancel) {
+            if (timer != null and self.status != .io_cancel and self.cancelable) {
                 if (timer.?.read() >= 5 * std.time.ns_per_s) {
                     log.err("deadlock detected, tearing down the scheduler by a force", .{});
                     self.scheduler.state = .tear_down;
@@ -192,8 +193,15 @@ pub fn complete(self: *@This(), mode: CompleteMode, comptime Result: type) Resul
     }
 }
 
+pub const SetCancelableError = error{Canceled};
+
+pub inline fn setCancelable(self: *@This(), cancelable: bool) SetCancelableError!void {
+    if (self.canceled) return error.Canceled;
+    self.cancelable = cancelable;
+}
+
 pub fn tryCancel(self: *@This()) bool {
-    if (self.status != .completed) {
+    if (self.status != .completed and self.cancelable) {
         self.canceled = true;
         switch (self.status) {
             .active => {},
