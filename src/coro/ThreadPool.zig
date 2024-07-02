@@ -45,8 +45,10 @@ inline fn entrypoint(self: *@This(), completed: *bool, token: *CancellationToken
     for (0..n) |_| self.source.notify();
 }
 
+pub const YieldError = DynamicThreadPool.SpawnError;
+
 /// Yield until `func` finishes on another thread
-pub fn yieldForCompletition(self: *@This(), func: anytype, args: anytype) ReturnTypeMixedWithErrorSet(func, DynamicThreadPool.SpawnError) {
+pub fn yieldForCompletition(self: *@This(), func: anytype, args: anytype) ReturnTypeMixedWithErrorSet(func, YieldError) {
     var completed: bool = false;
     var res: ReturnType(func) = undefined;
     _ = self.num_tasks.fetchAdd(1, .monotonic);
@@ -82,12 +84,12 @@ pub fn spawnAnyForCompletition(self: *@This(), scheduler: *Scheduler, Result: ty
 
 /// Helper for getting the Task.Generic when using spawnForCompletition tasks.
 pub fn Generic2(comptime func: anytype) type {
-    return Task.Generic(ReturnTypeMixedWithErrorSet(func, std.Thread.SpawnError));
+    return Task.Generic(ReturnTypeMixedWithErrorSet(func, YieldError));
 }
 
 /// Spawn a new coroutine which will immediately call `yieldForCompletition` for later collection of the result
 pub fn spawnForCompletition(self: *@This(), scheduler: *Scheduler, func: anytype, args: anytype, opts: Scheduler.SpawnOptions) Scheduler.SpawnError!Generic2(func) {
-    const Result = ReturnTypeMixedWithErrorSet(func, std.Thread.SpawnError);
+    const Result = ReturnTypeMixedWithErrorSet(func, YieldError);
     const task = try self.spawnAnyForCompletition(scheduler, Result, func, args, opts);
     return task.generic(Result);
 }
