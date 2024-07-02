@@ -57,10 +57,7 @@ pub fn do(operations: anytype, status: Frame.Status) Error!u16 {
             std.debug.assert(num_cancels > 0);
             whole.num_operations += num_cancels;
             Frame.yield(.io_cancel);
-
-            if (whole.num_errors == 0) {
-                return error.Canceled;
-            }
+            return error.Canceled;
         }
 
         return whole.num_errors;

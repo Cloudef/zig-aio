@@ -32,34 +32,31 @@ pub const yield = Task.yield;
 
 /// Nonblocking IO (on a task)
 pub const io = struct {
+    pub const Error = aio.Error || error{Canceled};
+
     /// Completes a list of operations immediately, blocks the coroutine until complete
     /// The IO operations can be cancelled by calling `wakeup`
     /// For error handling you must check the `out_error` field in the operation
     /// Returns the number of errors occured, 0 if there were no errors
-    pub inline fn complete(operations: anytype) aio.Error!u16 {
+    pub inline fn complete(operations: anytype) Error!u16 {
         const do = @import("coro/io.zig").do;
-        return do(operations, .io) catch |err| switch (err) {
-            error.Canceled => operations.len,
-            else => |e| e,
-        };
+        return do(operations, .io);
     }
 
     /// Completes a list of operations immediately, blocks until complete
     /// The IO operations can be cancelled by calling `wakeupFromIo`, or doing `aio.Cancel`
     /// Returns `error.SomeOperationFailed` if any operation failed
-    pub inline fn multi(operations: anytype) (aio.Error || error{SomeOperationFailed})!void {
+    pub inline fn multi(operations: anytype) (Error || error{SomeOperationFailed})!void {
         if (try complete(operations) > 0) return error.SomeOperationFailed;
     }
 
     /// Completes a single operation immediately, blocks the coroutine until complete
     /// The IO operation can be cancelled by calling `wakeupFromIo`, or doing `aio.Cancel`
-    pub inline fn single(operation: anytype) (aio.Error || @TypeOf(operation).Error)!void {
+    pub inline fn single(operation: anytype) (Error || @TypeOf(operation).Error)!void {
         var op: @TypeOf(operation) = operation;
         var err: @TypeOf(operation).Error = error.Success;
         op.out_error = &err;
-        if (try complete(.{op}) > 0) {
-            return if (err == error.Success) error.Canceled else err;
-        }
+        if (try complete(.{op}) > 0) return err;
     }
 };
 
