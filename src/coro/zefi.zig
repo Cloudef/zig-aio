@@ -52,10 +52,6 @@ pub fn init(stack: Stack, user_data: usize, comptime func: anytype, args: anytyp
         }
     }.entry);
 
-    const magic_number: usize = 0x5E574D6D;
-    const magic_number_ptr: *usize = @ptrCast(stack.ptr);
-    magic_number_ptr.* = magic_number;
-
     const args_ptr: *align(1) Args = @ptrFromInt(@intFromPtr(state) - @sizeOf(Args));
     args_ptr.* = args;
 
