@@ -102,8 +102,8 @@ pub const Timer = struct {
         const adjusted: u64 = @bitCast(signed);
         return .{
             .QuadPart = @bitCast(LARGE_INTEGER{
-                .l = @as(u32, @truncate(adjusted >> 32)),
-                .h = @as(u32, @truncate(adjusted)),
+                .l = @truncate(adjusted >> 32),
+                .h = @truncate(adjusted),
             }),
         };
     }
