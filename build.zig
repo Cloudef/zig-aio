@@ -59,6 +59,7 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("examples/" ++ @tagName(example) ++ ".zig"),
             .target = target,
             .optimize = optimize,
+            .sanitize_thread = true,
         });
         exe.root_module.addImport("aio", aio);
         exe.root_module.addImport("coro", coro);
@@ -80,6 +81,7 @@ pub fn build(b: *std.Build) void {
             .filters = &.{test_filter},
             .link_libc = aio.link_libc,
             .single_threaded = aio.single_threaded,
+            .sanitize_thread = true,
         });
         if (mod != .minilib) tst.root_module.addImport("minilib", minilib);
         if (mod == .aio) tst.root_module.addImport("build_options", opts.createModule());

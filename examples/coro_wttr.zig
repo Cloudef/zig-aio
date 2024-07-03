@@ -6,8 +6,8 @@ const log = std.log.scoped(.coro_wttr);
 
 // Just for fun, try returning a error from one of these tasks
 
-fn getWeather(completed: *u32, allocator: std.mem.Allocator, city: []const u8, lang: []const u8) anyerror![]const u8 {
-    defer completed.* += 1;
+fn getWeather(completed: *std.atomic.Value(u32), allocator: std.mem.Allocator, city: []const u8, lang: []const u8) anyerror![]const u8 {
+    defer _ = completed.fetchAdd(1, .monotonic);
     var url: std.BoundedArray(u8, 256) = .{};
     if (builtin.target.os.tag == .windows) {
         try url.writer().print("https://wttr.in/{s}?AFT&lang={s}", .{ city, lang });
@@ -24,8 +24,8 @@ fn getWeather(completed: *u32, allocator: std.mem.Allocator, city: []const u8, l
     return body.toOwnedSlice();
 }
 
-fn getLatestZig(completed: *u32, allocator: std.mem.Allocator) anyerror![]const u8 {
-    defer completed.* += 1;
+fn getLatestZig(completed: *std.atomic.Value(u32), allocator: std.mem.Allocator) anyerror![]const u8 {
+    defer _ = completed.fetchAdd(1, .monotonic);
     var body = std.ArrayList(u8).init(allocator);
     defer body.deinit();
     var client: std.http.Client = .{ .allocator = allocator };
@@ -42,7 +42,7 @@ fn getLatestZig(completed: *u32, allocator: std.mem.Allocator) anyerror![]const 
     return allocator.dupe(u8, parsed.value.master.version);
 }
 
-fn loader(completed: *u32, max: *const u32) !void {
+fn loader(completed: *std.atomic.Value(u32), max: *const u32) !void {
     const frames: []const []const u8 = &.{
         "▰▱▱▱▱▱▱",
         "▰▰▱▱▱▱▱",
@@ -58,7 +58,7 @@ fn loader(completed: *u32, max: *const u32) !void {
     var idx: usize = 0;
     while (true) : (idx +%= 1) {
         try coro.io.single(aio.Timeout{ .ns = 80 * std.time.ns_per_ms });
-        std.debug.print("  {s} {}/{} loading that juicy info\r", .{ frames[idx % frames.len], completed.*, max.* });
+        std.debug.print("  {s} {}/{} loading that juicy info\r", .{ frames[idx % frames.len], completed.load(.acquire), max.* });
     }
 }
 
@@ -76,7 +76,7 @@ pub fn main() !void {
     defer scheduler.deinit();
 
     var max: u32 = 0;
-    var completed: u32 = 0;
+    var completed = std.atomic.Value(u32).init(0);
     const ltask = try scheduler.spawn(loader, .{ &completed, &max }, .{});
 
     var tpool: coro.ThreadPool = try coro.ThreadPool.init(gpa.allocator(), .{});
@@ -91,7 +91,7 @@ pub fn main() !void {
     try tasks.append(try tpool.spawnForCompletition(&scheduler, getLatestZig, .{ &completed, allocator }, .{}));
 
     max = @intCast(tasks.items.len);
-    while (completed < tasks.items.len) {
+    while (completed.load(.acquire) < tasks.items.len) {
         _ = try scheduler.tick(.blocking);
     }
 

@@ -20,7 +20,7 @@ idling_threads: u32 = 0,
 active_threads: u32 = 0,
 timeout: u64,
 // used to serialize the acquisition order
-serial: std.DynamicBitSetUnmanaged align(std.atomic.cache_line),
+serial: std.DynamicBitSetUnmanaged,
 
 const RunQueue = std.SinglyLinkedList(Runnable);
 const Runnable = struct { runFn: RunProto };
@@ -133,6 +133,9 @@ pub fn spawn(self: *@This(), comptime func: anytype, args: anytype) SpawnError!v
 }
 
 fn worker(self: *@This(), thread: *DynamicThread, id: u32, timeout: u64) void {
+    self.mutex.lock();
+    defer self.mutex.unlock();
+
     var timer = std.time.Timer.start() catch unreachable;
     main: while (thread.active) {
         // Serialize the acquisition order here so that threads will always pop the run queue in order
@@ -141,16 +144,14 @@ fn worker(self: *@This(), thread: *DynamicThread, id: u32, timeout: u64) void {
         // If a thread keeps getting out done by the earlier threads, it will time out
         const can_work: bool = blk: {
             outer: while (id > 0 and thread.active) {
-                {
-                    self.mutex.lock();
-                    defer self.mutex.unlock();
-                    if (self.run_queue.first == null) {
-                        // We were outraced, go back to sleep
-                        break :blk false;
-                    }
+                if (self.run_queue.first == null) {
+                    // We were outraced, go back to sleep
+                    break :blk false;
                 }
                 if (timer.read() >= timeout) break :main;
                 for (0..id) |idx| if (!self.serial.isSet(idx)) {
+                    self.mutex.unlock();
+                    defer self.mutex.lock();
                     std.Thread.yield() catch {};
                     continue :outer;
                 };
@@ -163,15 +164,9 @@ fn worker(self: *@This(), thread: *DynamicThread, id: u32, timeout: u64) void {
             self.serial.set(id);
             defer self.serial.unset(id);
             while (thread.active) {
-                // Get the node
-                const node = blk: {
-                    self.mutex.lock();
-                    defer self.mutex.unlock();
-                    break :blk self.run_queue.popFirst();
-                };
-
-                // Do the work
-                if (node) |run_node| {
+                if (self.run_queue.popFirst()) |run_node| {
+                    self.mutex.unlock();
+                    defer self.mutex.lock();
                     const runFn = run_node.data.runFn;
                     runFn(self, &run_node.data);
                     timer.reset();
@@ -182,8 +177,6 @@ fn worker(self: *@This(), thread: *DynamicThread, id: u32, timeout: u64) void {
         if (thread.active) {
             const now = timer.read();
             if (now >= timeout) break :main;
-            self.mutex.lock();
-            defer self.mutex.unlock();
             if (self.run_queue.first == null) {
                 self.idling_threads += 1;
                 defer self.idling_threads -= 1;
@@ -192,8 +185,6 @@ fn worker(self: *@This(), thread: *DynamicThread, id: u32, timeout: u64) void {
         }
     }
 
-    self.mutex.lock();
-    defer self.mutex.unlock();
     self.active_threads -= 1;
 
     // This thread won't partipicate in the acquisition order anymore

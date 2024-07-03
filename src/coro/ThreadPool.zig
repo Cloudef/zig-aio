@@ -33,14 +33,14 @@ pub const CancellationToken = struct {
     canceled: bool = false,
 };
 
-inline fn entrypoint(self: *@This(), completed: *bool, token: *CancellationToken, comptime func: anytype, res: anytype, args: anytype) void {
+inline fn entrypoint(self: *@This(), completed: *std.atomic.Value(bool), token: *CancellationToken, comptime func: anytype, res: anytype, args: anytype) void {
     const fun_info = @typeInfo(@TypeOf(func)).Fn;
     if (fun_info.params.len > 0 and fun_info.params[0].type.? == *const CancellationToken) {
         res.* = @call(.auto, func, .{token} ++ args);
     } else {
         res.* = @call(.auto, func, args);
     }
-    completed.* = true;
+    completed.store(true, .release);
     const n = self.num_tasks.load(.acquire);
     for (0..n) |_| self.source.notify();
 }
@@ -49,13 +49,13 @@ pub const YieldError = DynamicThreadPool.SpawnError;
 
 /// Yield until `func` finishes on another thread
 pub fn yieldForCompletition(self: *@This(), func: anytype, args: anytype) ReturnTypeMixedWithErrorSet(func, YieldError) {
-    var completed: bool = false;
+    var completed = std.atomic.Value(bool).init(false);
     var res: ReturnType(func) = undefined;
     _ = self.num_tasks.fetchAdd(1, .monotonic);
     defer _ = self.num_tasks.fetchSub(1, .release);
     var token: CancellationToken = .{};
     try self.pool.spawn(entrypoint, .{ self, &completed, &token, func, &res, args });
-    while (!completed) {
+    while (!completed.load(.acquire)) {
         const nerr = io.do(.{
             aio.WaitEventSource{ .source = &self.source, .link = .soft },
         }, if (token.canceled) .io_cancel else .io) catch 1;
