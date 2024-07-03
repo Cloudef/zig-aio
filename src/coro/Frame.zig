@@ -14,6 +14,7 @@ pub const Status = enum(u8) {
     io, // waiting for io
     io_cancel, // cannot be canceled
     completed, // the frame is complete and has to be collected
+    waiting_frame, // waiting for another frame to complete
     semaphore, // waiting on a semaphore
     reset_event, // waiting on a reset_event
     yield, // yielded by a user code
@@ -103,7 +104,7 @@ fn wakeupWaiters(self: *@This()) void {
     var next = self.waiters.first;
     while (next) |node| {
         next = node.next;
-        node.data.cast().wakeup(.reset_event);
+        node.data.cast().wakeup(.waiting_frame);
     }
 }
 
@@ -153,7 +154,7 @@ pub fn complete(self: *@This(), mode: CompleteMode, comptime Result: type) Resul
             if (mode == .cancel and tryCancel(self)) break;
             self.waiters.prepend(&frame.wait_link);
             defer self.waiters.remove(&frame.wait_link);
-            yield(.reset_event);
+            yield(.waiting_frame);
         }
     } else {
         var timer: ?std.time.Timer = std.time.Timer.start() catch null;
@@ -204,6 +205,10 @@ pub fn tryCancel(self: *@This()) bool {
             },
             .io_cancel => {
                 debug("cancel... pending on cancel: {}", .{self});
+                // can't cancel
+            },
+            .waiting_frame => {
+                debug("cancel... pending for another frame to complete: {}", .{self});
                 // can't cancel
             },
             .reset_event => |status| {
