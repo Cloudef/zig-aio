@@ -96,6 +96,13 @@ pub const Timer = struct {
     }
 };
 
+// std.os.linux.errnoFromSyscall is not pub :(
+fn errnoFromSyscall(r: usize) std.os.linux.E {
+    const signed_r: isize = @bitCast(r);
+    const int = if (signed_r > -4096 and signed_r < 0) -signed_r else 0;
+    return @enumFromInt(int);
+}
+
 pub const PidfdOpenError = error{
     ProcessFdQuotaExceeded,
     SystemFdQuotaExceeded,
@@ -107,7 +114,7 @@ pub const PidfdOpenError = error{
 pub fn pidfd_open(id: std.posix.fd_t, flags: std.posix.O) PidfdOpenError!std.posix.fd_t {
     while (true) {
         const res = std.os.linux.pidfd_open(id, @bitCast(flags));
-        const e = std.posix.errno(res);
+        const e = errnoFromSyscall(res);
         if (e != .SUCCESS) return switch (e) {
             .INVAL, .SRCH => unreachable,
             .AGAIN, .INTR => continue,
@@ -133,7 +140,7 @@ pub fn renameat2(
 ) std.posix.RenameError!void {
     while (true) {
         const res = std.os.linux.renameat2(old_dir, old_path, new_dir, new_path, flags);
-        const e = std.posix.errno(res);
+        const e = errnoFromSyscall(res);
         if (e != .SUCCESS) return switch (e) {
             .SUCCESS, .INVAL => unreachable,
             .INTR, .AGAIN => continue,
