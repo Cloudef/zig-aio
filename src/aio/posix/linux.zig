@@ -132,7 +132,7 @@ pub fn renameat2(
     flags: u32,
 ) std.posix.RenameError!void {
     while (true) {
-        const res = std.posix.system.renameat2(old_dir, old_path, new_dir, new_path, flags);
+        const res = std.os.linux.renameat2(old_dir, old_path, new_dir, new_path, flags);
         const e = std.posix.errno(res);
         if (e != .SUCCESS) return switch (e) {
             .SUCCESS, .INVAL => unreachable,
