@@ -117,14 +117,14 @@ pub fn deinit(self: *@This()) void {
     // stack is now gone, doing anything after this with @This() is ub
 }
 
-pub inline fn signal(self: *@This()) void {
+pub fn signal(self: *@This()) void {
     switch (self.status) {
         .active, .io_cancel, .completed => {},
         else => |status| self.wakeup(status),
     }
 }
 
-pub inline fn wakeup(self: *@This(), expected_status: Status) void {
+pub fn wakeup(self: *@This(), expected_status: Status) void {
     std.debug.assert(self.status == expected_status);
     debug("waking up: {}", .{self});
     self.status = .active;
@@ -191,13 +191,6 @@ pub fn complete(self: *@This(), mode: CompleteMode, comptime Result: type) Resul
     } else {
         self.deinit();
     }
-}
-
-pub const SetCancelableError = error{Canceled};
-
-pub inline fn setCancelable(self: *@This(), cancelable: bool) SetCancelableError!void {
-    if (self.canceled) return error.Canceled;
-    self.cancelable = cancelable;
 }
 
 pub fn tryCancel(self: *@This()) bool {

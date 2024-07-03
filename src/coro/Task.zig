@@ -5,14 +5,11 @@ const Frame = @import("Frame.zig");
 
 const Task = @This();
 
-frame: *align(@alignOf(Frame)) anyopaque,
+/// Private API for the curious 🏩
+frame: *Frame,
 
-fn cast(self: @This()) *Frame {
-    return @ptrCast(self.frame);
-}
-
-pub fn format(self: @This(), comptime fmt: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
-    return self.cast().format(fmt, opts, writer);
+pub inline fn format(self: @This(), comptime fmt: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
+    return self.frame.format(fmt, opts, writer);
 }
 
 /// Get the current task, or null if not inside a task
@@ -25,41 +22,42 @@ pub inline fn current() ?@This() {
 }
 
 pub inline fn isComplete(self: @This()) bool {
-    return self.cast().status == .completed;
+    return self.frame.status == .completed;
 }
 
 pub inline fn signal(self: @This()) void {
-    self.cast().signal();
+    self.frame.signal();
 }
 
 pub inline fn state(self: @This(), T: type) T {
-    return @enumFromInt(self.cast().yield_state);
+    return @enumFromInt(self.frame.yield_state);
 }
 
 pub const YieldError = error{Canceled};
 
-pub inline fn setCancelable(cancelable: bool) YieldError!void {
+pub fn setCancelable(cancelable: bool) YieldError!void {
     if (Frame.current()) |frame| {
-        try frame.setCancelable(cancelable);
+        if (frame.canceled) return error.Canceled;
+        frame.cancelable = cancelable;
     } else {
-        unreachable;
+        unreachable; // can only be called from a task
     }
 }
 
-pub inline fn yield(yield_state: anytype) YieldError!void {
+pub fn yield(yield_state: anytype) YieldError!void {
     if (Frame.current()) |frame| {
         frame.yield_state = @intFromEnum(yield_state);
         if (frame.yield_state == 0) @panic("yield_state `0` is reserved");
         Frame.yield(.yield);
         if (frame.canceled) return error.Canceled;
     } else {
-        unreachable;
+        unreachable; // can only be called from a task
     }
 }
 
 pub inline fn wakeup(self: @This()) void {
-    self.cast().yield_state = 0;
-    self.cast().wakeup(.yield);
+    self.frame.yield_state = 0;
+    self.frame.wakeup(.yield);
 }
 
 pub inline fn wakeupIf(self: @This(), yield_state: anytype) void {
@@ -71,19 +69,19 @@ pub inline fn wakeupIf(self: @This(), yield_state: anytype) void {
 pub const CompleteMode = Frame.CompleteMode;
 
 pub inline fn complete(self: @This(), mode: CompleteMode, Result: type) Result {
-    return self.cast().complete(mode, Result);
+    return self.frame.complete(mode, Result);
 }
 
 /// this is same as complete(.cancel, void)
 pub inline fn cancel(self: @This()) void {
-    self.cast().complete(.cancel, void);
+    self.frame.complete(.cancel, void);
 }
 
-pub fn generic(self: @This(), Result: type) Generic(Result) {
+pub inline fn generic(self: @This(), Result: type) Generic(Result) {
     return .{ .frame = self.frame };
 }
 
-pub fn generic2(self: @This(), comptime func: anytype) Generic2(func) {
+pub inline fn generic2(self: @This(), comptime func: anytype) Generic2(func) {
     return .{ .frame = self.frame };
 }
 
@@ -91,13 +89,9 @@ pub fn Generic(comptime ResultType: type) type {
     return struct {
         pub const Result = ResultType;
 
-        frame: *align(@alignOf(Frame)) anyopaque,
+        frame: *Frame,
 
-        fn cast(self: *@This()) *Frame {
-            return @ptrCast(self.frame);
-        }
-
-        pub fn format(self: @This(), comptime fmt: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
+        pub inline fn format(self: @This(), comptime fmt: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
             return self.any().format(fmt, opts, writer);
         }
 
