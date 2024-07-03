@@ -24,11 +24,14 @@
 
       # nix run .#test
       apps.test = env.app [] ''
-        echo "zig build test"
-        zig build test
         if [[ "$(uname)" == "Linux" ]]; then
-          echo "zig build test -Dfallback=force"
-          zig build test -Dfallback=force
+          echo "zig build test -Dsanitize=true"
+          zig build test -Dsanitize=true
+          echo "zig build test -Dfallback=force -Dsanitize=true"
+          zig build test -Dfallback=force -Dsanitize=true
+        else
+          echo "zig build test"
+          zig build test
         fi
       '';
 
