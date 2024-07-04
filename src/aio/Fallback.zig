@@ -6,6 +6,7 @@ const Operation = @import("ops.zig").Operation;
 const ItemPool = @import("minilib").ItemPool;
 const FixedArrayList = @import("minilib").FixedArrayList;
 const DoubleBufferedFixedArrayList = @import("minilib").DoubleBufferedFixedArrayList;
+const TimerQueue = @import("minilib").TimerQueue;
 const DynamicThreadPool = @import("minilib").DynamicThreadPool;
 const Uringlator = @import("Uringlator.zig");
 const log = std.log.scoped(.aio_fallback);
@@ -28,8 +29,7 @@ comptime {
 
 pub const EventSource = posix.EventSource;
 
-const Result = struct { failure: Operation.Error, id: u16 };
-
+tqueue: TimerQueue, // timer queue implementing linux -like timers
 readiness: []posix.Readiness, // readiness fd that gets polled before we perform the operation
 pfd: FixedArrayList(posix.pollfd, u32), // current fds that we must poll for wakeup
 tpool: DynamicThreadPool, // thread pool for performing operations, not all operations will be performed here
@@ -42,6 +42,8 @@ pub fn isSupported(_: []const type) bool {
 }
 
 pub fn init(allocator: std.mem.Allocator, n: u16) aio.Error!@This() {
+    var tqueue = try TimerQueue.init(allocator);
+    errdefer tqueue.deinit();
     const readiness = try allocator.alloc(posix.Readiness, n);
     errdefer allocator.free(readiness);
     @memset(readiness, .{});
@@ -63,6 +65,7 @@ pub fn init(allocator: std.mem.Allocator, n: u16) aio.Error!@This() {
     errdefer uringlator.deinit(allocator);
     pfd.add(.{ .fd = uringlator.source.fd, .events = std.posix.POLL.IN, .revents = 0 }) catch unreachable;
     return .{
+        .tqueue = tqueue,
         .readiness = readiness,
         .pfd = pfd,
         .tpool = tpool,
@@ -73,6 +76,7 @@ pub fn init(allocator: std.mem.Allocator, n: u16) aio.Error!@This() {
 }
 
 pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
+    self.tqueue.deinit();
     self.tpool.deinit();
     self.kludge_tpool.deinit();
     var iter = self.pending.iterator(.{});
@@ -167,11 +171,18 @@ fn onThreadExecutor(self: *@This(), id: u16, uop: *Operation.Union, readiness: p
     self.uringlator.finish(id, failure);
 }
 
+fn onThreadTimeout(ctx: *anyopaque, user_data: usize) void {
+    var self: *@This() = @ptrCast(@alignCast(ctx));
+    self.uringlator.finish(@intCast(user_data), error.Success);
+}
+
 fn start(self: *@This(), id: u16, uop: *Operation.Union) !void {
     if (self.readiness[id].mode == .nopoll or self.readiness[id].mode == .kludge or self.pending.isSet(id)) {
         switch (uop.*) {
-            .timeout => self.uringlator.finish(id, error.Success),
-            .link_timeout => self.uringlator.finishLinkTimeout(id),
+            inline .timeout, .link_timeout => |*op| {
+                const closure: TimerQueue.Closure = .{ .context = self, .callback = onThreadTimeout };
+                try self.tqueue.schedule(.monotonic, op.ns, id, .{ .closure = closure });
+            },
             // can be performed here, doesn't have to be dispatched to thread
             inline .child_exit, .notify_event_source, .wait_event_source, .close_event_source => |*op| {
                 var failure: Operation.Error = error.Success;
@@ -197,7 +208,6 @@ fn start(self: *@This(), id: u16, uop: *Operation.Union) !void {
             Uringlator.debug("pending: {}: {}", .{ id, std.meta.activeTag(uop.*) });
         }
         std.debug.assert(self.readiness[id].fd != posix.invalid_fd);
-        try Uringlator.uopUnwrapCall(uop, posix.armReadiness, .{self.readiness[id]});
         self.pfd.add(.{
             .fd = self.readiness[id].fd,
             .events = switch (self.readiness[id].mode) {
@@ -211,11 +221,18 @@ fn start(self: *@This(), id: u16, uop: *Operation.Union) !void {
     }
 }
 
-fn cancelable(self: *@This(), id: u16, _: *Operation.Union) bool {
-    return self.pending.isSet(id);
+fn cancelable(self: *@This(), id: u16, uop: *Operation.Union) bool {
+    return self.pending.isSet(id) or switch (uop.*) {
+        .timeout, .link_timeout => true,
+        else => false,
+    };
 }
 
 fn completion(self: *@This(), id: u16, uop: *Operation.Union) void {
+    switch (uop.*) {
+        .timeout, .link_timeout => self.tqueue.disarm(.monotonic, id),
+        else => {},
+    }
     if (self.readiness[id].fd != posix.invalid_fd) {
         for (self.pfd.items[0..self.pfd.len], 0..) |pfd, idx| {
             if (pfd.fd == self.readiness[id].fd) {

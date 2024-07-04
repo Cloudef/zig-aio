@@ -85,43 +85,6 @@ pub const ChildWatcher = struct {
     }
 };
 
-pub const Timer = struct {
-    fd: std.posix.fd_t,
-    clock: posix.Clock,
-
-    pub fn init(clock: posix.Clock) !@This() {
-        return .{
-            .fd = try (threading.CreateWaitableTimerW(null, 0, null) orelse error.SystemResources),
-            .clock = clock,
-        };
-    }
-
-    fn nanoSecondsToTimerTime(ns: i128) win32.foundation.LARGE_INTEGER {
-        const LARGE_INTEGER = packed struct(u64) { l: u32, h: u32 };
-        const signed: i64 = @intCast(@divFloor(ns, 100));
-        const adjusted: u64 = @bitCast(signed);
-        return .{
-            .QuadPart = @bitCast(LARGE_INTEGER{
-                .l = @truncate(adjusted >> 32),
-                .h = @truncate(adjusted),
-            }),
-        };
-    }
-
-    pub fn set(self: *@This(), ns: u128) !void {
-        const rel_time: i128 = @intCast(ns);
-        const li = nanoSecondsToTimerTime(-rel_time);
-        if (threading.SetWaitableTimer(self.fd, &li, 0, null, null, 0) == 0) {
-            return unexpectedError(GetLastError());
-        }
-    }
-
-    pub fn deinit(self: *@This()) void {
-        checked(CloseHandle(self.fd));
-        self.* = undefined;
-    }
-};
-
 pub fn translateTty(_: std.posix.fd_t, _: []u8, _: *ops.ReadTty.TranslationState) ops.ReadTty.Error!usize {
     if (true) @panic("TODO");
     return 0;

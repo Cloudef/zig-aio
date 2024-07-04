@@ -1,7 +1,5 @@
 //! Basically `std.Thread.Pool` but supports timeout
 //! That is, if threads have been inactive for specific timeout the pool will release the threads
-//! The `num_threads` are also the maximum count of worker threads, but if there's not much activity
-//! less threads are used.
 
 const builtin = @import("builtin");
 const std = @import("std");
@@ -42,7 +40,7 @@ pub fn init(allocator: std.mem.Allocator, options: Options) InitError!@This() {
 
     _ = try std.time.Timer.start(); // check that we have a timer
 
-    const thread_count = options.max_threads orelse @max(1, std.Thread.getCpuCount() catch 1);
+    const thread_count = @max(1, options.max_threads orelse std.Thread.getCpuCount() catch 1);
     var serial = try std.DynamicBitSetUnmanaged.initEmpty(allocator, thread_count);
     errdefer serial.deinit(allocator);
     const threads = try allocator.alloc(DynamicThread, thread_count);

@@ -33,14 +33,6 @@ pub const ChildWatcher = switch (builtin.target.os.tag) {
     else => @compileError("unsupported"),
 };
 
-pub const Timer = switch (builtin.target.os.tag) {
-    .linux => linux.Timer,
-    .windows => windows.Timer,
-    .freebsd, .openbsd, .dragonfly, .netbsd => bsd.Timer,
-    .macos, .ios, .watchos, .visionos, .tvos => darwin.Timer,
-    else => @compileError("unsupported"),
-};
-
 pub fn convertOpenFlags(flags: std.fs.File.OpenFlags) std.posix.O {
     var os_flags: std.posix.O = .{
         .ACCMODE = switch (flags.mode) {
@@ -252,7 +244,7 @@ pub inline fn openReadiness(op: anytype) OpenReadinessError!Readiness {
             else => .{ .fd = op.socket, .mode = .out },
         },
         .open_at, .close_file, .close_dir, .close_socket => .{},
-        .timeout, .link_timeout => .{ .fd = (try Timer.init(.monotonic)).fd, .mode = .in },
+        .timeout, .link_timeout => .{},
         .cancel, .rename_at, .unlink_at, .mkdir_at, .symlink_at => .{},
         .child_exit => .{ .fd = (try ChildWatcher.init(op.child)).fd, .mode = .in },
         .wait_event_source => op.source.native.waitReadiness(),
@@ -266,23 +258,9 @@ pub const ArmReadinessError = error{
     Unexpected,
 };
 
-pub inline fn armReadiness(op: anytype, readiness: Readiness) ArmReadinessError!void {
-    switch (comptime Operation.tagFromPayloadType(@TypeOf(op.*))) {
-        .timeout, .link_timeout => {
-            var timer: Timer = .{ .fd = readiness.fd, .clock = .monotonic };
-            try timer.set(op.ns);
-        },
-        else => {},
-    }
-}
-
 pub inline fn closeReadiness(op: anytype, readiness: Readiness) void {
     if (readiness.fd == invalid_fd) return;
     switch (comptime Operation.tagFromPayloadType(@TypeOf(op.*))) {
-        .timeout, .link_timeout => {
-            var timer: Timer = .{ .fd = readiness.fd, .clock = .monotonic };
-            timer.deinit();
-        },
         .child_exit => {
             var watcher: ChildWatcher = .{ .id = op.child, .fd = readiness.fd };
             watcher.deinit();

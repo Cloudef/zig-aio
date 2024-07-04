@@ -57,45 +57,6 @@ pub const ChildWatcher = struct {
     }
 };
 
-pub const Timer = struct {
-    fd: std.posix.fd_t,
-    clock: posix.Clock,
-
-    pub fn init(clock: posix.Clock) !@This() {
-        const fd = std.posix.timerfd_create(switch (clock) {
-            .monotonic => std.posix.CLOCK.MONOTONIC,
-            .boottime => std.posix.CLOCK.BOOTTIME,
-            .realtime => std.posix.CLOCK.REALTIME,
-        }, .{
-            .CLOEXEC = true,
-            .NONBLOCK = true,
-        }) catch |err| return switch (err) {
-            error.AccessDenied => unreachable,
-            else => |e| e,
-        };
-        return .{ .fd = fd, .clock = clock };
-    }
-
-    pub fn set(self: *@This(), ns: u128) !void {
-        const ts: std.os.linux.itimerspec = .{
-            .it_value = .{
-                .tv_sec = @intCast(ns / std.time.ns_per_s),
-                .tv_nsec = @intCast(ns % std.time.ns_per_s),
-            },
-            .it_interval = .{ .tv_sec = 0, .tv_nsec = 0 },
-        };
-        _ = std.posix.timerfd_settime(self.fd, .{}, &ts, null) catch |err| return switch (err) {
-            error.Canceled, error.InvalidHandle => unreachable,
-            error.Unexpected => |e| e,
-        };
-    }
-
-    pub fn deinit(self: *@This()) void {
-        std.posix.close(self.fd);
-        self.* = undefined;
-    }
-};
-
 // std.os.linux.errnoFromSyscall is not pub :(
 fn errnoFromSyscall(r: usize) std.os.linux.E {
     const signed_r: isize = @bitCast(r);

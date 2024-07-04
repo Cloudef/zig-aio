@@ -38,7 +38,11 @@ pub const Error = error{
     ProcessFdQuotaExceeded,
     SystemFdQuotaExceeded,
     SystemResources,
+    UserResourceLimitReached,
+    ThreadQuotaExceeded,
+    LockedMemoryLimitExceeded,
     SystemOutdated,
+    Unsupported,
     Unexpected,
 };
 

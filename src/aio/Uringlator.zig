@@ -148,25 +148,6 @@ pub fn submit(
     return true;
 }
 
-pub fn finishLinkTimeout(self: *@This(), id: u16) void {
-    var iter = self.ops.iterator();
-    const res: enum { ok, not_found } = blk: {
-        while (iter.next()) |e| {
-            if (e.k != id and self.next[e.k] == id) {
-                self.finish(e.k, error.Canceled);
-                self.next[e.k] = e.k;
-                break :blk .ok;
-            }
-        }
-        break :blk .not_found;
-    };
-    if (res == .ok) {
-        self.finish(id, error.Expired);
-    } else {
-        self.finish(id, error.Success);
-    }
-}
-
 fn start(
     self: *@This(),
     id: u16,
@@ -207,22 +188,42 @@ pub fn complete(
     const finished = self.finished.swap();
     var num_errors: u16 = 0;
     for (finished) |res| {
-        if (res.failure != error.Success) {
-            debug("complete: {}: {} [FAIL] {}", .{ res.id, std.meta.activeTag(self.ops.nodes[res.id].used), res.failure });
+        var failure = res.failure;
+        if (self.ops.nodes[res.id].used == .link_timeout and failure != error.Canceled) {
+            var iter = self.ops.iterator();
+            const cres: enum { ok, not_found } = blk: {
+                while (iter.next()) |e| {
+                    if (e.k != res.id and self.next[e.k] == res.id) {
+                        self.finish(e.k, error.Canceled);
+                        self.next[e.k] = e.k;
+                        break :blk .ok;
+                    }
+                }
+                break :blk .not_found;
+            };
+            if (cres == .ok) {
+                failure = error.Expired;
+            } else {
+                failure = error.Success;
+            }
+        }
+
+        if (failure != error.Success) {
+            debug("complete: {}: {} [FAIL] {}", .{ res.id, std.meta.activeTag(self.ops.nodes[res.id].used), failure });
         } else {
             debug("complete: {}: {} [OK]", .{ res.id, std.meta.activeTag(self.ops.nodes[res.id].used) });
         }
 
-        if (self.ops.nodes[res.id].used == .link_timeout and res.failure == error.Canceled) {
+        if (self.ops.nodes[res.id].used == .link_timeout and failure == error.Canceled) {
             // special case
         } else {
-            num_errors += @intFromBool(res.failure != error.Success);
+            num_errors += @intFromBool(failure != error.Success);
         }
 
-        uopUnwrapCall(&self.ops.nodes[res.id].used, completition, .{ self, res });
+        uopUnwrapCall(&self.ops.nodes[res.id].used, completition, .{ self, .{ .id = res.id, .failure = failure } });
 
         var uop = self.ops.nodes[res.id].used;
-        if (cb) |f| f(uop, @enumFromInt(res.id), res.failure != error.Success);
+        if (cb) |f| f(uop, @enumFromInt(res.id), failure != error.Success);
         completion_cb(ctx, res.id, &uop);
         self.removeOp(res.id);
     }
@@ -261,7 +262,7 @@ pub fn uopUnwrapCall(uop: *Operation.Union, comptime func: anytype, args: anytyp
 
 pub fn debug(comptime fmt: []const u8, args: anytype) void {
     if (@import("builtin").is_test) {
-        std.debug.print("fallback: " ++ fmt ++ "\n", args);
+        std.debug.print("uringlator: " ++ fmt ++ "\n", args);
     } else {
         if (comptime !aio.options.debug) return;
         log.debug(fmt, args);

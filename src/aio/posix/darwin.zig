@@ -3,7 +3,6 @@ const bsd = @import("bsd.zig");
 
 pub const EventSource = bsd.EventSource;
 pub const ChildWatcher = bsd.ChildWatcher;
-pub const Timer = bsd.Timer;
 
 pub const msghdr = extern struct {
     /// Optional address.
