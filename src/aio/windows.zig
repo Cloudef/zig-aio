@@ -21,7 +21,7 @@ const Windows = @This();
 // <https://int64.org/2009/05/14/io-completion-ports-made-easy/>
 
 pub const IO = switch (aio.options.fallback) {
-    .auto => Fallback, // Fallback until Windows backend is complete
+    .auto => Windows, // Fallback until Windows backend is complete
     .force => Fallback, // use only the fallback backend
     .disable => Windows, // use only the Windows backend
 };
