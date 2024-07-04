@@ -161,7 +161,6 @@ const MonotonicQueue = struct {
             const rn = now() catch unreachable;
             while (self.queue.peek()) |to| {
                 if (rn >= to.start + to.ns) {
-                    std.log.info("mq timeout! {}", .{timeout.user_data});
                     to.opts.closure.callback(to.opts.closure.context, to.user_data);
                     _ = self.queue.removeOrNull();
                 } else break; // all other timeouts are later
@@ -234,7 +233,6 @@ const BoottimeQueue = struct {
             const rn = now() catch unreachable;
             while (self.queue.peek()) |to| {
                 if (rn >= to.start + to.ns) {
-                    std.log.info("bq timeout! {}", .{timeout.user_data});
                     to.opts.closure.callback(to.opts.closure.context, to.user_data);
                     _ = self.queue.removeOrNull();
                 } else break; // all other timeouts are later
@@ -266,12 +264,11 @@ const RealtimeQueue = struct {
         defer self.mutex.unlock();
         self.thread.?.setName("RealtimeQueue") catch {};
 
-        while (self.queue.peek()) |timeout| {
+        while (self.queue.peek()) |_| {
             self.cond.timedWait(&self.mutex, std.time.ns_per_s) catch {};
             const rn = now() catch unreachable;
             while (self.queue.peek()) |to| {
                 if (rn >= to.start + to.ns) {
-                    std.log.info("rq timeout! {}", .{timeout.user_data});
                     to.opts.closure.callback(to.opts.closure.context, to.user_data);
                     _ = self.queue.removeOrNull();
                 } else break; // all other timeouts are later
@@ -426,6 +423,7 @@ const LinuxTimerQueue = struct {
     }
 
     fn threadMain(self: *@This()) void {
+        self.thread.?.setName("TimerQueue Thread") catch {};
         outer: while (true) {
             var events: [32]std.os.linux.epoll_event = undefined;
             const n = std.posix.epoll_wait(self.epoll, &events, -1);
@@ -440,7 +438,6 @@ const LinuxTimerQueue = struct {
                     var exp: usize = undefined;
                     std.debug.assert(std.posix.read(v.fd, std.mem.asBytes(&exp)) catch unreachable == @sizeOf(usize));
                     if (v.repeat == null or v.repeat.? <= exp) {
-                        std.log.info("linux timeout! {}", .{ev.data.ptr});
                         v.closure.callback(v.closure.context, ev.data.ptr);
                         self.disarmInternal(undefined, ev.data.ptr, false);
                     }
