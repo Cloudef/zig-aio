@@ -85,7 +85,14 @@ pub fn build(b: *std.Build) void {
             .sanitize_thread = sanitize,
         });
         if (mod != .minilib) tst.root_module.addImport("minilib", minilib);
-        if (mod == .aio) tst.root_module.addImport("build_options", opts.createModule());
+        if (mod == .aio) {
+            tst.root_module.addImport("build_options", opts.createModule());
+            if (target.query.os_tag orelse builtin.os.tag == .windows) {
+                if (b.lazyDependency("zigwin32", .{})) |zigwin32| {
+                    tst.root_module.addImport("win32", zigwin32.module("zigwin32"));
+                }
+            }
+        }
         if (mod == .coro) tst.root_module.addImport("aio", aio);
         const run = b.addRunArtifact(tst);
         test_step.dependOn(&run.step);

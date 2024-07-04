@@ -19,11 +19,24 @@ pub fn unexpectedWSAError(err: win32.networking.win_sock.WSA_ERROR) error{Unexpe
     return std.os.windows.unexpectedWSAError(@enumFromInt(@intFromEnum(err)));
 }
 
-pub fn checked(ret: win32.foundation.BOOL) void {
-    if (ret == 0) {
-        unexpectedError(GetLastError()) catch {};
-        unreachable;
-    }
+pub fn wtry(ret: anytype) !void {
+    const wbool: win32.foundation.BOOL = if (@TypeOf(ret) == bool)
+        @intFromBool(ret)
+    else
+        ret;
+    if (wbool == 0) return switch (GetLastError()) {
+        .ERROR_IO_PENDING => {}, // not error
+        else => |r| unexpectedError(r),
+    };
+}
+
+pub fn werr(ret: anytype) ops.Operation.Error {
+    wtry(ret) catch |err| return err;
+    return error.Success;
+}
+
+pub fn checked(ret: anytype) void {
+    wtry(ret) catch unreachable;
 }
 
 pub const EventSource = struct {
