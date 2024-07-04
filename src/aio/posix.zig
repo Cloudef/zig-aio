@@ -8,12 +8,6 @@ const darwin = @import("posix/darwin.zig");
 const windows = @import("posix/windows.zig");
 const wasi = @import("posix/wasi.zig");
 
-pub const Clock = enum {
-    monotonic,
-    boottime,
-    realtime,
-};
-
 // This file implements stuff that's not in std, not implement properly or not
 // abstracted for all the platforms that we want to support
 
