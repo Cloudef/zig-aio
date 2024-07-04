@@ -420,10 +420,10 @@ const LinuxTimerQueue = struct {
         @setCold(true);
         if (self.thread) |_| unreachable;
         self.thread = try std.Thread.spawn(.{ .allocator = self.allocator }, threadMain, .{self});
+        self.thread.?.setName("TimerQueue Thread") catch {};
     }
 
     fn threadMain(self: *@This()) void {
-        self.thread.?.setName("TimerQueue Thread") catch {};
         outer: while (true) {
             var events: [32]std.os.linux.epoll_event = undefined;
             const n = std.posix.epoll_wait(self.epoll, &events, -1);
