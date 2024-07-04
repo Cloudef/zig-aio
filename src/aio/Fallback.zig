@@ -50,12 +50,12 @@ pub fn init(allocator: std.mem.Allocator, n: u16) aio.Error!@This() {
     var pfd = try FixedArrayList(posix.pollfd, u32).init(allocator, n + 1);
     errdefer pfd.deinit(allocator);
     var tpool = DynamicThreadPool.init(allocator, .{ .max_threads = aio.options.max_threads }) catch |err| return switch (err) {
-        error.TimerUnsupported => error.SystemOutdated,
+        error.TimerUnsupported => error.Unsupported,
         else => |e| e,
     };
     errdefer tpool.deinit();
     var kludge_tpool = DynamicThreadPool.init(allocator, .{ .max_threads = aio.options.fallback_max_kludge_threads }) catch |err| return switch (err) {
-        error.TimerUnsupported => error.SystemOutdated,
+        error.TimerUnsupported => error.Unsupported,
         else => |e| e,
     };
     errdefer kludge_tpool.deinit();

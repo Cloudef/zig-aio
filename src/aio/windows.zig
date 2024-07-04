@@ -87,7 +87,7 @@ pub fn init(allocator: std.mem.Allocator, n: u16) aio.Error!@This() {
     var tqueue = try TimerQueue.init(allocator);
     errdefer tqueue.deinit();
     var tpool = DynamicThreadPool.init(allocator, .{ .max_threads = thread_count }) catch |err| return switch (err) {
-        error.TimerUnsupported => error.SystemOutdated,
+        error.TimerUnsupported => error.Unsupported,
         else => |e| e,
     };
     errdefer tpool.deinit();
