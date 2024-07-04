@@ -2,6 +2,8 @@
 //! Used on platforms where native timers aren't accurate enough or have other limitations
 //! Requires threading support
 
+// TODO: Bunch of stuff to complete here still, but works for what aio can do at the moment
+
 const builtin = @import("builtin");
 const std = @import("std");
 
@@ -247,7 +249,7 @@ const BoottimeQueue = struct {
 };
 
 /// Checks every second whether any timers has been expired.
-/// Not great accuracy, and every second lets us do implementation without much facilities needed from the OS.
+/// Not great accuracy but every second lets us do the implementation without needing any facilities from the OS.
 const RealtimeQueue = struct {
     thread: ?std.Thread = null,
     queue: std.PriorityQueue(Timeout, void, Timeout.sort),

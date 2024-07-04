@@ -63,24 +63,21 @@ const IoContext = struct {
     }
 };
 
-// 4 is probably enough for iocp, reserve rest for blocking tasks
-const max_iocp_threads = 4;
-
 port: HANDLE, // iocp completion port
 tqueue: TimerQueue, // timer queue implementing linux -like timers
 tpool: DynamicThreadPool, // thread pool for performing iocp and non iocp operations
 iocp_threads_spawned: bool = false, // iocp needs own poll threads
 ovls: []IoContext,
 uringlator: Uringlator,
-num_iocp_threads: u8,
+num_iocp_threads: u32,
 
 pub fn isSupported(_: []const type) bool {
     return true; // very optimistic :D
 }
 
 pub fn init(allocator: std.mem.Allocator, n: u16) aio.Error!@This() {
-    // need at least 3 threads, 1 iocp thread, 1 timer thread and 1 non-iocp blocking task thread
-    const thread_count: u32 = @max(3, aio.options.max_threads orelse @as(u32, @intCast(std.Thread.getCpuCount() catch 1)));
+    // need at least 2 threads, 1 iocp thread and 1 non-iocp blocking task thread
+    const thread_count: u32 = @max(2, aio.options.max_threads orelse @as(u32, @intCast(std.Thread.getCpuCount() catch 1)));
     const port = io.CreateIoCompletionPort(INVALID_HANDLE, null, 0, @intCast(thread_count)).?;
     try wtry(port != INVALID_HANDLE);
     errdefer checked(CloseHandle(port));
@@ -101,7 +98,8 @@ pub fn init(allocator: std.mem.Allocator, n: u16) aio.Error!@This() {
         .tpool = tpool,
         .ovls = ovls,
         .uringlator = uringlator,
-        .num_iocp_threads = @min(thread_count - 2, max_iocp_threads),
+        // split blocking threads and iocp threads half
+        .num_iocp_threads = thread_count / 2,
     };
 }
 
@@ -262,6 +260,11 @@ fn start(self: *@This(), id: u16, uop: *Operation.Union) !void {
             const closure: TimerQueue.Closure = .{ .context = self, .callback = onThreadTimeout };
             try self.tqueue.schedule(.monotonic, op.ns, id, .{ .closure = closure });
         },
+        // TODO: AcceptEx
+        // TODO: WSASend
+        // TODO: WSARecv
+        // TODO: WSASendMsg
+        // TODO: WSARecvMsg
         else => {
             // perform non IOCP supported operation on a thread
             self.tpool.spawn(onThreadPosixExecutor, .{ self, id, uop }) catch return error.SystemResources;

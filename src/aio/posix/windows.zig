@@ -138,8 +138,7 @@ pub fn poll(pfds: []pollfd, timeout: i32) std.posix.PollError!usize {
     if (outs > 0) return outs;
     // rip windows
     // this is only used by fallback backend, on fallback backend all file and socket operations are thread pooled
-    // thus this limit isn't that bad, but Timer and EventSource are polled using this function, so you can still
-    // hit this limit
+    // thus this limit isn't that bad, but EventSource's are polled using this function, so you can still hit this limit
     std.debug.assert(pfds.len <= win32.system.system_services.MAXIMUM_WAIT_OBJECTS);
     var handles: [win32.system.system_services.MAXIMUM_WAIT_OBJECTS]std.posix.fd_t = undefined;
     for (handles[0..pfds.len], pfds[0..]) |*h, *pfd| h.* = pfd.fd;
