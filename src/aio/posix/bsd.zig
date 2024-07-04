@@ -2,12 +2,6 @@ const builtin = @import("builtin");
 const std = @import("std");
 const posix = @import("../posix.zig");
 
-pub const NOTE_NSECONDS = switch (builtin.target.os.tag) {
-    .netbsd => 0x00000003,
-    .dragonfly => @compileError("dragonfly lacks NOTE_NSECONDS, timer resolution is reduced"),
-    else => std.posix.system.NOTE_NSECONDS,
-};
-
 pub const EVFILT_USER = switch (builtin.target.os.tag) {
     .openbsd => @compileError("openbsd lacks EVFILT_USER, won't work until that's implemented"),
     .dragonfly => -9,
