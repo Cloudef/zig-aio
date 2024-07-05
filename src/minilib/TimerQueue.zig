@@ -335,13 +335,14 @@ const LinuxTimerQueue = struct {
     epoll: std.posix.fd_t,
     mutex: std.Thread.Mutex = .{},
     thread: ?std.Thread = null,
+    exiting: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
 
     pub fn init(allocator: std.mem.Allocator) !@This() {
         const epoll = try std.posix.epoll_create1(std.os.linux.EPOLL.CLOEXEC);
         errdefer std.posix.close(epoll);
         const efd = try std.posix.eventfd(0, std.os.linux.EFD.CLOEXEC | std.os.linux.EFD.NONBLOCK);
         errdefer std.posix.close(efd);
-        var ev: std.os.linux.epoll_event = .{ .data = .{ .ptr = 0xDEADBEEF }, .events = std.os.linux.EPOLL.IN };
+        var ev: std.os.linux.epoll_event = .{ .data = .{ .ptr = std.math.maxInt(usize) }, .events = std.os.linux.EPOLL.IN };
         std.posix.epoll_ctl(epoll, std.os.linux.EPOLL.CTL_ADD, efd, &ev) catch |err| return switch (err) {
             error.FileDescriptorAlreadyPresentInSet => unreachable,
             error.OperationCausesCircularLoop => unreachable,
@@ -357,6 +358,7 @@ const LinuxTimerQueue = struct {
     }
 
     pub fn deinit(self: *@This()) void {
+        self.exiting.store(true, .release);
         _ = std.posix.write(self.efd, &std.mem.toBytes(@as(u64, 1))) catch unreachable;
         if (self.thread) |thrd| thrd.join();
         std.posix.close(self.epoll);
@@ -430,7 +432,7 @@ const LinuxTimerQueue = struct {
             var events: [32]std.os.linux.epoll_event = undefined;
             const n = std.posix.epoll_wait(self.epoll, &events, -1);
             for (events[0..n]) |ev| {
-                if (ev.data.ptr == 0xDEADBEEF) {
+                if (self.exiting.load(.acquire) and ev.data.ptr == std.math.maxInt(usize)) {
                     // quit signal
                     break :outer;
                 }
