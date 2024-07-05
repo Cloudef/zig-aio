@@ -16,6 +16,12 @@ pub const Options = struct {
     force_foreign_backend: bool = false,
 };
 
+comptime {
+    if (builtin.single_threaded) {
+        @compileError("TimerQueue requires threads to support all the platforms.");
+    }
+}
+
 pub const Closure = struct {
     pub const Callback = *const fn (context: *anyopaque, user_data: usize) void;
     context: *anyopaque,
