@@ -65,13 +65,11 @@ pub const EventSource = struct {
     }
 
     pub inline fn wait(self: *@This()) void {
-        const v = self.counter.load(.acquire);
-        if (v > 0) {
-            if (self.counter.fetchSub(1, .release) == 1) {
-                wtry(threading.ResetEvent(self.fd)) catch @panic("EventSource.wait failed");
-            }
-        } else {
+        if (self.counter.load(.acquire) == 0) {
             _ = threading.WaitForSingleObject(self.fd, INFINITE);
+        }
+        if (self.counter.load(.acquire) > 0 and self.counter.fetchSub(1, .release) == 1) {
+            wtry(threading.ResetEvent(self.fd)) catch @panic("EventSource.wait failed");
         }
     }
 
