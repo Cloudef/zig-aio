@@ -118,7 +118,9 @@ pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
     self.* = undefined;
 }
 
-fn queueCallback(_: *@This(), _: u16, _: *Operation.Union) aio.Error!void {}
+fn queueCallback(self: *@This(), id: u16, _: *Operation.Union) aio.Error!void {
+    self.ovls[id] = .{};
+}
 
 pub fn queue(self: *@This(), comptime len: u16, work: anytype, cb: ?aio.Dynamic.QueueCallback) aio.Error!void {
     try self.uringlator.queue(len, work, cb, *@This(), self, queueCallback);
@@ -230,7 +232,6 @@ fn start(self: *@This(), id: u16, uop: *Operation.Union) !void {
         .read => |op| {
             const flags = try getHandleAccessInfo(op.file.handle);
             if (flags.FILE_READ_DATA != 1) {
-                self.ovls[id] = .{};
                 self.uringlator.finish(id, error.NotOpenForReading);
                 return;
             }
@@ -243,7 +244,6 @@ fn start(self: *@This(), id: u16, uop: *Operation.Union) !void {
         .write => |op| {
             const flags = try getHandleAccessInfo(op.file.handle);
             if (flags.FILE_WRITE_DATA != 1) {
-                self.ovls[id] = .{};
                 self.uringlator.finish(id, error.NotOpenForWriting);
                 return;
             }
@@ -277,15 +277,12 @@ fn cancelable(_: *@This(), _: u16, uop: *Operation.Union) bool {
 }
 
 fn completion(self: *@This(), id: u16, uop: *Operation.Union) void {
+    defer self.ovls[id].deinit();
     switch (uop.*) {
         .timeout, .link_timeout => self.tqueue.disarm(.monotonic, id),
-        .read => |op| {
-            op.out_read.* = self.ovls[id].res;
-            self.ovls[id].deinit();
-        },
+        .read => |op| op.out_read.* = self.ovls[id].res,
         .write => |op| {
             if (op.out_written) |w| w.* = self.ovls[id].res;
-            self.ovls[id].deinit();
         },
         else => {},
     }
