@@ -212,7 +212,7 @@ const AccessInfo = packed struct {
     append: bool,
 };
 
-fn getHandleAccessInfo(handle: HANDLE) !AccessInfo {
+fn getHandleAccessInfo(handle: HANDLE) !fs.FILE_ACCESS_FLAGS {
     var io_status_block: std.os.windows.IO_STATUS_BLOCK = undefined;
     var access: std.os.windows.FILE_ACCESS_INFORMATION = undefined;
     const rc = std.os.windows.ntdll.NtQueryInformationFile(handle, &io_status_block, &access, @sizeOf(std.os.windows.FILE_ACCESS_INFORMATION), .FileAccessInformation);
@@ -221,35 +221,33 @@ fn getHandleAccessInfo(handle: HANDLE) !AccessInfo {
         .INVALID_PARAMETER => unreachable,
         else => return error.Unexpected,
     }
-    return .{
-        .read = access.AccessFlags & std.os.windows.FILE_READ_DATA != 0,
-        .write = access.AccessFlags & std.os.windows.FILE_WRITE_DATA != 0,
-        .append = access.AccessFlags & std.os.windows.FILE_APPEND_DATA != 0,
-    };
+    return @bitCast(access.AccessFlags);
 }
 
 fn start(self: *@This(), id: u16, uop: *Operation.Union) !void {
     var trash: u32 = undefined;
     switch (uop.*) {
         .read => |op| {
-            if (!(try getHandleAccessInfo(op.file.handle)).read) {
+            const flags = try getHandleAccessInfo(op.file.handle);
+            if (flags.FILE_READ_DATA != 1) {
                 self.ovls[id] = .{};
                 self.uringlator.finish(id, error.NotOpenForReading);
                 return;
             }
-            const h = fs.ReOpenFile(op.file.handle, .{ .SYNCHRONIZE = 1, .FILE_READ_DATA = 1 }, .{ .READ = 1, .WRITE = 1 }, fs.FILE_FLAG_OVERLAPPED).?;
+            const h = fs.ReOpenFile(op.file.handle, flags, .{ .READ = 1, .WRITE = 1 }, fs.FILE_FLAG_OVERLAPPED).?;
             checked(h != INVALID_HANDLE);
             checked(io.CreateIoCompletionPort(h, self.port, id, 0).? != INVALID_HANDLE);
             self.ovls[id] = .{ .overlapped = ovlOff(op.offset), .specimen = .{ .handle = h } };
             try wtry(fs.ReadFile(h, op.buffer.ptr, @intCast(op.buffer.len), &trash, &self.ovls[id].overlapped));
         },
         .write => |op| {
-            if (!(try getHandleAccessInfo(op.file.handle)).write) {
+            const flags = try getHandleAccessInfo(op.file.handle);
+            if (flags.FILE_WRITE_DATA != 1) {
                 self.ovls[id] = .{};
                 self.uringlator.finish(id, error.NotOpenForWriting);
                 return;
             }
-            const h = fs.ReOpenFile(op.file.handle, .{ .SYNCHRONIZE = 1, .FILE_WRITE_DATA = 1 }, .{ .READ = 1, .WRITE = 1 }, fs.FILE_FLAG_OVERLAPPED).?;
+            const h = fs.ReOpenFile(op.file.handle, flags, .{ .READ = 1, .WRITE = 1 }, fs.FILE_FLAG_OVERLAPPED).?;
             checked(h != INVALID_HANDLE);
             checked(io.CreateIoCompletionPort(h, self.port, id, 0).? != INVALID_HANDLE);
             self.ovls[id] = .{ .overlapped = ovlOff(op.offset), .specimen = .{ .handle = h } };
