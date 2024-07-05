@@ -56,7 +56,7 @@ pub const EventSource = struct {
 
     pub inline fn notify(self: *@This()) void {
         if (self.counter.fetchAdd(1, .monotonic) == 0) {
-            checked(threading.SetEvent(self.fd));
+            wtry(threading.SetEvent(self.fd)) catch @panic("EventSource.notify failed");
         }
     }
 
@@ -68,7 +68,7 @@ pub const EventSource = struct {
         const v = self.counter.load(.acquire);
         if (v > 0) {
             if (self.counter.fetchSub(1, .release) == 1) {
-                checked(threading.ResetEvent(self.fd));
+                wtry(threading.ResetEvent(self.fd)) catch @panic("EventSource.wait failed");
             }
         } else {
             _ = threading.WaitForSingleObject(self.fd, INFINITE);

@@ -35,17 +35,14 @@ pub const EventSource = struct {
     }
 
     pub inline fn notify(self: *@This()) void {
-        while (true) {
-            _ = std.posix.kevent(self.fd, &.{.{
-                .ident = self.counter.fetchAdd(1, .monotonic),
-                .filter = EVFILT_USER,
-                .flags = std.posix.system.EV_ADD | std.posix.system.EV_ENABLE | std.posix.system.EV_ONESHOT,
-                .fflags = std.posix.system.NOTE_TRIGGER,
-                .data = 0,
-                .udata = 0,
-            }}, &.{}, null) catch continue;
-            break;
-        }
+        _ = std.posix.kevent(self.fd, &.{.{
+            .ident = self.counter.fetchAdd(1, .monotonic),
+            .filter = EVFILT_USER,
+            .flags = std.posix.system.EV_ADD | std.posix.system.EV_ENABLE | std.posix.system.EV_ONESHOT,
+            .fflags = std.posix.system.NOTE_TRIGGER,
+            .data = 0,
+            .udata = 0,
+        }}, &.{}, null) catch @panic("EventSource.notify failed");
     }
 
     pub inline fn notifyReadiness(_: *@This()) posix.Readiness {
@@ -53,16 +50,8 @@ pub const EventSource = struct {
     }
 
     pub inline fn wait(self: *@This()) void {
-        while (true) {
-            var ev: [1]std.posix.Kevent = undefined;
-            _ = std.posix.kevent(self.fd, &.{}, &ev, null) catch |err| switch (err) {
-                error.EventNotFound => unreachable,
-                error.ProcessNotFound => unreachable,
-                error.AccessDenied => unreachable,
-                else => continue,
-            };
-            break;
-        }
+        var ev: [1]std.posix.Kevent = undefined;
+        _ = std.posix.kevent(self.fd, &.{}, &ev, null) catch @panic("EventSource.wait failed");
     }
 
     pub inline fn waitReadiness(self: *@This()) posix.Readiness {

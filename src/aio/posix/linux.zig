@@ -14,10 +14,7 @@ pub const EventSource = struct {
     }
 
     pub inline fn notify(self: *@This()) void {
-        while (true) {
-            _ = std.posix.write(self.fd, &std.mem.toBytes(@as(u64, 1))) catch continue;
-            break;
-        }
+        _ = std.posix.write(self.fd, &std.mem.toBytes(@as(u64, 1))) catch @panic("EventSource.notify failed");
     }
 
     pub inline fn notifyReadiness(self: *@This()) posix.Readiness {
@@ -25,11 +22,8 @@ pub const EventSource = struct {
     }
 
     pub inline fn wait(self: *@This()) void {
-        while (true) {
-            var v: u64 = undefined;
-            _ = std.posix.read(self.fd, std.mem.asBytes(&v)) catch continue;
-            break;
-        }
+        var v: u64 = undefined;
+        _ = std.posix.read(self.fd, std.mem.asBytes(&v)) catch @panic("EventSource.wait failed");
     }
 
     pub inline fn waitReadiness(self: *@This()) posix.Readiness {
