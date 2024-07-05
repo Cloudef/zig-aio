@@ -149,7 +149,6 @@ fn iocpDrainThread(self: *@This()) void {
 
 fn spawnIocpThreads(self: *@This()) !void {
     @setCold(true);
-    // use only one thread, maybe tune this if neccessary in future
     for (0..self.num_iocp_threads) |_| self.tpool.spawn(iocpDrainThread, .{self}) catch return error.SystemResources;
     self.iocp_threads_spawned = true;
 }
