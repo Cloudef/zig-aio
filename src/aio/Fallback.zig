@@ -46,7 +46,6 @@ pub fn init(allocator: std.mem.Allocator, n: u16) aio.Error!@This() {
     errdefer tqueue.deinit();
     const readiness = try allocator.alloc(posix.Readiness, n);
     errdefer allocator.free(readiness);
-    @memset(readiness, .{});
     var pfd = try FixedArrayList(posix.pollfd, u32).init(allocator, n + 1);
     errdefer pfd.deinit(allocator);
     var tpool = DynamicThreadPool.init(allocator, .{ .max_threads = aio.options.max_threads }) catch |err| return switch (err) {
