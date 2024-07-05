@@ -159,15 +159,17 @@ pub fn complete(self: *@This(), mode: CompleteMode, comptime Result: type) Resul
     } else {
         var timer: ?std.time.Timer = std.time.Timer.start() catch null;
         while (self.status != .completed) {
-            if (mode == .cancel and tryCancel(self)) break;
-            if (timer != null and self.status != .io_cancel and self.cancelable) {
-                if (timer.?.read() >= 5 * std.time.ns_per_s) {
-                    log.err("deadlock detected, tearing down the scheduler by a force", .{});
-                    self.scheduler.state = .tear_down;
-                    break;
+            if (mode == .cancel) {
+                if (tryCancel(self)) break;
+                if (timer != null and self.status != .io_cancel and self.cancelable) {
+                    if (timer.?.read() >= 5 * std.time.ns_per_s) {
+                        log.err("deadlock detected, tearing down the scheduler by a force", .{});
+                        self.scheduler.state = .tear_down;
+                        break;
+                    }
+                } else if (timer != null and self.status == .io_cancel) {
+                    timer.?.reset(); // don't count the possible long lasting io tasks
                 }
-            } else if (timer != null and self.status == .io_cancel) {
-                timer.?.reset(); // don't count the possible long lasting io tasks
             }
             _ = self.scheduler.tick(.blocking) catch |err| switch (err) {
                 error.NoDevice => unreachable,
