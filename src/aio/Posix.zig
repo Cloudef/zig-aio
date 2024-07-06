@@ -9,7 +9,6 @@ const DoubleBufferedFixedArrayList = @import("minilib").DoubleBufferedFixedArray
 const TimerQueue = @import("minilib").TimerQueue;
 const DynamicThreadPool = @import("minilib").DynamicThreadPool;
 const Uringlator = @import("Uringlator.zig");
-const log = std.log.scoped(.aio_posix);
 
 // This tries to emulate io_uring functionality.
 // If something does not match how it works on io_uring on linux, it should be change to match.
