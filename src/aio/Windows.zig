@@ -259,13 +259,6 @@ fn start(self: *@This(), id: u16, uop: *Operation.Union) !void {
             self.ovls[id] = .{ .overlapped = ovlOff(op.offset), .owned = .{ .handle = h } };
             wtry(fs.WriteFile(h, op.buffer.ptr, @intCast(op.buffer.len), &trash, &self.ovls[id].overlapped)) catch |err| return self.uringlator.finish(id, err);
         },
-        inline .timeout, .link_timeout => |*op| {
-            const closure: TimerQueue.Closure = .{ .context = self, .callback = onThreadTimeout };
-            self.tqueue.schedule(.monotonic, op.ns, id, .{ .closure = closure }) catch self.uringlator.finish(id, error.Unexpected);
-        },
-        .wait_event_source => |*op| op.source.native.addWaiter(&op._.link),
-        .notify_event_source => |*op| op.source.notify(),
-        .close_event_source => |*op| op.source.deinit(),
         .accept => |*op| {
             self.iocp.associateSocket(op.socket) catch |err| return self.uringlator.finish(id, err);
             op.out_socket.* = aio.socket(std.posix.AF.INET, 0, 0) catch |err| return self.uringlator.finish(id, err);
@@ -287,6 +280,13 @@ fn start(self: *@This(), id: u16, uop: *Operation.Union) !void {
             self.iocp.associateSocket(op.socket) catch |err| return self.uringlator.finish(id, err);
             _ = wposix.recvmsgEx(op.socket, op.out_msg, 0, &self.ovls[id].overlapped) catch |err| return self.uringlator.finish(id, err);
         },
+        inline .timeout, .link_timeout => |*op| {
+            const closure: TimerQueue.Closure = .{ .context = self, .callback = onThreadTimeout };
+            self.tqueue.schedule(.monotonic, op.ns, id, .{ .closure = closure }) catch self.uringlator.finish(id, error.Unexpected);
+        },
+        .wait_event_source => |*op| op.source.native.addWaiter(&op._.link),
+        // can be performed without a thread
+        .notify_event_source, .close_event_source => self.onThreadPosixExecutor(id, uop),
         else => {
             // perform non IOCP supported operation on a thread
             self.tpool.spawn(onThreadPosixExecutor, .{ self, id, uop }) catch return error.SystemResources;
