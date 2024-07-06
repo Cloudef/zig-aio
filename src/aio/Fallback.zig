@@ -174,7 +174,7 @@ fn start(self: *@This(), id: u16, uop: *Operation.Union) !void {
         switch (uop.*) {
             inline .timeout, .link_timeout => |*op| {
                 const closure: TimerQueue.Closure = .{ .context = self, .callback = onThreadTimeout };
-                try self.tqueue.schedule(.monotonic, op.ns, id, .{ .closure = closure });
+                self.tqueue.schedule(.monotonic, op.ns, id, .{ .closure = closure }) catch self.uringlator.finish(id, error.Unexpected);
             },
             // can be performed here, doesn't have to be dispatched to thread
             inline .child_exit, .notify_event_source, .wait_event_source, .close_event_source => |*op| {
