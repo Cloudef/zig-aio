@@ -221,7 +221,7 @@ fn cancelable(self: *@This(), id: u16, uop: *Operation.Union) bool {
     };
 }
 
-fn completion(self: *@This(), id: u16, uop: *Operation.Union) void {
+fn completion(self: *@This(), id: u16, uop: *Operation.Union, _: Operation.Error) void {
     switch (uop.*) {
         .timeout, .link_timeout => self.tqueue.disarm(.monotonic, id),
         else => {},

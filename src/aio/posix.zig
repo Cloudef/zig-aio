@@ -1,5 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
+const socket = @import("../aio.zig").socket;
 const ops = @import("ops.zig");
 const Operation = ops.Operation;
 const linux = @import("posix/linux.zig");
@@ -165,7 +166,7 @@ pub inline fn perform(op: anytype, readiness: Readiness) Operation.Error!void {
             const written = try writeUring(op.file.handle, op.buffer, @intCast(op.offset));
             if (op.out_written) |w| w.* = written;
         },
-        .accept => op.out_socket.* = try std.posix.accept(op.socket, op.addr, op.inout_addrlen, 0),
+        .accept => op.out_socket.* = try std.posix.accept(op.socket, op.out_addr, op.inout_addrlen, 0),
         .connect => _ = try std.posix.connect(op.socket, op.addr, op.addrlen),
         .recv => op.out_read.* = try std.posix.recv(op.socket, op.buffer, 0),
         .send => {
@@ -187,7 +188,7 @@ pub inline fn perform(op: anytype, readiness: Readiness) Operation.Error!void {
             const term = watcher.wait();
             if (op.out_term) |ot| ot.* = term;
         },
-        .socket => op.out_socket.* = try std.posix.socket(op.domain, op.flags, op.protocol),
+        .socket => op.out_socket.* = try socket(op.domain, op.flags, op.protocol),
         .close_socket => std.posix.close(op.socket),
         // backend can perform these without a thread
         .notify_event_source => op.source.notify(),

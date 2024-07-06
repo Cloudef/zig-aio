@@ -3,6 +3,7 @@ const builtin = @import("builtin");
 const aio = @import("../aio.zig");
 const posix = @import("posix.zig");
 const windows = @import("posix/windows.zig");
+const win32 = @import("win32");
 
 pub const Id = enum(usize) { _ };
 
@@ -119,9 +120,13 @@ pub const Write = struct {
 pub const Accept = struct {
     pub const Error = std.posix.AcceptError || SharedError;
     socket: std.posix.socket_t,
-    addr: ?*posix.sockaddr = null,
+    out_addr: ?*posix.sockaddr = null,
     inout_addrlen: ?*posix.socklen_t = null,
     out_socket: *std.posix.socket_t,
+    _: switch (builtin.target.os.tag) {
+        .windows => [@sizeOf(posix.sockaddr) * 2 + 16 * 2]u8,
+        else => void,
+    } = undefined,
     out_id: ?*Id = null,
     out_error: ?*Error = null,
     link: Link = .unlinked,
@@ -145,6 +150,10 @@ pub const Recv = struct {
     pub const Error = std.posix.RecvFromError || SharedError;
     socket: std.posix.socket_t,
     buffer: []u8,
+    _: switch (builtin.target.os.tag) {
+        .windows => [1]win32.networking.win_sock.WSABUF,
+        else => void,
+    } = undefined,
     out_read: *usize,
     out_id: ?*Id = null,
     out_error: ?*Error = null,
@@ -158,6 +167,10 @@ pub const Send = struct {
     socket: std.posix.socket_t,
     buffer: []const u8,
     out_written: ?*usize = null,
+    _: switch (builtin.target.os.tag) {
+        .windows => [1]win32.networking.win_sock.WSABUF,
+        else => void,
+    } = undefined,
     out_id: ?*Id = null,
     out_error: ?*Error = null,
     link: Link = .unlinked,
@@ -381,8 +394,8 @@ pub const WaitEventSource = struct {
     source: *aio.EventSource,
     _: switch (builtin.target.os.tag) {
         .windows => WindowsContext,
-        else => struct {},
-    } = .{},
+        else => void,
+    } = undefined,
     out_id: ?*Id = null,
     out_error: ?*Error = null,
     link: Link = .unlinked,

@@ -238,7 +238,7 @@ inline fn uring_queue(io: *std.os.linux.IoUring, op: anytype, user_data: u64) ai
         .read_tty => try io.read(user_data, op.tty.handle, .{ .buffer = op.buffer }, 0),
         .read => try io.read(user_data, op.file.handle, .{ .buffer = op.buffer }, op.offset),
         .write => try io.write(user_data, op.file.handle, op.buffer, op.offset),
-        .accept => try io.accept(user_data, op.socket, op.addr, op.inout_addrlen, 0),
+        .accept => try io.accept(user_data, op.socket, op.out_addr, op.inout_addrlen, 0),
         .connect => try io.connect(user_data, op.socket, op.addr, op.addrlen),
         .recv => try io.recv(user_data, op.socket, .{ .buffer = op.buffer }, 0),
         .send => try io.send(user_data, op.socket, op.buffer, 0),

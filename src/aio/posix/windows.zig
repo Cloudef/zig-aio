@@ -45,14 +45,13 @@ pub fn checked(ret: anytype) void {
 
 // Light wrapper, mainly to link EventSources to this
 pub const Iocp = struct {
-    pub const Key = packed struct(usize) {
-        type: enum(u8) {
+    pub const Notification = packed struct(u32) {
+        pub const Key = std.math.maxInt(usize);
+        type: enum(u16) {
             shutdown,
             event_source,
-            overlapped,
         },
-        id: u16 = 0,
-        _: @Type(.{ .Int = .{ .bits = @bitSizeOf(usize) - @bitSizeOf(u8) - @bitSizeOf(u16), .signedness = .unsigned } }) = 0,
+        id: u16,
     };
 
     port: HANDLE,
@@ -65,17 +64,32 @@ pub const Iocp = struct {
         return .{ .port = port, .num_threads = num_threads };
     }
 
-    pub fn notify(self: *@This(), key: Key, ptr: ?*anyopaque) void {
-        checked(io.PostQueuedCompletionStatus(self.port, 0, @bitCast(key), @ptrCast(@alignCast(ptr))));
+    pub fn notify(self: *@This(), data: Notification, ptr: ?*anyopaque) void {
+        // data for notification is put into the transferred bytes, overlapped can be anything
+        checked(io.PostQueuedCompletionStatus(self.port, @bitCast(data), Notification.Key, @ptrCast(@alignCast(ptr))));
     }
 
     pub fn deinit(self: *@This()) void {
         // docs say that GetQueuedCompletionStatus should return if IOCP port is closed
         // this doesn't seem to happen under wine though (wine bug?)
         // anyhow, wakeup the drain thread by hand
-        for (0..self.num_threads) |_| self.notify(.{ .type = .shutdown }, null);
+        for (0..self.num_threads) |_| self.notify(.{ .type = .shutdown, .id = 0 }, null);
         checked(CloseHandle(self.port));
         self.* = undefined;
+    }
+
+    pub fn associateHandle(self: *@This(), handle: HANDLE) !void {
+        // always assiocate the handle as the key, because the key should have the life time of a handle
+        const res = io.CreateIoCompletionPort(handle, self.port, @intFromPtr(handle), 0);
+        if (res == null or res.? == INVALID_HANDLE) {
+            // ignore 87 as it may mean that we just re-registered the handle
+            if (GetLastError() == .ERROR_INVALID_PARAMETER) return;
+            try wtry(0);
+        }
+    }
+
+    pub fn associateSocket(self: *@This(), sock: std.posix.socket_t) !void {
+        return self.associateHandle(@ptrCast(sock));
     }
 };
 
@@ -323,4 +337,33 @@ pub fn recvmsg(sockfd: std.posix.socket_t, msg: *msghdr, _: u32) !usize {
         break;
     }
     return @intCast(read);
+}
+
+pub fn socket(domain: u32, socket_type: u32, protocol: u32) std.posix.SocketError!std.posix.socket_t {
+    // NOTE: windows translates the SOCK.NONBLOCK/SOCK.CLOEXEC flags into
+    // windows-analagous operations
+    const filtered_sock_type = socket_type & ~@as(u32, std.posix.SOCK.NONBLOCK | std.posix.SOCK.CLOEXEC);
+    const flags: u32 = if ((socket_type & std.posix.SOCK.CLOEXEC) != 0)
+        std.os.windows.ws2_32.WSA_FLAG_NO_HANDLE_INHERIT
+    else
+        0;
+    const rc = try std.os.windows.WSASocketW(
+        @bitCast(domain),
+        @bitCast(filtered_sock_type),
+        @bitCast(protocol),
+        null,
+        0,
+        flags | std.os.windows.ws2_32.WSA_FLAG_OVERLAPPED,
+    );
+    errdefer std.os.windows.closesocket(rc) catch unreachable;
+    if ((socket_type & std.posix.SOCK.NONBLOCK) != 0) {
+        var mode: c_ulong = 1; // nonblocking
+        if (std.os.windows.ws2_32.SOCKET_ERROR == std.os.windows.ws2_32.ioctlsocket(rc, std.os.windows.ws2_32.FIONBIO, &mode)) {
+            switch (std.os.windows.ws2_32.WSAGetLastError()) {
+                // have not identified any error codes that should be handled yet
+                else => unreachable,
+            }
+        }
+    }
+    return rc;
 }

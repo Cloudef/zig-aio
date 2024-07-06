@@ -56,11 +56,11 @@ pub fn shutdown(
     Ctx: type,
     ctx: Ctx,
     can_cancel_cb: fn (ctx: Ctx, id: u16, uop: *Operation.Union) bool,
-    completion_cb: fn (ctx: Ctx, id: u16, uop: *Operation.Union) void,
+    completion_cb: fn (ctx: Ctx, id: u16, uop: *Operation.Union, failure: Operation.Error) void,
 ) void {
     var iter = self.ops.iterator();
     while (iter.next()) |e| if (can_cancel_cb(ctx, e.k, e.v)) {
-        completion_cb(ctx, e.k, e.v);
+        completion_cb(ctx, e.k, e.v, error.Canceled);
     };
 }
 
@@ -196,7 +196,7 @@ pub fn complete(
     cb: ?aio.Dynamic.CompletionCallback,
     Ctx: type,
     ctx: Ctx,
-    completion_cb: fn (ctx: Ctx, id: u16, uop: *Operation.Union) void,
+    completion_cb: fn (ctx: Ctx, id: u16, uop: *Operation.Union, failure: Operation.Error) void,
 ) aio.CompletionResult {
     const finished = self.finished.swap();
     var num_errors: u16 = 0;
@@ -236,8 +236,8 @@ pub fn complete(
         uopUnwrapCall(&self.ops.nodes[res.id].used, completition, .{ self, .{ .id = res.id, .failure = failure } });
 
         var uop = self.ops.nodes[res.id].used;
+        completion_cb(ctx, res.id, &uop, failure);
         if (cb) |f| f(uop, @enumFromInt(res.id), failure != error.Success);
-        completion_cb(ctx, res.id, &uop);
         self.removeOp(res.id);
     }
     return .{ .num_completed = @truncate(finished.len), .num_errors = num_errors };

@@ -29,6 +29,16 @@ pub const Options = struct {
     fallback_max_kludge_threads: usize = 1024,
 };
 
+/// Use this instead of std.posix.socket to get async sockets on windows ... :)
+/// Unfortunately there is no `ReOpenFile` equivalent for sockets.
+pub inline fn socket(domain: u32, socket_type: u32, protocol: u32) std.posix.SocketError!std.posix.socket_t {
+    if (options.fallback != .force and @import("builtin").target.os.tag == .windows) {
+        return @import("aio/posix/windows.zig").socket(domain, socket_type, protocol);
+    } else {
+        return std.posix.socket(domain, socket_type, protocol);
+    }
+}
+
 pub const Error = error{
     OutOfMemory,
     CompletionQueueOvercommitted,
@@ -510,14 +520,14 @@ test "ChildExit" {
 }
 
 test "Socket" {
-    var socket: std.posix.socket_t = undefined;
+    var sock: std.posix.socket_t = undefined;
     try single(Socket{
         .domain = std.posix.AF.INET,
         .flags = std.posix.SOCK.STREAM | std.posix.SOCK.CLOEXEC,
         .protocol = std.posix.IPPROTO.TCP,
-        .out_socket = &socket,
+        .out_socket = &sock,
     });
-    try single(CloseSocket{ .socket = socket });
+    try single(CloseSocket{ .socket = sock });
 }
 
 test "EventSource" {
