@@ -75,16 +75,10 @@ pub fn init(allocator: std.mem.Allocator, n: u16) aio.Error!@This() {
 }
 
 pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
+    self.uringlator.shutdown(*@This(), self, cancelable, completion);
     self.tqueue.deinit();
     self.tpool.deinit();
     self.kludge_tpool.deinit();
-    var iter = self.pending.iterator(.{});
-    while (iter.next()) |id| {
-        switch (self.uringlator.ops.nodes[id]) {
-            .used => |*uop| Uringlator.uopUnwrapCall(uop, posix.closeReadiness, .{self.readiness[id]}),
-            .free => {},
-        }
-    }
     allocator.free(self.readiness);
     self.pfd.deinit(allocator);
     self.pending.deinit(allocator);

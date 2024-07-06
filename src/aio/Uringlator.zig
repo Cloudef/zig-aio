@@ -51,6 +51,19 @@ pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
     self.* = undefined;
 }
 
+pub fn shutdown(
+    self: *@This(),
+    Ctx: type,
+    ctx: Ctx,
+    can_cancel_cb: fn (ctx: Ctx, id: u16, uop: *Operation.Union) bool,
+    completion_cb: fn (ctx: Ctx, id: u16, uop: *Operation.Union) void,
+) void {
+    var iter = self.ops.iterator();
+    while (iter.next()) |e| if (can_cancel_cb(ctx, e.k, e.v)) {
+        completion_cb(ctx, e.k, e.v);
+    };
+}
+
 fn initOp(op: anytype, id: u16) void {
     if (op.out_id) |p_id| p_id.* = @enumFromInt(id);
     if (op.out_error) |out_error| out_error.* = error.Success;
