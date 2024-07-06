@@ -6,20 +6,11 @@ const ItemPool = @import("minilib").ItemPool;
 const DynamicThreadPool = @import("minilib").DynamicThreadPool;
 const DoubleBufferedFixedArrayList = @import("minilib").DoubleBufferedFixedArrayList;
 const TimerQueue = @import("minilib").TimerQueue;
-const Fallback = @import("Fallback.zig");
 const Uringlator = @import("Uringlator.zig");
-const unexpectedError = @import("posix/windows.zig").unexpectedError;
-const werr = @import("posix/windows.zig").werr;
-const wtry = @import("posix/windows.zig").wtry;
-const checked = @import("posix/windows.zig").checked;
 const Iocp = @import("posix/windows.zig").Iocp;
-const sendmsgEx = @import("posix/windows.zig").sendmsgEx;
-const recvmsgEx = @import("posix/windows.zig").recvmsgEx;
-const sendEx = @import("posix/windows.zig").sendEx;
-const recvEx = @import("posix/windows.zig").recvEx;
+const wposix = @import("posix/windows.zig");
 const win32 = @import("win32");
 
-// This is a slightly lighter version of the Fallback backend.
 // Optimized for Windows and uses IOCP operations whenever possible.
 // <https://int64.org/2009/05/14/io-completion-ports-made-easy/>
 
@@ -33,6 +24,9 @@ comptime {
     }
 }
 
+const checked = wposix.checked;
+const wtry = wposix.wtry;
+const werr = wposix.werr;
 const GetLastError = win32.foundation.GetLastError;
 const INVALID_HANDLE = std.os.windows.INVALID_HANDLE_VALUE;
 const HANDLE = win32.foundation.HANDLE;
@@ -198,7 +192,7 @@ pub fn immediate(comptime len: u16, work: anytype) aio.Error!u16 {
 }
 
 fn onThreadPosixExecutor(self: *@This(), id: u16, uop: *Operation.Union) void {
-    const posix = @import("posix.zig");
+    const posix = @import("posix/posix.zig");
     var failure: Operation.Error = error.Success;
     Uringlator.uopUnwrapCall(uop, posix.perform, .{undefined}) catch |err| {
         failure = err;
@@ -279,19 +273,19 @@ fn start(self: *@This(), id: u16, uop: *Operation.Union) !void {
         },
         .recv => |*op| {
             self.iocp.associateSocket(op.socket) catch |err| return self.uringlator.finish(id, err);
-            _ = recvEx(op.socket, &op._, 0, &self.ovls[id].overlapped) catch |err| return self.uringlator.finish(id, err);
+            _ = wposix.recvEx(op.socket, &op._, 0, &self.ovls[id].overlapped) catch |err| return self.uringlator.finish(id, err);
         },
         .send => |*op| {
             self.iocp.associateSocket(op.socket) catch |err| return self.uringlator.finish(id, err);
-            _ = sendEx(op.socket, &op._, 0, &self.ovls[id].overlapped) catch |err| return self.uringlator.finish(id, err);
+            _ = wposix.sendEx(op.socket, &op._, 0, &self.ovls[id].overlapped) catch |err| return self.uringlator.finish(id, err);
         },
         .send_msg => |*op| {
             self.iocp.associateSocket(op.socket) catch |err| return self.uringlator.finish(id, err);
-            _ = sendmsgEx(op.socket, @constCast(op.msg), 0, &self.ovls[id].overlapped) catch |err| return self.uringlator.finish(id, err);
+            _ = wposix.sendmsgEx(op.socket, @constCast(op.msg), 0, &self.ovls[id].overlapped) catch |err| return self.uringlator.finish(id, err);
         },
         .recv_msg => |*op| {
             self.iocp.associateSocket(op.socket) catch |err| return self.uringlator.finish(id, err);
-            _ = recvmsgEx(op.socket, op.out_msg, 0, &self.ovls[id].overlapped) catch |err| return self.uringlator.finish(id, err);
+            _ = wposix.recvmsgEx(op.socket, op.out_msg, 0, &self.ovls[id].overlapped) catch |err| return self.uringlator.finish(id, err);
         },
         else => {
             // perform non IOCP supported operation on a thread

@@ -7,9 +7,9 @@ pub fn build(b: *std.Build) void {
 
     var opts = b.addOptions();
     const sanitize = b.option(bool, "sanitize", "use sanitizers when running examples or tests") orelse false;
-    const FallbackMode = enum { auto, force, disable };
-    const fallback = b.option(FallbackMode, "fallback", "fallback mode [auto, force, disable]") orelse .auto;
-    opts.addOption(FallbackMode, "fallback", fallback);
+    const PosixMode = enum { auto, force, disable };
+    const posix = b.option(PosixMode, "posix", "posix mode [auto, force, disable]") orelse .auto;
+    opts.addOption(PosixMode, "posix", posix);
 
     const minilib = b.addModule("minilib", .{
         .root_source_file = b.path("src/minilib.zig"),

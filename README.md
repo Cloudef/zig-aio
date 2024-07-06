@@ -120,7 +120,7 @@ pub fn main() !void {
 ## Perf
 
 `strace -c` output from the `examples/coro.zig` without `std.log` output and with `std.heap.FixedBufferAllocator`.
-This is using the `io_uring` backend. `fallback` backend emulates `io_uring` like interface by using a traditional
+This is using the `io_uring` backend. `posix` backend emulates `io_uring` like interface by using a traditional
 readiness event loop, thus it will have larger syscall overhead.
 
 ```

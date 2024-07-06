@@ -2,7 +2,7 @@ const std = @import("std");
 const aio = @import("../aio.zig");
 const Operation = @import("ops.zig").Operation;
 const ItemPool = @import("minilib").ItemPool;
-const posix = @import("posix.zig");
+const posix = @import("posix/posix.zig");
 const linux = @import("posix/linux.zig");
 const log = std.log.scoped(.aio_io_uring);
 

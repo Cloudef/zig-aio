@@ -1,7 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const aio = @import("../aio.zig");
-const posix = @import("posix.zig");
+const posix = @import("posix/posix.zig");
 const windows = @import("posix/windows.zig");
 const win32 = @import("win32");
 

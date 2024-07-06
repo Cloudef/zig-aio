@@ -1,6 +1,6 @@
 const builtin = @import("builtin");
 const std = @import("std");
-const posix = @import("../posix.zig");
+const posix = @import("posix.zig");
 
 pub const EVFILT_USER = switch (builtin.target.os.tag) {
     .openbsd => @compileError("openbsd lacks EVFILT_USER, won't work until that's implemented"),

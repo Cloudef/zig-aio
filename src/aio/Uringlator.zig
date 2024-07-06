@@ -7,7 +7,7 @@ const ItemPool = @import("minilib").ItemPool;
 const DoubleBufferedFixedArrayList = @import("minilib").DoubleBufferedFixedArrayList;
 const log = std.log.scoped(.aio_uringlator);
 
-pub const EventSource = @import("posix.zig").EventSource;
+pub const EventSource = @import("posix/posix.zig").EventSource;
 const Result = struct { failure: Operation.Error, id: u16 };
 
 ops: ItemPool(Operation.Union, u16),

@@ -1,13 +1,13 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const socket = @import("../aio.zig").socket;
-const ops = @import("ops.zig");
+const socket = @import("../../aio.zig").socket;
+const ops = @import("../ops.zig");
 const Operation = ops.Operation;
-const linux = @import("posix/linux.zig");
-const bsd = @import("posix/bsd.zig");
-const darwin = @import("posix/darwin.zig");
-const windows = @import("posix/windows.zig");
-const wasi = @import("posix/wasi.zig");
+const linux = @import("linux.zig");
+const bsd = @import("bsd.zig");
+const darwin = @import("darwin.zig");
+const windows = @import("windows.zig");
+const wasi = @import("wasi.zig");
 
 // This file implements stuff that's not in std, not implement properly or not
 // abstracted for all the platforms that we want to support

@@ -2,30 +2,30 @@ const std = @import("std");
 const aio = @import("../aio.zig");
 const Operation = @import("ops.zig").Operation;
 const IoUring = @import("IoUring.zig");
-const Fallback = @import("Fallback.zig");
+const Posix = @import("Posix.zig");
 const log = std.log.scoped(.aio_linux);
 
-pub const IO = switch (aio.options.fallback) {
-    .auto => FallbackSupport, // prefer IoUring, support fallback during runtime
-    .force => Fallback, // use only the fallback backend
+pub const IO = switch (aio.options.posix) {
+    .auto => PosixSupport, // prefer IoUring, support Posix fallback during runtime
+    .force => Posix, // use only the Posix backend
     .disable => IoUring, // use only the IoUring backend
 };
 
-const FallbackSupport = union(enum) {
+const PosixSupport = union(enum) {
     pub const EventSource = IoUring.EventSource;
     comptime {
-        std.debug.assert(EventSource == Fallback.EventSource);
+        std.debug.assert(EventSource == Posix.EventSource);
     }
 
     io_uring: IoUring,
-    fallback: Fallback,
+    posix: Posix,
 
     var once = std.once(do_once);
     var io_uring_supported: bool = undefined;
 
     fn do_once() void {
         io_uring_supported = IoUring.isSupported(aio.options.required_ops);
-        if (!io_uring_supported) log.warn("io_uring unsupported, using fallback backend", .{});
+        if (!io_uring_supported) log.warn("io_uring unsupported, using the posix backend", .{});
     }
 
     pub fn isSupported(operations: []const type) bool {
@@ -38,7 +38,7 @@ const FallbackSupport = union(enum) {
         return if (io_uring_supported)
             IoUring.isSupported(operations)
         else
-            Fallback.isSupported(operations);
+            Posix.isSupported(operations);
     }
 
     pub fn init(allocator: std.mem.Allocator, n: u16) aio.Error!@This() {
@@ -46,7 +46,7 @@ const FallbackSupport = union(enum) {
         return if (io_uring_supported)
             .{ .io_uring = try IoUring.init(allocator, n) }
         else
-            .{ .fallback = try Fallback.init(allocator, n) };
+            .{ .posix = try Posix.init(allocator, n) };
     }
 
     pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
@@ -72,6 +72,6 @@ const FallbackSupport = union(enum) {
         return if (io_uring_supported)
             IoUring.immediate(len, uops)
         else
-            Fallback.immediate(len, uops);
+            Posix.immediate(len, uops);
     }
 };

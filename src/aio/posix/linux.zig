@@ -1,5 +1,5 @@
 const std = @import("std");
-const posix = @import("../posix.zig");
+const posix = @import("posix.zig");
 
 pub const EventSource = struct {
     fd: std.posix.fd_t,

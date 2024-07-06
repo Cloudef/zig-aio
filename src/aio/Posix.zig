@@ -1,7 +1,7 @@
 const builtin = @import("builtin");
 const std = @import("std");
 const aio = @import("../aio.zig");
-const posix = @import("posix.zig");
+const posix = @import("posix/posix.zig");
 const Operation = @import("ops.zig").Operation;
 const ItemPool = @import("minilib").ItemPool;
 const FixedArrayList = @import("minilib").FixedArrayList;
@@ -9,20 +9,20 @@ const DoubleBufferedFixedArrayList = @import("minilib").DoubleBufferedFixedArray
 const TimerQueue = @import("minilib").TimerQueue;
 const DynamicThreadPool = @import("minilib").DynamicThreadPool;
 const Uringlator = @import("Uringlator.zig");
-const log = std.log.scoped(.aio_fallback);
+const log = std.log.scoped(.aio_posix);
 
 // This tries to emulate io_uring functionality.
 // If something does not match how it works on io_uring on linux, it should be change to match.
 // While this uses readiness before performing the requests, the io_uring model is not particularily
-// suited for readiness, thus don't expect this fallback to be particularily effecient.
+// suited for readiness, thus don't expect this backend to be particularily effecient.
 // However it might be still more pleasant experience than (e)poll/kqueueing away as the behaviour should be
 // more or less consistent.
 
 comptime {
     if (builtin.single_threaded) {
         @compileError(
-            \\Fallback backend requires building with threads as otherwise it may block the whole program.
-            \\To only target linux and io_uring, set `aio_options.fallback = .disable` in your root .zig file.
+            \\Posix backend requires building with threads as otherwise it may block the whole program.
+            \\To only target linux and io_uring, set `aio_options.posix = .disable` in your root .zig file.
         );
     }
 }
@@ -53,7 +53,7 @@ pub fn init(allocator: std.mem.Allocator, n: u16) aio.Error!@This() {
         else => |e| e,
     };
     errdefer tpool.deinit();
-    var kludge_tpool = DynamicThreadPool.init(allocator, .{ .max_threads = aio.options.fallback_max_kludge_threads }) catch |err| return switch (err) {
+    var kludge_tpool = DynamicThreadPool.init(allocator, .{ .max_threads = aio.options.posix_max_kludge_threads }) catch |err| return switch (err) {
         error.TimerUnsupported => error.Unsupported,
         else => |e| e,
     };
@@ -101,7 +101,7 @@ pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode, cb: ?aio.Dynam
     // I was thinking if we should use epoll/kqueue if available
     // The pros is that we don't have to iterate the self.pfd.items
     // However, the self.pfd.items changes frequently so we have to keep re-registering fds anyways
-    // Poll is pretty much anywhere, so poll it is. This is fallback backend anyways.
+    // Poll is pretty much anywhere, so poll it is. This is a posix backend anyways.
     const n = posix.poll(self.pfd.items[0..self.pfd.len], if (mode == .blocking) -1 else 0) catch |err| return switch (err) {
         error.NetworkSubsystemFailed => unreachable,
         else => |e| e,

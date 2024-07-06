@@ -15,24 +15,24 @@ pub const Options = struct {
     /// By default use the cpu core count.
     max_threads: ?u32 = null,
     /// Operations that the main backend must support.
-    /// If the operations are not supported by a main backend then a fallback backend will be used instead.
-    /// This is unused if fallback is disabled, in that case you should check for a support manually.
+    /// If the operations are not supported by a main backend then a posix backend will be used instead.
+    /// This is unused if posix backend is disabled, in that case you should check for a support manually.
     required_ops: []const type = @import("aio/ops.zig").Operation.Types,
-    /// Choose a fallback mode.
-    fallback: enum { auto, force, disable } = @enumFromInt(@intFromEnum(build_options.fallback)),
-    /// Max kludge threads for the fallback backend.
+    /// Choose a posix fallback mode.
+    /// Posix backend is never used on windows
+    posix: enum { auto, force, disable } = @enumFromInt(@intFromEnum(build_options.posix)),
+    /// Max kludge threads for the posix backend.
     /// Kludge threads are used when operation cannot be polled for readiness.
     /// One example is macos's /dev/tty which can only be queried for readiness using select/pselect.
-    /// Kludge threads also allow the fallback backend to work on windows, but it is not particularily resource friendly way to do it.
     /// <https://lists.apple.com/archives/Darwin-dev/2006/Apr/msg00066.html>
     /// <https://nathancraddock.com/blog/macos-dev-tty-polling/>
-    fallback_max_kludge_threads: usize = 1024,
+    posix_max_kludge_threads: usize = 1024,
 };
 
 /// Use this instead of std.posix.socket to get async sockets on windows ... :)
 /// Unfortunately there is no `ReOpenFile` equivalent for sockets.
 pub inline fn socket(domain: u32, socket_type: u32, protocol: u32) std.posix.SocketError!std.posix.socket_t {
-    if (options.fallback != .force and @import("builtin").target.os.tag == .windows) {
+    if (@import("builtin").target.os.tag == .windows) {
         return @import("aio/posix/windows.zig").socket(domain, socket_type, protocol);
     } else {
         return std.posix.socket(domain, socket_type, protocol);
@@ -200,7 +200,7 @@ pub const EventSource = struct {
 const IO = switch (@import("builtin").target.os.tag) {
     .linux => @import("aio/linux.zig").IO,
     .windows => @import("aio/Windows.zig"),
-    else => @import("aio/Fallback.zig"),
+    else => @import("aio/Posix.zig"),
 };
 
 const ops = @import("aio/ops.zig");

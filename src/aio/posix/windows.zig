@@ -1,5 +1,5 @@
 const std = @import("std");
-const posix = @import("../posix.zig");
+const posix = @import("posix.zig");
 const ops = @import("../ops.zig");
 const log = std.log.scoped(.aio_windows);
 const Link = @import("minilib").Link;
