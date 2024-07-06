@@ -137,6 +137,10 @@ pub const EventSource = struct {
     }
 
     pub fn addWaiter(self: *@This(), node: *WaitList.Node) void {
+        if (self.counter.load(.acquire) > 0) {
+            node.data.cast().iocp.notify(.{ .type = .event_source, .id = node.data.cast().id }, self);
+            return;
+        }
         self.mutex.lock();
         defer self.mutex.unlock();
         self.waiters.prepend(node);
