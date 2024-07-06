@@ -12,6 +12,7 @@ const unexpectedError = @import("posix/windows.zig").unexpectedError;
 const werr = @import("posix/windows.zig").werr;
 const wtry = @import("posix/windows.zig").wtry;
 const checked = @import("posix/windows.zig").checked;
+const Iocp = @import("posix/windows.zig").Iocp;
 const win32 = @import("win32");
 
 const Windows = @This();
@@ -63,13 +64,12 @@ const IoContext = struct {
     }
 };
 
-port: HANDLE, // iocp completion port
+iocp: Iocp,
 tqueue: TimerQueue, // timer queue implementing linux -like timers
 tpool: DynamicThreadPool, // thread pool for performing iocp and non iocp operations
 iocp_threads_spawned: bool = false, // iocp needs own poll threads
 ovls: []IoContext,
 uringlator: Uringlator,
-num_iocp_threads: u32,
 
 pub fn isSupported(_: []const type) bool {
     return true; // very optimistic :D
@@ -77,13 +77,12 @@ pub fn isSupported(_: []const type) bool {
 
 pub fn init(allocator: std.mem.Allocator, n: u16) aio.Error!@This() {
     // need at least 2 threads, 1 iocp thread and 1 non-iocp blocking task thread
-    const thread_count: u32 = @max(2, aio.options.max_threads orelse @as(u32, @intCast(std.Thread.getCpuCount() catch 1)));
-    const port = io.CreateIoCompletionPort(INVALID_HANDLE, null, 0, @intCast(thread_count)).?;
-    try wtry(port != INVALID_HANDLE);
-    errdefer checked(CloseHandle(port));
+    const num_threads: u32 = @max(2, aio.options.max_threads orelse @as(u32, @intCast(std.Thread.getCpuCount() catch 1)));
+    var iocp = try Iocp.init(num_threads / 2);
+    errdefer iocp.deinit();
     var tqueue = try TimerQueue.init(allocator);
     errdefer tqueue.deinit();
-    var tpool = DynamicThreadPool.init(allocator, .{ .max_threads = thread_count }) catch |err| return switch (err) {
+    var tpool = DynamicThreadPool.init(allocator, .{ .max_threads = num_threads / 2 }) catch |err| return switch (err) {
         error.TimerUnsupported => error.Unsupported,
         else => |e| e,
     };
@@ -93,24 +92,17 @@ pub fn init(allocator: std.mem.Allocator, n: u16) aio.Error!@This() {
     var uringlator = try Uringlator.init(allocator, n);
     errdefer uringlator.deinit(allocator);
     return .{
-        .port = port,
+        .iocp = iocp,
         .tqueue = tqueue,
         .tpool = tpool,
         .ovls = ovls,
         .uringlator = uringlator,
-        // split blocking threads and iocp threads half
-        .num_iocp_threads = thread_count / 2,
     };
 }
 
-const SHUTDOWN_KEY = 0xDEADBEEF;
-
 pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
-    // docs say that GetQueuedCompletionStatus should return if IOCP port is closed
-    // this doesn't seem to happen under wine though (wine bug?)
-    // anyhow, wakeup the drain thread by hand
-    for (0..self.num_iocp_threads) |_| checked(io.PostQueuedCompletionStatus(self.port, 0, SHUTDOWN_KEY, null));
-    checked(CloseHandle(self.port));
+    self.uringlator.shutdown(*@This(), self, cancelable, completion);
+    self.iocp.deinit();
     self.tqueue.deinit();
     self.tpool.deinit();
     allocator.free(self.ovls);
@@ -118,8 +110,12 @@ pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
     self.* = undefined;
 }
 
-fn queueCallback(self: *@This(), id: u16, _: *Operation.Union) aio.Error!void {
+fn queueCallback(self: *@This(), id: u16, uop: *Operation.Union) aio.Error!void {
     self.ovls[id] = .{};
+    switch (uop.*) {
+        .wait_event_source => |*op| op._ = .{ .id = id, .iocp = &self.iocp },
+        else => {},
+    }
 }
 
 pub fn queue(self: *@This(), comptime len: u16, work: anytype, cb: ?aio.Dynamic.QueueCallback) aio.Error!void {
@@ -129,19 +125,28 @@ pub fn queue(self: *@This(), comptime len: u16, work: anytype, cb: ?aio.Dynamic.
 fn iocpDrainThread(self: *@This()) void {
     while (true) {
         var transferred: u32 = undefined;
-        var key: usize = undefined;
+        var key: Iocp.Key = undefined;
         var maybe_ovl: ?*io.OVERLAPPED = null;
-        const res = io.GetQueuedCompletionStatus(self.port, &transferred, &key, &maybe_ovl, INFINITE);
+        const res = io.GetQueuedCompletionStatus(self.iocp.port, &transferred, @ptrCast(&key), &maybe_ovl, INFINITE);
         if (res == 1) {
-            if (key == SHUTDOWN_KEY) break;
-            // work complete
-            const ctx: *IoContext = @fieldParentPtr("overlapped", maybe_ovl.?);
-            ctx.res = transferred;
-            self.uringlator.finish(@intCast(key), error.Success);
+            switch (key.type) {
+                .shutdown => break,
+                .event_source => {
+                    const source: *EventSource = @ptrCast(@alignCast(maybe_ovl.?));
+                    source.wait();
+                    self.uringlator.finish(key.id, error.Success);
+                },
+                .overlapped => {
+                    const ctx: *IoContext = @fieldParentPtr("overlapped", maybe_ovl.?);
+                    ctx.res = transferred;
+                    self.uringlator.finish(key.id, error.Success);
+                },
+            }
         } else if (maybe_ovl) |_| {
-            if (key == SHUTDOWN_KEY) break;
-            // operation failed
-            self.uringlator.finish(@intCast(key), werr(0));
+            switch (key.type) {
+                .shutdown => break,
+                .event_source, .overlapped => self.uringlator.finish(key.id, werr(0)),
+            }
         } else {
             // most likely port was closed, but check error here in future to make sure
             break;
@@ -151,7 +156,7 @@ fn iocpDrainThread(self: *@This()) void {
 
 fn spawnIocpThreads(self: *@This()) !void {
     @setCold(true);
-    for (0..self.num_iocp_threads) |_| self.tpool.spawn(iocpDrainThread, .{self}) catch return error.SystemResources;
+    for (0..self.iocp.num_threads) |_| self.tpool.spawn(iocpDrainThread, .{self}) catch return error.SystemResources;
     self.iocp_threads_spawned = true;
 }
 
@@ -229,34 +234,37 @@ fn getHandleAccessInfo(handle: HANDLE) !fs.FILE_ACCESS_FLAGS {
 fn start(self: *@This(), id: u16, uop: *Operation.Union) !void {
     var trash: u32 = undefined;
     switch (uop.*) {
-        .read => |op| {
+        .read => |*op| {
             const flags = try getHandleAccessInfo(op.file.handle);
             if (flags.FILE_READ_DATA != 1) {
                 self.uringlator.finish(id, error.NotOpenForReading);
                 return;
             }
             const h = fs.ReOpenFile(op.file.handle, flags, .{ .READ = 1, .WRITE = 1 }, fs.FILE_FLAG_OVERLAPPED).?;
-            checked(h != INVALID_HANDLE);
-            checked(io.CreateIoCompletionPort(h, self.port, id, 0).? != INVALID_HANDLE);
+            wtry(h != INVALID_HANDLE) catch |err| return self.uringlator.finish(id, err);
+            wtry(io.CreateIoCompletionPort(h, self.iocp.port, id, 0).? != INVALID_HANDLE) catch |err| return self.uringlator.finish(id, err);
             self.ovls[id] = .{ .overlapped = ovlOff(op.offset), .specimen = .{ .handle = h } };
-            try wtry(fs.ReadFile(h, op.buffer.ptr, @intCast(op.buffer.len), &trash, &self.ovls[id].overlapped));
+            wtry(fs.ReadFile(h, op.buffer.ptr, @intCast(op.buffer.len), &trash, &self.ovls[id].overlapped)) catch |err| return self.uringlator.finish(id, err);
         },
-        .write => |op| {
+        .write => |*op| {
             const flags = try getHandleAccessInfo(op.file.handle);
             if (flags.FILE_WRITE_DATA != 1) {
                 self.uringlator.finish(id, error.NotOpenForWriting);
                 return;
             }
             const h = fs.ReOpenFile(op.file.handle, flags, .{ .READ = 1, .WRITE = 1 }, fs.FILE_FLAG_OVERLAPPED).?;
-            checked(h != INVALID_HANDLE);
-            checked(io.CreateIoCompletionPort(h, self.port, id, 0).? != INVALID_HANDLE);
+            wtry(h != INVALID_HANDLE) catch |err| return self.uringlator.finish(id, err);
+            wtry(io.CreateIoCompletionPort(h, self.iocp.port, id, 0).? != INVALID_HANDLE) catch |err| return self.uringlator.finish(id, err);
             self.ovls[id] = .{ .overlapped = ovlOff(op.offset), .specimen = .{ .handle = h } };
-            try wtry(fs.WriteFile(h, op.buffer.ptr, @intCast(op.buffer.len), &trash, &self.ovls[id].overlapped));
+            wtry(fs.WriteFile(h, op.buffer.ptr, @intCast(op.buffer.len), &trash, &self.ovls[id].overlapped)) catch |err| return self.uringlator.finish(id, err);
         },
         inline .timeout, .link_timeout => |*op| {
             const closure: TimerQueue.Closure = .{ .context = self, .callback = onThreadTimeout };
-            try self.tqueue.schedule(.monotonic, op.ns, id, .{ .closure = closure });
+            self.tqueue.schedule(.monotonic, op.ns, id, .{ .closure = closure }) catch self.uringlator.finish(id, error.Unexpected);
         },
+        .wait_event_source => |*op| op.source.native.addWaiter(&op._.link),
+        .notify_event_source => |*op| op.source.notify(),
+        .close_event_source => |*op| op.source.deinit(),
         // TODO: AcceptEx
         // TODO: WSASend
         // TODO: WSARecv
@@ -272,6 +280,7 @@ fn start(self: *@This(), id: u16, uop: *Operation.Union) !void {
 fn cancelable(_: *@This(), _: u16, uop: *Operation.Union) bool {
     return switch (uop.*) {
         .timeout, .link_timeout => true,
+        .wait_event_source => true,
         else => false,
     };
 }
@@ -280,8 +289,9 @@ fn completion(self: *@This(), id: u16, uop: *Operation.Union) void {
     defer self.ovls[id].deinit();
     switch (uop.*) {
         .timeout, .link_timeout => self.tqueue.disarm(.monotonic, id),
-        .read => |op| op.out_read.* = self.ovls[id].res,
-        .write => |op| {
+        .wait_event_source => |*op| op.source.native.removeWaiter(&op._.link),
+        .read => |*op| op.out_read.* = self.ovls[id].res,
+        .write => |*op| {
             if (op.out_written) |w| w.* = self.ovls[id].res;
         },
         else => {},

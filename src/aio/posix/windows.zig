@@ -2,14 +2,18 @@ const std = @import("std");
 const posix = @import("../posix.zig");
 const ops = @import("../ops.zig");
 const log = std.log.scoped(.aio_windows);
+const Link = @import("minilib").Link;
 const win32 = @import("win32");
 
 const INFINITE = win32.system.windows_programming.INFINITE;
 const GetLastError = win32.foundation.GetLastError;
 const CloseHandle = win32.foundation.CloseHandle;
+const INVALID_HANDLE = win32.foundation.INVALID_HANDLE_VALUE;
+const HANDLE = win32.foundation.HANDLE;
 const threading = win32.system.threading;
 const console = win32.system.console;
 const win_sock = win32.networking.win_sock;
+const io = win32.system.io;
 
 pub fn unexpectedError(err: win32.foundation.WIN32_ERROR) error{Unexpected} {
     return std.os.windows.unexpectedError(@enumFromInt(@intFromEnum(err)));
@@ -39,42 +43,108 @@ pub fn checked(ret: anytype) void {
     wtry(ret) catch unreachable;
 }
 
-pub const EventSource = struct {
-    fd: std.posix.fd_t,
-    counter: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
+// Light wrapper, mainly to link EventSources to this
+pub const Iocp = struct {
+    pub const Key = packed struct(usize) {
+        type: enum(u8) {
+            shutdown,
+            event_source,
+            overlapped,
+        },
+        id: u16 = 0,
+        _: @Type(.{ .Int = .{ .bits = @bitSizeOf(usize) - @bitSizeOf(u8) - @bitSizeOf(u16), .signedness = .unsigned } }) = 0,
+    };
 
-    pub inline fn init() !@This() {
-        return .{
-            .fd = try (threading.CreateEventW(null, 1, 1, null) orelse error.SystemResources),
-        };
+    port: HANDLE,
+    num_threads: u32,
+
+    pub fn init(num_threads: u32) !@This() {
+        const port = io.CreateIoCompletionPort(INVALID_HANDLE, null, 0, num_threads).?;
+        try wtry(port != INVALID_HANDLE);
+        errdefer checked(CloseHandle(port));
+        return .{ .port = port, .num_threads = num_threads };
     }
 
-    pub inline fn deinit(self: *@This()) void {
+    pub fn notify(self: *@This(), key: Key, ptr: ?*anyopaque) void {
+        checked(io.PostQueuedCompletionStatus(self.port, 0, @bitCast(key), @ptrCast(@alignCast(ptr))));
+    }
+
+    pub fn deinit(self: *@This()) void {
+        // docs say that GetQueuedCompletionStatus should return if IOCP port is closed
+        // this doesn't seem to happen under wine though (wine bug?)
+        // anyhow, wakeup the drain thread by hand
+        for (0..self.num_threads) |_| self.notify(.{ .type = .shutdown }, null);
+        checked(CloseHandle(self.port));
+        self.* = undefined;
+    }
+};
+
+pub const EventSource = struct {
+    pub const WaitList = std.SinglyLinkedList(Link(ops.WaitEventSource.WindowsContext, "link", .single));
+    fd: HANDLE,
+    counter: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
+    waiters: WaitList = .{},
+    mutex: std.Thread.Mutex = .{},
+
+    pub fn init() !@This() {
+        return .{ .fd = try (threading.CreateEventW(null, 1, 1, null) orelse error.SystemResources) };
+    }
+
+    pub fn deinit(self: *@This()) void {
+        std.debug.assert(self.waiters.first == null); // having dangling waiters is bad
         checked(CloseHandle(self.fd));
         self.* = undefined;
     }
 
-    pub inline fn notify(self: *@This()) void {
+    pub fn notify(self: *@This()) void {
         if (self.counter.fetchAdd(1, .monotonic) == 0) {
             wtry(threading.SetEvent(self.fd)) catch @panic("EventSource.notify failed");
+            self.mutex.lock();
+            defer self.mutex.unlock();
+            while (self.waiters.popFirst()) |w| w.data.cast().iocp.notify(.{ .type = .event_source, .id = w.data.cast().id }, self);
         }
     }
 
-    pub inline fn notifyReadiness(self: *@This()) posix.Readiness {
+    pub fn notifyReadiness(self: *@This()) posix.Readiness {
         return .{ .fd = self.fd, .mode = .out };
     }
 
-    pub inline fn wait(self: *@This()) void {
-        if (self.counter.load(.acquire) == 0) {
-            _ = threading.WaitForSingleObject(self.fd, INFINITE);
+    pub fn wait(self: *@This()) void {
+        while (self.counter.load(.acquire) == 0) {
+            wtry(threading.WaitForSingleObject(self.fd, INFINITE) == 0) catch @panic("EventSource.wait failed");
         }
-        if (self.counter.load(.acquire) > 0 and self.counter.fetchSub(1, .release) == 1) {
+        if (self.counter.fetchSub(1, .release) == 1) {
             wtry(threading.ResetEvent(self.fd)) catch @panic("EventSource.wait failed");
         }
     }
 
-    pub inline fn waitReadiness(self: *@This()) posix.Readiness {
+    pub fn waitReadiness(self: *@This()) posix.Readiness {
         return .{ .fd = self.fd, .mode = .in };
+    }
+
+    pub fn addWaiter(self: *@This(), node: *WaitList.Node) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        self.waiters.prepend(node);
+    }
+
+    pub fn removeWaiter(self: *@This(), node: *WaitList.Node) void {
+        blk: {
+            self.mutex.lock();
+            defer self.mutex.unlock();
+            // safer list.remove ...
+            if (self.waiters.first == node) {
+                self.waiters.first = node.next;
+            } else if (self.waiters.first) |first| {
+                var current_elm = first;
+                while (current_elm.next != node) {
+                    if (current_elm.next == null) break :blk;
+                    current_elm = current_elm.next.?;
+                }
+                current_elm.next = node.next;
+            }
+        }
+        node.* = .{ .data = .{} };
     }
 };
 

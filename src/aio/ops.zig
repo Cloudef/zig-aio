@@ -2,6 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const aio = @import("../aio.zig");
 const posix = @import("posix.zig");
+const windows = @import("posix/windows.zig");
 
 pub const Id = enum(usize) { _ };
 
@@ -371,8 +372,17 @@ pub const NotifyEventSource = struct {
 };
 
 pub const WaitEventSource = struct {
+    pub const WindowsContext = struct {
+        id: u16 = undefined,
+        iocp: *windows.Iocp = undefined,
+        link: windows.EventSource.WaitList.Node = .{ .data = .{} },
+    };
     pub const Error = SharedError;
     source: *aio.EventSource,
+    _: switch (builtin.target.os.tag) {
+        .windows => WindowsContext,
+        else => struct {},
+    } = .{},
     out_id: ?*Id = null,
     out_error: ?*Error = null,
     link: Link = .unlinked,
