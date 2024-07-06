@@ -13,6 +13,10 @@ const werr = @import("posix/windows.zig").werr;
 const wtry = @import("posix/windows.zig").wtry;
 const checked = @import("posix/windows.zig").checked;
 const Iocp = @import("posix/windows.zig").Iocp;
+const sendmsgEx = @import("posix/windows.zig").sendmsgEx;
+const recvmsgEx = @import("posix/windows.zig").recvmsgEx;
+const sendEx = @import("posix/windows.zig").sendEx;
+const recvEx = @import("posix/windows.zig").recvEx;
 const win32 = @import("win32");
 
 const Windows = @This();
@@ -45,6 +49,7 @@ const INFINITE = win32.system.windows_programming.INFINITE;
 const io = win32.system.io;
 const fs = win32.storage.file_system;
 const win_sock = win32.networking.win_sock;
+const WSAGetLastError = win_sock.WSAGetLastError;
 const INVALID_SOCKET = win_sock.INVALID_SOCKET;
 const threading = win32.system.threading;
 
@@ -281,16 +286,21 @@ fn start(self: *@This(), id: u16, uop: *Operation.Union) !void {
             wtry(win_sock.AcceptEx(op.socket, op.out_socket.*, &op._, 0, @sizeOf(std.posix.sockaddr) + 16, @sizeOf(std.posix.sockaddr) + 16, &trash, &self.ovls[id].overlapped) == 1) catch |err| return self.uringlator.finish(id, err);
         },
         .recv => |*op| {
-            var flags: u32 = 0;
             self.iocp.associateSocket(op.socket) catch |err| return self.uringlator.finish(id, err);
-            wtry(win_sock.WSARecv(op.socket, &op._, 1, null, &flags, &self.ovls[id].overlapped, null) == 0) catch |err| return self.uringlator.finish(id, err);
+            _ = recvEx(op.socket, &op._, 0, &self.ovls[id].overlapped) catch |err| return self.uringlator.finish(id, err);
         },
         .send => |*op| {
             self.iocp.associateSocket(op.socket) catch |err| return self.uringlator.finish(id, err);
-            wtry(win_sock.WSASend(op.socket, &op._, 1, null, 0, &self.ovls[id].overlapped, null) == 0) catch |err| return self.uringlator.finish(id, err);
+            _ = sendEx(op.socket, &op._, 0, &self.ovls[id].overlapped) catch |err| return self.uringlator.finish(id, err);
         },
-        // TODO: WSASendMsg
-        // TODO: WSARecvMsg
+        .send_msg => |*op| {
+            self.iocp.associateSocket(op.socket) catch |err| return self.uringlator.finish(id, err);
+            _ = sendmsgEx(op.socket, @constCast(op.msg), 0, &self.ovls[id].overlapped) catch |err| return self.uringlator.finish(id, err);
+        },
+        .recv_msg => |*op| {
+            self.iocp.associateSocket(op.socket) catch |err| return self.uringlator.finish(id, err);
+            _ = recvmsgEx(op.socket, op.out_msg, 0, &self.ovls[id].overlapped) catch |err| return self.uringlator.finish(id, err);
+        },
         else => {
             // perform non IOCP supported operation on a thread
             self.tpool.spawn(onThreadPosixExecutor, .{ self, id, uop }) catch return error.SystemResources;

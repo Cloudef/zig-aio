@@ -247,16 +247,14 @@ pub fn poll(pfds: []pollfd, timeout: i32) std.posix.PollError!usize {
     return 1;
 }
 
-pub const msghdr = win_sock.WSAMSG;
-pub const msghdr_const = win_sock.WSAMSG;
-
-pub fn sendmsg(sockfd: std.posix.socket_t, msg: *const msghdr_const, flags: u32) !usize {
+pub fn sendEx(sockfd: std.posix.socket_t, buf: [*]win_sock.WSABUF, flags: u32, overlapped: ?*io.OVERLAPPED) !usize {
     var written: u32 = 0;
     while (true) {
-        const rc = win_sock.WSASendMsg(sockfd, @constCast(msg), flags, &written, null, null);
+        const rc = win_sock.WSASend(sockfd, buf, 1, &written, flags, overlapped, null);
         if (rc == win_sock.SOCKET_ERROR) {
             switch (win_sock.WSAGetLastError()) {
                 .EWOULDBLOCK, .EINTR, .EINPROGRESS => continue,
+                ._IO_PENDING => if (overlapped != null) break else unreachable,
                 .EACCES => return error.AccessDenied,
                 .EADDRNOTAVAIL => return error.AddressNotAvailable,
                 .ECONNRESET => return error.ConnectionResetByPeer,
@@ -282,7 +280,81 @@ pub fn sendmsg(sockfd: std.posix.socket_t, msg: *const msghdr_const, flags: u32)
     return @intCast(written);
 }
 
-pub fn recvmsg(sockfd: std.posix.socket_t, msg: *msghdr, _: u32) !usize {
+pub fn recvEx(sockfd: std.posix.socket_t, buf: [*]win_sock.WSABUF, flags: u32, overlapped: ?*io.OVERLAPPED) !usize {
+    var read: u32 = 0;
+    var inout_flags: u32 = flags;
+    while (true) {
+        const rc = win_sock.WSARecv(sockfd, buf, 1, &read, &inout_flags, overlapped, null);
+        if (rc == win_sock.SOCKET_ERROR) {
+            switch (win_sock.WSAGetLastError()) {
+                .EWOULDBLOCK, .EINTR, .EINPROGRESS => continue,
+                ._IO_PENDING => if (overlapped != null) break else unreachable,
+                .EACCES => return error.AccessDenied,
+                .EADDRNOTAVAIL => return error.AddressNotAvailable,
+                .ECONNRESET => return error.ConnectionResetByPeer,
+                .EMSGSIZE => return error.MessageTooBig,
+                .ENOBUFS => return error.SystemResources,
+                .ENOTSOCK => return error.FileDescriptorNotASocket,
+                .EAFNOSUPPORT => return error.AddressFamilyNotSupported,
+                .EDESTADDRREQ => unreachable, // A destination address is required.
+                .EFAULT => unreachable, // The lpBuffers, lpTo, lpOverlapped, lpNumberOfBytesSent, or lpCompletionRoutine parameters are not part of the user address space, or the lpTo parameter is too small.
+                .EHOSTUNREACH => return error.NetworkUnreachable,
+                .EINVAL => unreachable,
+                .ENETDOWN => return error.NetworkSubsystemFailed,
+                .ENETRESET => return error.ConnectionResetByPeer,
+                .ENETUNREACH => return error.NetworkUnreachable,
+                .ENOTCONN => return error.SocketNotConnected,
+                .ESHUTDOWN => unreachable, // The socket has been shut down; it is not possible to WSASendTo on a socket after shutdown has been invoked with how set to SD_SEND or SD_BOTH.
+                .NOTINITIALISED => unreachable, // A successful WSAStartup call must occur before using this function.
+                else => |err| return unexpectedWSAError(err),
+            }
+        }
+        break;
+    }
+    return @intCast(read);
+}
+
+pub const msghdr = win_sock.WSAMSG;
+pub const msghdr_const = win_sock.WSAMSG;
+
+pub fn sendmsgEx(sockfd: std.posix.socket_t, msg: *const msghdr_const, flags: u32, overlapped: ?*io.OVERLAPPED) !usize {
+    var written: u32 = 0;
+    while (true) {
+        const rc = win_sock.WSASendMsg(sockfd, @constCast(msg), flags, &written, overlapped, null);
+        if (rc == win_sock.SOCKET_ERROR) {
+            switch (win_sock.WSAGetLastError()) {
+                .EWOULDBLOCK, .EINTR, .EINPROGRESS => continue,
+                ._IO_PENDING => if (overlapped != null) break else unreachable,
+                .EACCES => return error.AccessDenied,
+                .EADDRNOTAVAIL => return error.AddressNotAvailable,
+                .ECONNRESET => return error.ConnectionResetByPeer,
+                .EMSGSIZE => return error.MessageTooBig,
+                .ENOBUFS => return error.SystemResources,
+                .ENOTSOCK => return error.FileDescriptorNotASocket,
+                .EAFNOSUPPORT => return error.AddressFamilyNotSupported,
+                .EDESTADDRREQ => unreachable, // A destination address is required.
+                .EFAULT => unreachable, // The lpBuffers, lpTo, lpOverlapped, lpNumberOfBytesSent, or lpCompletionRoutine parameters are not part of the user address space, or the lpTo parameter is too small.
+                .EHOSTUNREACH => return error.NetworkUnreachable,
+                .EINVAL => unreachable,
+                .ENETDOWN => return error.NetworkSubsystemFailed,
+                .ENETRESET => return error.ConnectionResetByPeer,
+                .ENETUNREACH => return error.NetworkUnreachable,
+                .ENOTCONN => return error.SocketNotConnected,
+                .ESHUTDOWN => unreachable, // The socket has been shut down; it is not possible to WSASendTo on a socket after shutdown has been invoked with how set to SD_SEND or SD_BOTH.
+                .NOTINITIALISED => unreachable, // A successful WSAStartup call must occur before using this function.
+                else => |err| return unexpectedWSAError(err),
+            }
+        }
+        break;
+    }
+    return @intCast(written);
+}
+
+pub fn sendmsg(sockfd: std.posix.socket_t, msg: *const msghdr_const, flags: u32) !usize {
+    return sendmsgEx(sockfd, msg, flags, null);
+}
+
+pub fn recvmsgEx(sockfd: std.posix.socket_t, msg: *msghdr, _: u32, overlapped: ?*io.OVERLAPPED) !usize {
     const DumbStuff = struct {
         var once = std.once(do_once);
         var fun: win_sock.LPFN_WSARECVMSG = undefined;
@@ -310,10 +382,11 @@ pub fn recvmsg(sockfd: std.posix.socket_t, msg: *msghdr, _: u32) !usize {
     if (!DumbStuff.have_fun) return error.Unexpected;
     var read: u32 = 0;
     while (true) {
-        const rc = DumbStuff.fun(sockfd, msg, &read, null, null);
+        const rc = DumbStuff.fun(sockfd, msg, &read, overlapped, null);
         if (rc == win_sock.SOCKET_ERROR) {
             switch (win_sock.WSAGetLastError()) {
                 .EWOULDBLOCK, .EINTR, .EINPROGRESS => continue,
+                ._IO_PENDING => if (overlapped != null) break else unreachable,
                 .EACCES => return error.AccessDenied,
                 .EADDRNOTAVAIL => return error.AddressNotAvailable,
                 .ECONNRESET => return error.ConnectionResetByPeer,
@@ -337,6 +410,10 @@ pub fn recvmsg(sockfd: std.posix.socket_t, msg: *msghdr, _: u32) !usize {
         break;
     }
     return @intCast(read);
+}
+
+pub fn recvmsg(sockfd: std.posix.socket_t, msg: *msghdr, flags: u32) !usize {
+    return recvmsgEx(sockfd, msg, flags, null);
 }
 
 pub fn socket(domain: u32, socket_type: u32, protocol: u32) std.posix.SocketError!std.posix.socket_t {
