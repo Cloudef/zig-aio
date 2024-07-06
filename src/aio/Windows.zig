@@ -149,7 +149,6 @@ fn iocpDrainThread(self: *@This()) void {
             const id: u16 = @intCast((@intFromPtr(ctx) - @intFromPtr(self.ovls.ptr)) / @sizeOf(IoContext));
             self.uringlator.finish(id, werr(0));
         } else {
-            // most likely port was closed, but check error here in future to make sure
             break;
         }
     }
