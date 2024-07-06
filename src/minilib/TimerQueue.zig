@@ -63,16 +63,14 @@ fn Mixin(T: type) type {
         }
 
         pub fn deinit(self: *T) void {
+            self.mutex.lock();
             if (self.thread) |thrd| {
-                {
-                    self.mutex.lock();
-                    defer self.mutex.unlock();
-                    while (self.queue.removeOrNull()) |_| {}
-                    self.thread = null; // to prevent thread from detaching
-                }
+                while (self.queue.removeOrNull()) |_| {}
+                self.thread = null; // to prevent thread from detaching
+                self.mutex.unlock();
                 self.cond.broadcast();
                 thrd.join();
-            }
+            } else self.mutex.unlock();
             self.queue.deinit();
             self.* = undefined;
         }
@@ -95,6 +93,7 @@ fn Mixin(T: type) type {
             @setCold(true);
             if (self.thread) |_| unreachable;
             self.thread = try std.Thread.spawn(.{ .allocator = self.queue.allocator }, T.threadMain, .{self});
+            self.thread.?.setName(T.Name) catch {};
         }
 
         pub fn disarm(self: *T, user_data: usize) void {
@@ -112,6 +111,7 @@ fn Mixin(T: type) type {
 /// Monotonic timers by linux definition do not count the suspend time
 /// This is the simplest one to implement, as we don't have to register suspend callbacks from the OS
 const MonotonicQueue = struct {
+    pub const Name = "MonotonicQueue";
     thread: ?std.Thread = null,
     queue: std.PriorityQueue(Timeout, void, Timeout.sort),
     mutex: std.Thread.Mutex = .{},
@@ -157,7 +157,6 @@ const MonotonicQueue = struct {
     fn threadMain(self: *@This()) void {
         self.mutex.lock();
         defer self.mutex.unlock();
-        self.thread.?.setName("MonotonicQueue") catch {};
 
         while (self.queue.peek()) |timeout| {
             {
@@ -189,6 +188,7 @@ const MonotonicQueue = struct {
 /// Similar to monotonic queue but needs to be woken up when PC wakes up from suspend
 /// and check if any timers got expired
 const BoottimeQueue = struct {
+    pub const Name = "BoottimeQueue";
     thread: ?std.Thread = null,
     queue: std.PriorityQueue(Timeout, void, Timeout.sort),
     mutex: std.Thread.Mutex = .{},
@@ -232,7 +232,6 @@ const BoottimeQueue = struct {
     fn threadMain(self: *@This()) void {
         self.mutex.lock();
         defer self.mutex.unlock();
-        self.thread.?.setName("BoottimeQueue") catch {};
 
         while (self.queue.peek()) |timeout| {
             // TODO: wakeup if coming out from suspend
@@ -265,6 +264,7 @@ const BoottimeQueue = struct {
 /// Checks every second whether any timers has been expired.
 /// Not great accuracy but every second lets us do the implementation without needing any facilities from the OS.
 const RealtimeQueue = struct {
+    pub const Name = "RealtimeQueue";
     thread: ?std.Thread = null,
     queue: std.PriorityQueue(Timeout, void, Timeout.sort),
     mutex: std.Thread.Mutex = .{},
@@ -278,7 +278,6 @@ const RealtimeQueue = struct {
     fn threadMain(self: *@This()) void {
         self.mutex.lock();
         defer self.mutex.unlock();
-        self.thread.?.setName("RealtimeQueue") catch {};
 
         while (self.queue.peek()) |_| {
             self.cond.timedWait(&self.mutex, std.time.ns_per_s) catch {};
