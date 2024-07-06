@@ -60,7 +60,7 @@ pub fn convertOpenFlags(flags: std.fs.File.OpenFlags) std.posix.O {
     return os_flags;
 }
 
-pub inline fn statusToTerm(status: u32) std.process.Child.Term {
+pub fn statusToTerm(status: u32) std.process.Child.Term {
     return if (std.posix.W.IFEXITED(status))
         .{ .Exited = std.posix.W.EXITSTATUS(status) }
     else if (std.posix.W.IFSIGNALED(status))

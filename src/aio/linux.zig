@@ -28,7 +28,7 @@ const FallbackSupport = union(enum) {
         if (!io_uring_supported) log.warn("io_uring unsupported, using fallback backend", .{});
     }
 
-    pub inline fn isSupported(operations: []const type) bool {
+    pub fn isSupported(operations: []const type) bool {
         once.call();
         // io_uring currently has to support all operations or we fallback
         // so the io_uring codepath here never really gets executed
@@ -41,7 +41,7 @@ const FallbackSupport = union(enum) {
             Fallback.isSupported(operations);
     }
 
-    pub inline fn init(allocator: std.mem.Allocator, n: u16) aio.Error!@This() {
+    pub fn init(allocator: std.mem.Allocator, n: u16) aio.Error!@This() {
         once.call();
         return if (io_uring_supported)
             .{ .io_uring = try IoUring.init(allocator, n) }
@@ -49,25 +49,25 @@ const FallbackSupport = union(enum) {
             .{ .fallback = try Fallback.init(allocator, n) };
     }
 
-    pub inline fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
+    pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
         switch (self.*) {
             inline else => |*io| io.deinit(allocator),
         }
     }
 
-    pub inline fn queue(self: *@This(), comptime len: u16, uops: []Operation.Union, cb: ?aio.Dynamic.QueueCallback) aio.Error!void {
+    pub fn queue(self: *@This(), comptime len: u16, uops: []Operation.Union, cb: ?aio.Dynamic.QueueCallback) aio.Error!void {
         return switch (self.*) {
             inline else => |*io| io.queue(len, uops, cb),
         };
     }
 
-    pub inline fn complete(self: *@This(), work: anytype, cb: ?aio.Dynamic.CompletionCallback) aio.Error!aio.CompletionResult {
+    pub fn complete(self: *@This(), work: anytype, cb: ?aio.Dynamic.CompletionCallback) aio.Error!aio.CompletionResult {
         return switch (self.*) {
             inline else => |*io| io.complete(work, cb),
         };
     }
 
-    pub inline fn immediate(comptime len: u16, uops: []Operation.Union) aio.Error!u16 {
+    pub fn immediate(comptime len: u16, uops: []Operation.Union) aio.Error!u16 {
         once.call();
         return if (io_uring_supported)
             IoUring.immediate(len, uops)

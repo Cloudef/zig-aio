@@ -33,7 +33,7 @@ pub const CancellationToken = struct {
     canceled: bool = false,
 };
 
-inline fn entrypoint(self: *@This(), completed: *std.atomic.Value(bool), token: *CancellationToken, comptime func: anytype, res: anytype, args: anytype) void {
+fn entrypoint(self: *@This(), completed: *std.atomic.Value(bool), token: *CancellationToken, comptime func: anytype, res: anytype, args: anytype) void {
     const fun_info = @typeInfo(@TypeOf(func)).Fn;
     if (fun_info.params.len > 0 and fun_info.params[0].type.? == *const CancellationToken) {
         res.* = @call(.auto, func, .{token} ++ args);

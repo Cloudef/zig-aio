@@ -64,7 +64,7 @@ pub fn shutdown(
     };
 }
 
-fn initOp(op: anytype, id: u16) void {
+inline fn initOp(op: anytype, id: u16) void {
     if (op.out_id) |p_id| p_id.* = @enumFromInt(id);
     if (op.out_error) |out_error| out_error.* = error.Success;
 }
@@ -243,7 +243,7 @@ pub fn complete(
     return .{ .num_completed = @truncate(finished.len), .num_errors = num_errors };
 }
 
-fn completition(op: anytype, self: *@This(), res: Result) void {
+inline fn completition(op: anytype, self: *@This(), res: Result) void {
     if (op.out_error) |err| err.* = @errorCast(res.failure);
     if (op.link != .unlinked and self.next[res.id] != res.id) {
         if (self.ops.nodes[self.next[res.id]].used == .link_timeout) {

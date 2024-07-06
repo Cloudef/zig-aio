@@ -52,7 +52,7 @@ pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, w
 
 pub const Error = error{OutOfMemory} || Fiber.Error;
 
-inline fn entrypoint(
+fn entrypoint(
     scheduler: *Scheduler,
     stack: ?Fiber.Stack,
     Result: type,

@@ -15,7 +15,7 @@ const Supported = struct {
         if (!waitid) log.warn("aio.ChildExit: fallback with pidfd", .{});
     }
 
-    pub inline fn query() void {
+    pub fn query() void {
         once.call();
     }
 };
@@ -34,7 +34,7 @@ io: std.os.linux.IoUring,
 ops: ItemPool(Operation.Union, u16),
 cqes: []std.os.linux.io_uring_cqe,
 
-pub inline fn isSupported(op_types: []const type) bool {
+pub fn isSupported(op_types: []const type) bool {
     var ops: [op_types.len]std.os.linux.IORING_OP = undefined;
     inline for (op_types, &ops) |op_type, *op| {
         op.* = switch (Operation.tagFromPayloadType(op_type)) {
@@ -85,7 +85,7 @@ pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
     self.* = undefined;
 }
 
-inline fn queueOperation(self: *@This(), uop: *Operation.Union) aio.Error!u16 {
+fn queueOperation(self: *@This(), uop: *Operation.Union) aio.Error!u16 {
     const n = self.ops.next() orelse return error.OutOfMemory;
     switch (uop.*) {
         inline else => |*op| try uring_queue(&self.io, op, n),
@@ -164,7 +164,7 @@ const ProbeOpsResult = struct {
     ops: []align(1) std.os.linux.io_uring_probe_op,
 };
 
-inline fn uring_probe_ops(mem: *ProbeOpsBuffer) !ProbeOpsResult {
+fn uring_probe_ops(mem: *ProbeOpsBuffer) !ProbeOpsResult {
     var io = try uring_init(2);
     defer io.deinit();
     var fba = std.heap.FixedBufferAllocator.init(mem);
@@ -177,7 +177,7 @@ inline fn uring_probe_ops(mem: *ProbeOpsBuffer) !ProbeOpsResult {
     return .{ .last_op = probe.last_op, .ops = ops[0..probe.ops_len] };
 }
 
-inline fn uring_is_supported(ops: []const std.os.linux.IORING_OP) bool {
+fn uring_is_supported(ops: []const std.os.linux.IORING_OP) bool {
     var buf: ProbeOpsBuffer = undefined;
     const probe = uring_probe_ops(&buf) catch return false;
     for (ops) |op| {
@@ -207,7 +207,7 @@ inline fn uring_init_inner(n: u16, flags: u32) !std.os.linux.IoUring {
     };
 }
 
-inline fn uring_init(n: u16) aio.Error!std.os.linux.IoUring {
+fn uring_init(n: u16) aio.Error!std.os.linux.IoUring {
     const flags: []const u32 = &.{
         // Disabled for now, this seems to increase syscalls a bit
         // However, it may still be beneficial from latency perspective

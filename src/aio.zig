@@ -63,11 +63,11 @@ pub const Dynamic = struct {
     queue_callback: ?QueueCallback = null,
     completion_callback: ?CompletionCallback = null,
 
-    pub inline fn init(allocator: std.mem.Allocator, n: u16) Error!@This() {
+    pub fn init(allocator: std.mem.Allocator, n: u16) Error!@This() {
         return .{ .io = try IO.init(allocator, n) };
     }
 
-    pub inline fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
+    pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
         self.io.deinit(allocator);
         self.* = undefined;
     }
@@ -101,13 +101,13 @@ pub const Dynamic = struct {
 
     /// Complete operations
     /// Returns the number of completed operations, `0` if no operations were completed
-    pub inline fn complete(self: *@This(), mode: CompletionMode) Error!CompletionResult {
+    pub fn complete(self: *@This(), mode: CompletionMode) Error!CompletionResult {
         return self.io.complete(mode, self.completion_callback);
     }
 
     /// Block until all opreations are complete
     /// Returns the number of errors occured, 0 if there were no errors
-    pub inline fn completeAll(self: *@This()) Error!u16 {
+    pub fn completeAll(self: *@This()) Error!u16 {
         var num_errors: u16 = 0;
         while (true) {
             const res = try self.io.complete(.blocking, self.completion_callback);
@@ -155,7 +155,7 @@ pub inline fn single(operation: anytype) (Error || @TypeOf(operation).Error)!voi
 }
 
 /// Checks if the current backend supports the operations
-pub inline fn isSupported(operations: []const type) bool {
+pub fn isSupported(operations: []const type) bool {
     return IO.isSupported(operations);
 }
 
@@ -169,20 +169,20 @@ pub const EventSource = struct {
         Unexpected,
     };
 
-    pub inline fn init() @This().Error!@This() {
+    pub fn init() @This().Error!@This() {
         return .{ .native = try IO.EventSource.init() };
     }
 
-    pub inline fn deinit(self: *@This()) void {
+    pub fn deinit(self: *@This()) void {
         self.native.deinit();
         self.* = undefined;
     }
 
-    pub inline fn notify(self: *@This()) void {
+    pub fn notify(self: *@This()) void {
         self.native.notify();
     }
 
-    pub inline fn wait(self: *@This()) void {
+    pub fn wait(self: *@This()) void {
         self.native.wait();
     }
 };

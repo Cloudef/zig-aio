@@ -25,16 +25,16 @@ pub const EventSource = struct {
     fd: std.posix.fd_t,
     counter: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
 
-    pub inline fn init() !@This() {
+    pub fn init() !@This() {
         return .{ .fd = try std.posix.kqueue() };
     }
 
-    pub inline fn deinit(self: *@This()) void {
+    pub fn deinit(self: *@This()) void {
         std.posix.close(self.fd);
         self.* = undefined;
     }
 
-    pub inline fn notify(self: *@This()) void {
+    pub fn notify(self: *@This()) void {
         _ = std.posix.kevent(self.fd, &.{.{
             .ident = self.counter.fetchAdd(1, .monotonic),
             .filter = EVFILT_USER,
@@ -45,16 +45,16 @@ pub const EventSource = struct {
         }}, &.{}, null) catch @panic("EventSource.notify failed");
     }
 
-    pub inline fn notifyReadiness(_: *@This()) posix.Readiness {
+    pub fn notifyReadiness(_: *@This()) posix.Readiness {
         return .{};
     }
 
-    pub inline fn wait(self: *@This()) void {
+    pub fn wait(self: *@This()) void {
         var ev: [1]std.posix.Kevent = undefined;
         _ = std.posix.kevent(self.fd, &.{}, &ev, null) catch @panic("EventSource.wait failed");
     }
 
-    pub inline fn waitReadiness(self: *@This()) posix.Readiness {
+    pub fn waitReadiness(self: *@This()) posix.Readiness {
         return .{ .fd = self.fd, .mode = .in };
     }
 };

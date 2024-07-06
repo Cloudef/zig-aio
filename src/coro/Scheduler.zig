@@ -68,7 +68,7 @@ pub fn spawnAny(self: *@This(), Result: type, comptime func: anytype, args: anyt
 /// Spawns a new task, the task may do local IO operations which will not block the whole process using the `io` namespace functions
 /// Call `task.complete` to collect the result and free the stack
 /// Or alternatively `task.cancel` to cancel the task
-pub inline fn spawn(self: *@This(), comptime func: anytype, args: anytype, opts: SpawnOptions) SpawnError!Task.Generic(ReturnType(func)) {
+pub fn spawn(self: *@This(), comptime func: anytype, args: anytype, opts: SpawnOptions) SpawnError!Task.Generic(ReturnType(func)) {
     var task = try self.spawnAny(ReturnType(func), func, args, opts);
     return task.generic(ReturnType(func));
 }

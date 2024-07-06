@@ -492,7 +492,7 @@ pub const Operation = enum {
         });
     };
 
-    pub fn uopFromOp(op: anytype) Union {
+    pub inline fn uopFromOp(op: anytype) Union {
         const tag = @tagName(comptime tagFromPayloadType(@TypeOf(op)));
         return @unionInit(Union, tag, op);
     }

@@ -11,7 +11,7 @@ const std = @import("std");
 /// You can now store a field `member: List.Node` in `SomeStruct` and retieve a `*SomeStruct` by calling `cast()` on `List.Node`.
 pub fn Link(comptime T: type, comptime field: []const u8, comptime container: enum { single, double }) type {
     return struct {
-        pub inline fn cast(self: *@This()) *T {
+        pub fn cast(self: *@This()) *T {
             switch (container) {
                 .single => {
                     const node: *std.SinglyLinkedList(@This()).Node = @alignCast(@fieldParentPtr("data", self));
