@@ -199,7 +199,7 @@ pub const EventSource = struct {
 
 const IO = switch (@import("builtin").target.os.tag) {
     .linux => @import("aio/linux.zig").IO,
-    .windows => @import("aio/windows.zig").IO,
+    .windows => @import("aio/Windows.zig"),
     else => @import("aio/Fallback.zig"),
 };
 

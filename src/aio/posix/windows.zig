@@ -119,10 +119,6 @@ pub const EventSource = struct {
         }
     }
 
-    pub fn notifyReadiness(self: *@This()) posix.Readiness {
-        return .{ .fd = self.fd, .mode = .out };
-    }
-
     pub fn wait(self: *@This()) void {
         while (self.counter.load(.acquire) == 0) {
             wtry(threading.WaitForSingleObject(self.fd, INFINITE) == 0) catch @panic("EventSource.wait failed");
@@ -130,10 +126,6 @@ pub const EventSource = struct {
         if (self.counter.fetchSub(1, .release) == 1) {
             wtry(threading.ResetEvent(self.fd)) catch @panic("EventSource.wait failed");
         }
-    }
-
-    pub fn waitReadiness(self: *@This()) posix.Readiness {
-        return .{ .fd = self.fd, .mode = .in };
     }
 
     pub fn addWaiter(self: *@This(), node: *WaitList.Node) void {
@@ -204,51 +196,6 @@ pub fn readTty(fd: std.posix.fd_t, buf: []u8, mode: ops.ReadTty.Mode) ops.ReadTt
         },
         .translation => |state| translateTty(fd, buf, state),
     };
-}
-
-pub const pollfd = struct {
-    fd: std.posix.fd_t,
-    events: i16,
-    revents: i16,
-};
-
-pub fn poll(pfds: []pollfd, timeout: i32) std.posix.PollError!usize {
-    var outs: usize = 0;
-    for (pfds) |*pfd| {
-        pfd.revents = 0;
-        if (pfd.events & std.posix.POLL.OUT != 0) {
-            pfd.revents = std.posix.POLL.OUT;
-            outs += 1;
-        }
-    }
-    if (outs > 0) return outs;
-    // rip windows
-    // this is only used by fallback backend, on fallback backend all file and socket operations are thread pooled
-    // thus this limit isn't that bad, but EventSource's are polled using this function, so you can still hit this limit
-    std.debug.assert(pfds.len <= win32.system.system_services.MAXIMUM_WAIT_OBJECTS);
-    var handles: [win32.system.system_services.MAXIMUM_WAIT_OBJECTS]std.posix.fd_t = undefined;
-    for (handles[0..pfds.len], pfds[0..]) |*h, *pfd| h.* = pfd.fd;
-    // std.os has nicer api for this
-    const idx = std.os.windows.WaitForMultipleObjectsEx(
-        handles[0..pfds.len],
-        false,
-        if (timeout < 0) INFINITE else @intCast(timeout),
-        false,
-    ) catch |err| switch (err) {
-        error.WaitAbandoned, error.WaitTimeOut => return 0,
-        error.Unexpected => blk: {
-            for (handles[0..pfds.len], 0..) |h, idx| {
-                if (threading.WaitForSingleObject(h, 0) == 0) {
-                    pfds[idx].events |= std.posix.POLL.NVAL;
-                    break :blk idx;
-                }
-            }
-            unreachable;
-        },
-        else => |e| return e,
-    };
-    pfds[idx].revents = pfds[idx].events;
-    return 1;
 }
 
 pub fn sendEx(sockfd: std.posix.socket_t, buf: [*]win_sock.WSABUF, flags: u32, overlapped: ?*io.OVERLAPPED) !usize {

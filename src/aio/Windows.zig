@@ -19,17 +19,9 @@ const sendEx = @import("posix/windows.zig").sendEx;
 const recvEx = @import("posix/windows.zig").recvEx;
 const win32 = @import("win32");
 
-const Windows = @This();
-
 // This is a slightly lighter version of the Fallback backend.
 // Optimized for Windows and uses IOCP operations whenever possible.
 // <https://int64.org/2009/05/14/io-completion-ports-made-easy/>
-
-pub const IO = switch (aio.options.fallback) {
-    .auto => Windows, // Fallback until Windows backend is complete
-    .force => Fallback, // use only the fallback backend
-    .disable => Windows, // use only the Windows backend
-};
 
 pub const EventSource = Uringlator.EventSource;
 
