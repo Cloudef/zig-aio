@@ -237,9 +237,9 @@ pub fn complete(
         uopUnwrapCall(&self.ops.nodes[res.id].used, completition, .{ self, .{ .id = res.id, .failure = failure } });
 
         var uop = self.ops.nodes[res.id].used;
+        self.removeOp(res.id);
         completion_cb(ctx, res.id, &uop, failure);
         if (cb) |f| f(uop, @enumFromInt(res.id), failure != error.Success);
-        self.removeOp(res.id);
     }
     return .{ .num_completed = @truncate(finished.len), .num_errors = num_errors };
 }
