@@ -169,7 +169,11 @@ const MonotonicQueue = struct {
             const rn = now() catch unreachable;
             while (self.queue.peek()) |to| {
                 if (rn >= to.start + to.ns) {
-                    to.opts.closure.callback(to.opts.closure.context, to.user_data);
+                    {
+                        self.mutex.unlock();
+                        defer self.mutex.lock();
+                        to.opts.closure.callback(to.opts.closure.context, to.user_data);
+                    }
                     _ = self.queue.removeOrNull();
                 } else break; // all other timeouts are later
             }
@@ -241,7 +245,11 @@ const BoottimeQueue = struct {
             const rn = now() catch unreachable;
             while (self.queue.peek()) |to| {
                 if (rn >= to.start + to.ns) {
-                    to.opts.closure.callback(to.opts.closure.context, to.user_data);
+                    {
+                        self.mutex.unlock();
+                        defer self.mutex.lock();
+                        to.opts.closure.callback(to.opts.closure.context, to.user_data);
+                    }
                     _ = self.queue.removeOrNull();
                 } else break; // all other timeouts are later
             }
@@ -277,7 +285,11 @@ const RealtimeQueue = struct {
             const rn = now() catch unreachable;
             while (self.queue.peek()) |to| {
                 if (rn >= to.start + to.ns) {
-                    to.opts.closure.callback(to.opts.closure.context, to.user_data);
+                    {
+                        self.mutex.unlock();
+                        defer self.mutex.lock();
+                        to.opts.closure.callback(to.opts.closure.context, to.user_data);
+                    }
                     _ = self.queue.removeOrNull();
                 } else break; // all other timeouts are later
             }
@@ -448,7 +460,11 @@ const LinuxTimerQueue = struct {
                     var exp: usize = undefined;
                     std.debug.assert(std.posix.read(v.fd, std.mem.asBytes(&exp)) catch unreachable == @sizeOf(usize));
                     if (v.repeat == null or v.repeat.? <= exp) {
-                        v.closure.callback(v.closure.context, ev.data.ptr);
+                        {
+                            self.mutex.unlock();
+                            defer self.mutex.lock();
+                            v.closure.callback(v.closure.context, ev.data.ptr);
+                        }
                         self.disarmInternal(undefined, ev.data.ptr, false);
                     }
                 }
