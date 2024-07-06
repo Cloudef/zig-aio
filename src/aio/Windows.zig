@@ -97,7 +97,7 @@ pub fn init(allocator: std.mem.Allocator, n: u16) aio.Error!@This() {
 }
 
 pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
-    self.uringlator.shutdown(*@This(), self, cancelable, completion);
+    self.uringlator.shutdown(*@This(), self, cancel);
     self.iocp.deinit();
     self.tqueue.deinit();
     self.tpool.deinit();
@@ -163,7 +163,7 @@ fn spawnIocpThreads(self: *@This()) !void {
 
 pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode, cb: ?aio.Dynamic.CompletionCallback) aio.Error!aio.CompletionResult {
     if (!self.iocp_threads_spawned) try self.spawnIocpThreads(); // iocp threads must be first
-    if (!try self.uringlator.submit(*@This(), self, start, cancelable)) return .{};
+    if (!try self.uringlator.submit(*@This(), self, start, cancel)) return .{};
 
     const num_finished = self.uringlator.finished.len();
     if (mode == .blocking and num_finished == 0) {
@@ -294,12 +294,22 @@ fn start(self: *@This(), id: u16, uop: *Operation.Union) !void {
     }
 }
 
-fn cancelable(_: *@This(), _: u16, uop: *Operation.Union) bool {
-    return switch (uop.*) {
-        .timeout, .link_timeout => true,
-        .wait_event_source => true,
-        else => false,
-    };
+fn cancel(self: *@This(), id: u16, uop: *Operation.Union) bool {
+    switch (uop.*) {
+        .read, .write => {
+            return io.CancelIoEx(self.ovls[id].owned.handle, &self.ovls[id].overlapped) != 0;
+        },
+        inline .accept, .recv, .send, .send_msg, .recv_msg => |*op| {
+            return io.CancelIoEx(@ptrCast(op.socket), &self.ovls[id].overlapped) != 0;
+        },
+        .timeout, .link_timeout, .wait_event_source => {
+            self.tqueue.disarm(.monotonic, id);
+            self.uringlator.finish(id, error.Canceled);
+            return true;
+        },
+        else => {},
+    }
+    return false;
 }
 
 fn completion(self: *@This(), id: u16, uop: *Operation.Union, failure: Operation.Error) void {

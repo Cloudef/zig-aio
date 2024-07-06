@@ -74,7 +74,7 @@ pub fn init(allocator: std.mem.Allocator, n: u16) aio.Error!@This() {
 }
 
 pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
-    self.uringlator.shutdown(*@This(), self, cancelable, completion);
+    self.uringlator.shutdown(*@This(), self, cancel);
     self.tqueue.deinit();
     self.tpool.deinit();
     self.kludge_tpool.deinit();
@@ -95,7 +95,7 @@ pub fn queue(self: *@This(), comptime len: u16, uops: []Operation.Union, cb: ?ai
 }
 
 pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode, cb: ?aio.Dynamic.CompletionCallback) aio.Error!aio.CompletionResult {
-    if (!try self.uringlator.submit(*@This(), self, start, cancelable)) return .{};
+    if (!try self.uringlator.submit(*@This(), self, start, cancel)) return .{};
 
     // I was thinking if we should use epoll/kqueue if available
     // The pros is that we don't have to iterate the self.pfd.items
@@ -211,11 +211,20 @@ fn start(self: *@This(), id: u16, uop: *Operation.Union) !void {
     }
 }
 
-fn cancelable(self: *@This(), id: u16, uop: *Operation.Union) bool {
-    return self.pending.isSet(id) or switch (uop.*) {
-        .timeout, .link_timeout => true,
-        else => false,
-    };
+fn cancel(self: *@This(), id: u16, uop: *Operation.Union) bool {
+    if (self.pending.isSet(id)) {
+        self.uringlator.finish(id, error.Canceled);
+        return true;
+    }
+    switch (uop.*) {
+        .timeout, .link_timeout => {
+            self.tqueue.disarm(.monotonic, id);
+            self.uringlator.finish(id, error.Canceled);
+            return true;
+        },
+        else => {},
+    }
+    return false;
 }
 
 fn completion(self: *@This(), id: u16, uop: *Operation.Union, _: Operation.Error) void {

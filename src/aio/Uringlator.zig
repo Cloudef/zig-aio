@@ -55,13 +55,10 @@ pub fn shutdown(
     self: *@This(),
     Ctx: type,
     ctx: Ctx,
-    can_cancel_cb: fn (ctx: Ctx, id: u16, uop: *Operation.Union) bool,
-    completion_cb: fn (ctx: Ctx, id: u16, uop: *Operation.Union, failure: Operation.Error) void,
+    request_cancel_cb: fn (ctx: Ctx, id: u16, uop: *Operation.Union) bool,
 ) void {
     var iter = self.ops.iterator();
-    while (iter.next()) |e| if (can_cancel_cb(ctx, e.k, e.v)) {
-        completion_cb(ctx, e.k, e.v, error.Canceled);
-    };
+    while (iter.next()) |e| _ = request_cancel_cb(ctx, e.k, e.v);
 }
 
 inline fn initOp(op: anytype, id: u16) void {
@@ -132,7 +129,7 @@ pub fn submit(
     Ctx: type,
     ctx: Ctx,
     start_cb: fn (ctx: Ctx, id: u16, uop: *Operation.Union) aio.Error!void,
-    can_cancel_cb: fn (ctx: Ctx, id: u16, uop: *Operation.Union) bool,
+    request_cancel_cb: fn (ctx: Ctx, id: u16, uop: *Operation.Union) bool,
 ) aio.Error!bool {
     if (self.ops.empty()) return false;
     self.prev_id = null;
@@ -146,14 +143,14 @@ pub fn submit(
             continue;
         }
 
-        try self.start(@truncate(id), Ctx, ctx, start_cb, can_cancel_cb);
+        try self.start(@truncate(id), Ctx, ctx, start_cb, request_cancel_cb);
         self.started.set(id);
 
         // start linked timeout immediately as well if there's one
         if (self.next[id] != id and self.ops.nodes[self.next[id]].used == .link_timeout) {
             self.link_lock.unset(self.next[id]);
             if (!self.started.isSet(self.next[id])) {
-                try self.start(self.next[id], Ctx, ctx, start_cb, can_cancel_cb);
+                try self.start(self.next[id], Ctx, ctx, start_cb, request_cancel_cb);
                 self.started.set(self.next[id]);
             }
         }
@@ -167,7 +164,7 @@ fn start(
     Ctx: type,
     ctx: Ctx,
     start_cb: fn (ctx: Ctx, id: u16, uop: *Operation.Union) aio.Error!void,
-    can_cancel_cb: fn (ctx: Ctx, id: u16, uop: *Operation.Union) bool,
+    request_cancel_cb: fn (ctx: Ctx, id: u16, uop: *Operation.Union) bool,
 ) aio.Error!void {
     if (self.next[id] != id) {
         debug("perform: {}: {} => {}", .{ id, std.meta.activeTag(self.ops.nodes[id].used), self.next[id] });
@@ -180,8 +177,12 @@ fn start(
             const cid: u16 = @intCast(@intFromEnum(op.id));
             if (self.ops.nodes[cid] != .used) {
                 self.finish(id, error.NotFound);
-            } else if (self.started.isSet(cid) and !can_cancel_cb(ctx, cid, &self.ops.nodes[cid].used)) {
-                self.finish(id, error.InProgress);
+            } else if (self.started.isSet(cid)) {
+                if (!request_cancel_cb(ctx, cid, &self.ops.nodes[cid].used)) {
+                    self.finish(id, error.InProgress);
+                } else {
+                    self.finish(id, error.Success);
+                }
             } else {
                 self.finish(cid, error.Canceled);
                 self.finish(id, error.Success);
