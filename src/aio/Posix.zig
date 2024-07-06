@@ -176,13 +176,11 @@ fn start(self: *@This(), id: u16, uop: *Operation.Union) !void {
                 self.tqueue.schedule(.monotonic, op.ns, id, .{ .closure = closure }) catch self.uringlator.finish(id, error.Unexpected);
             },
             // can be performed here, doesn't have to be dispatched to thread
-            inline .child_exit, .notify_event_source, .wait_event_source, .close_event_source => |*op| {
-                var failure: Operation.Error = error.Success;
-                _ = posix.perform(op, self.readiness[id]) catch |err| {
-                    failure = err;
-                };
-                self.uringlator.finish(id, failure);
-            },
+            .child_exit,
+            .notify_event_source,
+            .wait_event_source,
+            .close_event_source,
+            => self.onThreadExecutor(id, uop, self.readiness[id]),
             else => {
                 // perform on thread
                 if (self.readiness[id].mode != .kludge) {
