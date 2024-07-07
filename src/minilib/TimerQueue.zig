@@ -267,7 +267,9 @@ const RealtimeQueue = struct {
                 var ft: std.os.windows.FILETIME = undefined;
                 std.os.windows.kernel32.GetSystemTimeAsFileTime(&ft);
                 const ft64 = (@as(u64, ft.dwHighDateTime) << 32) | ft.dwLowDateTime;
-                return @as(u128, ft64 + epoch_adj) * 100;
+                const adjusted = @as(i64, @bitCast(ft64)) + epoch_adj;
+                std.debug.assert(adjusted > 0);
+                return @as(u128, @intCast(adjusted)) * 100;
             },
             .wasi => {
                 var ns: std.os.wasi.timestamp_t = undefined;
