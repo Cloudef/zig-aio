@@ -25,8 +25,8 @@
       # nix run .#test
       apps.test = env.app [] ''
         if [[ "$(uname)" == "Linux" ]]; then
-          echo "zig build test -Dsanitize=true"
-          zig build test -Dsanitize=true
+          echo "zig build test -Dposix=disable -Dsanitize=true"
+          zig build test -Dposix=disable -Dsanitize=true
           echo "zig build test -Dposix=force -Dsanitize=true"
           zig build test -Dposix=force -Dsanitize=true
           echo "zig build test -Dposix=force -Dforce_foreign_timer_queue=true -Dsanitize=true"
