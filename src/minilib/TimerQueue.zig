@@ -46,7 +46,7 @@ const ForeignTimeout = struct {
     ns_abs: u128,
     // used only if repeats, otherwise 0
     // absolute times can't repeat
-    interval: u64,
+    ns_interval: u64,
     expirations: u16,
     closure: Closure,
     user_data: usize,
@@ -127,7 +127,7 @@ fn Mixin(T: type) type {
                         if (to.expirations == 1) break :blk self.queue.removeOrNull().?;
                         // the timer repats and needs to be rearmed
                         to.expirations -|= 1;
-                        to.ns_abs = ns_now + to.interval;
+                        to.ns_abs = ns_now + to.ns_interval;
                         break :blk to.*;
                     };
                     self.mutex.unlock();
@@ -322,21 +322,21 @@ const ForeignTimerQueue = struct {
         try switch (clock) {
             .monotonic => self.mq.schedule(.{
                 .ns_abs = if (!opts.absolute) (MonotonicQueue.now() catch unreachable) + ns else ns,
-                .interval = if (!opts.absolute) @intCast(ns) else 0,
+                .ns_interval = if (!opts.absolute) @intCast(ns) else 0,
                 .expirations = opts.expirations,
                 .closure = opts.closure,
                 .user_data = user_data,
             }),
             .boottime => self.bq.schedule(.{
                 .ns_abs = if (!opts.absolute) (BoottimeQueue.now() catch unreachable) + ns else ns,
-                .interval = if (!opts.absolute) @intCast(ns) else 0,
+                .ns_interval = if (!opts.absolute) @intCast(ns) else 0,
                 .expirations = opts.expirations,
                 .closure = opts.closure,
                 .user_data = user_data,
             }),
             .realtime => self.rq.schedule(.{
                 .ns_abs = if (!opts.absolute) (RealtimeQueue.now() catch unreachable) + ns else ns,
-                .interval = if (!opts.absolute) @intCast(ns) else 0,
+                .ns_interval = if (!opts.absolute) @intCast(ns) else 0,
                 .expirations = opts.expirations,
                 .closure = opts.closure,
                 .user_data = user_data,
