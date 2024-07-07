@@ -1,4 +1,4 @@
-//! Mimics linux's timerfd timers
+//! Mimics linux's io_uring timeouts
 //! Used on platforms where native timers aren't accurate enough or have other limitations
 //! Requires threading support
 
