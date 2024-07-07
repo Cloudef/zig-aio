@@ -1,7 +1,7 @@
 const std = @import("std");
 
-// Requires at least EventSource and Timer to be able to do anything useful though
-// No idea how to implement those on top of wasi yet
+// Requires EventSource to be able to do anything useful though
+// No idea how to implement that on top of wasi yet
 
 pub const BIGGEST_ALIGNMENT = 16;
 
