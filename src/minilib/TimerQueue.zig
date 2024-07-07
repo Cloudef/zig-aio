@@ -175,7 +175,7 @@ const MonotonicQueue = struct {
                 if (rc != .SUCCESS) return error.Unsupported;
                 return ns;
             },
-            .macos, .ios, .tvos, .watchos, .visionos => std.posix.CLOCK.MONOTONIC_RAW,
+            .macos, .ios, .tvos, .watchos, .visionos => std.posix.CLOCK.UPTIME_RAW,
             .linux => std.posix.CLOCK.MONOTONIC,
             .uefi => @compileError("unsupported"),
             else => std.posix.CLOCK.BOOTTIME,
@@ -228,7 +228,7 @@ const BoottimeQueue = struct {
                 if (rc != .SUCCESS) return error.Unsupported;
                 return ns;
             },
-            .macos, .ios, .tvos, .watchos, .visionos => std.posix.CLOCK.UPTIME_RAW,
+            .macos, .ios, .tvos, .watchos, .visionos => std.posix.CLOCK.MONOTONIC_RAW,
             .linux => std.posix.CLOCK.BOOTTIME,
             .uefi => @compileError("unsupported"),
             else => std.posix.CLOCK.MONOTONIC,
