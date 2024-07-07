@@ -42,7 +42,7 @@ pub const TimeoutOptions = struct {
 };
 
 const ForeignTimeout = struct {
-    abs: u128,
+    ns_abs: u128,
     // used only if repeats, otherwise 0
     // absolute times can't repeat
     interval: u64,
@@ -51,7 +51,7 @@ const ForeignTimeout = struct {
     user_data: usize,
 
     pub fn sort(_: void, a: @This(), b: @This()) std.math.Order {
-        return std.math.order(a.abs, b.abs);
+        return std.math.order(a.ns_abs, b.ns_abs);
     }
 };
 
@@ -116,17 +116,17 @@ fn Mixin(T: type) type {
         }
 
         fn onThreadProcessExpired(self: *T) void {
-            const rn = T.now() catch unreachable;
+            const ns_now = T.now() catch unreachable;
             while (self.queue.items.len > 0) {
                 var to = &self.queue.items[0];
-                if (rn >= to.abs) {
+                if (ns_now >= to.ns_abs) {
                     // copy the expired in case we remove it
                     // this allows callbacks to disarm the timer without side effects
                     const expired: ForeignTimeout = blk: {
                         if (to.expirations == 1) break :blk self.queue.removeOrNull().?;
                         // the timer repats and needs to be rearmed
                         to.expirations -|= 1;
-                        to.abs = rn + to.interval;
+                        to.ns_abs = ns_now + to.interval;
                         break :blk to.*;
                     };
                     self.mutex.unlock();
@@ -186,8 +186,8 @@ const MonotonicQueue = struct {
 
     fn onThreadSleepLoop(self: *@This()) void {
         while (self.queue.peek()) |timeout| {
-            const rn = now() catch unreachable;
-            if (rn < timeout.abs) self.cond.timedWait(&self.mutex, @truncate(timeout.abs - rn)) catch {};
+            const ns_now = now() catch unreachable;
+            if (ns_now < timeout.ns_abs) self.cond.timedWait(&self.mutex, @truncate(timeout.ns_abs - ns_now)) catch {};
             self.onThreadProcessExpired();
         }
     }
@@ -240,8 +240,8 @@ const BoottimeQueue = struct {
     fn onThreadSleepLoop(self: *@This()) void {
         while (self.queue.peek()) |timeout| {
             // TODO: wakeup if coming out from suspend
-            const rn = now() catch unreachable;
-            if (rn < timeout.abs) self.cond.timedWait(&self.mutex, @truncate(timeout.abs - rn)) catch {};
+            const ns_now = now() catch unreachable;
+            if (ns_now < timeout.ns_abs) self.cond.timedWait(&self.mutex, @truncate(timeout.ns_abs - ns_now)) catch {};
             self.onThreadProcessExpired();
         }
     }
@@ -318,21 +318,21 @@ const ForeignTimerQueue = struct {
         if (opts.expirations != 0 and opts.absolute) unreachable; // expirations must be 1 with absolute time
         try switch (clock) {
             .monotonic => self.mq.schedule(.{
-                .abs = if (!opts.absolute) (MonotonicQueue.now() catch unreachable) + ns else ns,
+                .ns_abs = if (!opts.absolute) (MonotonicQueue.now() catch unreachable) + ns else ns,
                 .interval = if (!opts.absolute) @intCast(ns) else 0,
                 .expirations = opts.expirations,
                 .closure = opts.closure,
                 .user_data = user_data,
             }),
             .boottime => self.bq.schedule(.{
-                .abs = if (!opts.absolute) (BoottimeQueue.now() catch unreachable) + ns else ns,
+                .ns_abs = if (!opts.absolute) (BoottimeQueue.now() catch unreachable) + ns else ns,
                 .interval = if (!opts.absolute) @intCast(ns) else 0,
                 .expirations = opts.expirations,
                 .closure = opts.closure,
                 .user_data = user_data,
             }),
             .realtime => self.rq.schedule(.{
-                .abs = if (!opts.absolute) (RealtimeQueue.now() catch unreachable) + ns else ns,
+                .ns_abs = if (!opts.absolute) (RealtimeQueue.now() catch unreachable) + ns else ns,
                 .interval = if (!opts.absolute) @intCast(ns) else 0,
                 .expirations = opts.expirations,
                 .closure = opts.closure,
