@@ -169,6 +169,11 @@ const MonotonicQueue = struct {
                 const result = (@as(u96, qpc) * scale) >> 32;
                 return result;
             },
+            .uefi => {
+                var value: std.os.uefi.Time = undefined;
+                std.debug.assert(std.os.uefi.system_table.runtime_services.getTime(&value, null) == .Success);
+                return value.toEpoch();
+            },
             .wasi => {
                 var ns: std.os.wasi.timestamp_t = undefined;
                 const rc = std.os.wasi.clock_time_get(.MONOTONIC, 1, &ns);
@@ -177,7 +182,6 @@ const MonotonicQueue = struct {
             },
             .macos, .ios, .tvos, .watchos, .visionos => std.posix.CLOCK.UPTIME_RAW,
             .linux => std.posix.CLOCK.MONOTONIC,
-            .uefi => @compileError("unsupported"),
             else => std.posix.CLOCK.BOOTTIME,
         };
         var ts: std.posix.timespec = undefined;
@@ -222,6 +226,11 @@ const BoottimeQueue = struct {
                 const result = (@as(u96, qpc) * scale) >> 32;
                 return result;
             },
+            .uefi => {
+                var value: std.os.uefi.Time = undefined;
+                std.debug.assert(std.os.uefi.system_table.runtime_services.getTime(&value, null) == .Success);
+                return value.toEpoch();
+            },
             .wasi => {
                 var ns: std.os.wasi.timestamp_t = undefined;
                 const rc = std.os.wasi.clock_time_get(.MONOTONIC, 1, &ns);
@@ -230,7 +239,6 @@ const BoottimeQueue = struct {
             },
             .macos, .ios, .tvos, .watchos, .visionos => std.posix.CLOCK.MONOTONIC_RAW,
             .linux => std.posix.CLOCK.BOOTTIME,
-            .uefi => @compileError("unsupported"),
             else => std.posix.CLOCK.MONOTONIC,
         };
         var ts: std.posix.timespec = undefined;
