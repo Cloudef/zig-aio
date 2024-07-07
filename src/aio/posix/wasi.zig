@@ -107,11 +107,10 @@ pub fn pipe() std.posix.PipeError![2]std.posix.fd_t {
             const cwd = std.fs.cwd().fd;
             var bytes: [8]u8 = undefined;
             std.crypto.random.bytes(&bytes);
-            var name: [encoder.calcSize(bytes.len) + 2]u8 = undefined;
-            _ = encoder.encode(name[1 .. name.len - 1], &bytes);
-            std.mem.replaceScalar(u8, name[1 .. name.len - 1], '/', '_');
+            var name: [encoder.calcSize(bytes.len) + 1]u8 = undefined;
+            _ = encoder.encode(name[1..name.len], &bytes);
+            std.mem.replaceScalar(u8, name[1..name.len], '/', '_');
             name[0] = '_';
-            name[name.len - 1] = '1';
             const fd = std.posix.openatWasi(
                 cwd,
                 &name,
