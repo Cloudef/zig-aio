@@ -48,13 +48,13 @@ fn entrypoint(self: *@This(), completed: *std.atomic.Value(bool), token: *Cancel
 pub const YieldError = DynamicThreadPool.SpawnError;
 
 /// Yield until `func` finishes on another thread
-pub fn yieldForCompletition(self: *@This(), func: anytype, args: anytype) ReturnTypeMixedWithErrorSet(func, YieldError) {
+pub fn yieldForCompletition(self: *@This(), func: anytype, args: anytype, config: DynamicThreadPool.SpawnConfig) ReturnTypeMixedWithErrorSet(func, YieldError) {
     var completed = std.atomic.Value(bool).init(false);
     var res: ReturnType(func) = undefined;
     _ = self.num_tasks.fetchAdd(1, .monotonic);
     defer _ = self.num_tasks.fetchSub(1, .release);
     var token: CancellationToken = .{};
-    try self.pool.spawn(entrypoint, .{ self, &completed, &token, func, &res, args });
+    try self.pool.spawn(entrypoint, .{ self, &completed, &token, func, &res, args }, config);
     while (!completed.load(.acquire)) {
         const nerr = io.do(.{
             aio.WaitEventSource{ .source = &self.source, .link = .soft },
@@ -77,9 +77,8 @@ pub fn yieldForCompletition(self: *@This(), func: anytype, args: anytype) Return
 
 /// Spawn a new coroutine which will immediately call `yieldForCompletition` for later collection of the result
 /// Normally one would use the `spawnForCompletition` method, but in case a generic functions return type can't be deduced, use this any variant.
-pub fn spawnAnyForCompletition(self: *@This(), scheduler: *Scheduler, Result: type, func: anytype, args: anytype, opts: Scheduler.SpawnOptions) Scheduler.SpawnError!Task {
-    // TODO: optimize the stack size
-    return scheduler.spawnAny(Result, yieldForCompletition, .{ self, func, args }, opts);
+pub fn spawnAnyForCompletition(self: *@This(), scheduler: *Scheduler, Result: type, func: anytype, args: anytype, config: DynamicThreadPool.SpawnConfig) Scheduler.SpawnError!Task {
+    return scheduler.spawnAny(Result, yieldForCompletition, .{ self, func, args, config }, .{ .stack = .{ .managed = 1024 * 16 } });
 }
 
 /// Helper for getting the Task.Generic when using spawnForCompletition tasks.
@@ -88,9 +87,9 @@ pub fn Generic2(comptime func: anytype) type {
 }
 
 /// Spawn a new coroutine which will immediately call `yieldForCompletition` for later collection of the result
-pub fn spawnForCompletition(self: *@This(), scheduler: *Scheduler, func: anytype, args: anytype, opts: Scheduler.SpawnOptions) Scheduler.SpawnError!Generic2(func) {
+pub fn spawnForCompletition(self: *@This(), scheduler: *Scheduler, func: anytype, args: anytype, config: DynamicThreadPool.SpawnConfig) Scheduler.SpawnError!Generic2(func) {
     const Result = ReturnTypeMixedWithErrorSet(func, YieldError);
-    const task = try self.spawnAnyForCompletition(scheduler, Result, func, args, opts);
+    const task = try self.spawnAnyForCompletition(scheduler, Result, func, args, config);
     return task.generic(Result);
 }
 
@@ -104,7 +103,7 @@ test "ThreadPool" {
         }
 
         fn task(pool: *ThreadPool) !void {
-            const ret = try pool.yieldForCompletition(blocking, .{});
+            const ret = try pool.yieldForCompletition(blocking, .{}, .{});
             try std.testing.expectEqual(69, ret);
         }
 
@@ -116,7 +115,7 @@ test "ThreadPool" {
         }
 
         fn task2(pool: *ThreadPool) !u32 {
-            return try pool.yieldForCompletition(blockingCanceled, .{});
+            return try pool.yieldForCompletition(blockingCanceled, .{}, .{});
         }
     };
 

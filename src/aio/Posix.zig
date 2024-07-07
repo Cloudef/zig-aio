@@ -184,9 +184,9 @@ fn start(self: *@This(), id: u16, uop: *Operation.Union) !void {
             else => {
                 // perform on thread
                 if (self.readiness[id].mode != .kludge) {
-                    self.tpool.spawn(onThreadExecutor, .{ self, id, uop, self.readiness[id] }) catch return error.SystemResources;
+                    try self.tpool.spawn(onThreadExecutor, .{ self, id, uop, self.readiness[id] }, .{ .stack_size = 4096 * 16 });
                 } else {
-                    self.kludge_tpool.spawn(onThreadExecutor, .{ self, id, uop, self.readiness[id] }) catch return error.SystemResources;
+                    try self.kludge_tpool.spawn(onThreadExecutor, .{ self, id, uop, self.readiness[id] }, .{ .stack_size = 4096 * 16 });
                 }
             },
         }

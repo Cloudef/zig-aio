@@ -156,7 +156,7 @@ fn iocpDrainThread(self: *@This()) void {
 
 fn spawnIocpThreads(self: *@This()) !void {
     @setCold(true);
-    for (0..self.iocp.num_threads) |_| self.tpool.spawn(iocpDrainThread, .{self}) catch return error.SystemResources;
+    for (0..self.iocp.num_threads) |_| try self.tpool.spawn(iocpDrainThread, .{self}, .{ .stack_size = 1024 * 16 });
     self.iocp_threads_spawned = true;
 }
 
@@ -288,7 +288,7 @@ fn start(self: *@This(), id: u16, uop: *Operation.Union) !void {
         .notify_event_source, .close_event_source => self.onThreadPosixExecutor(id, uop),
         else => {
             // perform non IOCP supported operation on a thread
-            self.tpool.spawn(onThreadPosixExecutor, .{ self, id, uop }) catch return error.SystemResources;
+            try self.tpool.spawn(onThreadPosixExecutor, .{ self, id, uop }, .{ .stack_size = 4096 * 16 });
         },
     }
 }

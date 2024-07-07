@@ -102,7 +102,7 @@ fn Mixin(T: type) type {
         fn start(self: *T) !void {
             @setCold(true);
             if (self.thread) |_| unreachable;
-            self.thread = try std.Thread.spawn(.{ .allocator = self.queue.allocator }, T.threadMain, .{self});
+            self.thread = try std.Thread.spawn(.{ .allocator = self.queue.allocator, .stack_size = 1024 * 8 }, T.threadMain, .{self});
             self.thread.?.setName(T.Name) catch {};
         }
 
@@ -459,7 +459,7 @@ const LinuxTimerQueue = struct {
     fn start(self: *@This()) !void {
         @setCold(true);
         if (self.thread) |_| unreachable;
-        self.thread = try std.Thread.spawn(.{ .allocator = self.allocator }, threadMain, .{self});
+        self.thread = try std.Thread.spawn(.{ .allocator = self.allocator, .stack_size = 1024 * 8 }, threadMain, .{self});
         self.thread.?.setName("TimerQueue Thread") catch {};
     }
 

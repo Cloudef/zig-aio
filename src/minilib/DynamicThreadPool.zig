@@ -40,7 +40,11 @@ pub fn init(allocator: std.mem.Allocator, options: Options) InitError!@This() {
 
     _ = try std.time.Timer.start(); // check that we have a timer
 
-    const thread_count = @max(1, options.max_threads orelse std.Thread.getCpuCount() catch 1);
+    const thread_count = switch (builtin.target.os.tag) {
+        .wasi => 1,
+        else => @max(1, options.max_threads orelse std.Thread.getCpuCount() catch 1),
+    };
+
     var serial = try std.DynamicBitSetUnmanaged.initEmpty(allocator, thread_count);
     errdefer serial.deinit(allocator);
     const threads = try allocator.alloc(DynamicThread, thread_count);
@@ -77,7 +81,12 @@ pub const SpawnError = error{
     Unexpected,
 };
 
-pub fn spawn(self: *@This(), comptime func: anytype, args: anytype) SpawnError!void {
+pub const SpawnConfig = struct {
+    allocator: ?std.mem.Allocator = null,
+    stack_size: usize = (std.Thread.SpawnConfig{}).stack_size,
+};
+
+pub fn spawn(self: *@This(), comptime func: anytype, args: anytype, config: SpawnConfig) SpawnError!void {
     if (builtin.single_threaded) {
         @call(.auto, func, args);
         return;
@@ -111,7 +120,11 @@ pub fn spawn(self: *@This(), comptime func: anytype, args: anytype) SpawnError!v
                     dthread.active = true;
                     self.serial.unset(id);
                     self.active_threads += 1;
-                    dthread.thread = try std.Thread.spawn(.{}, worker, .{ self, dthread, @as(u32, @intCast(id)), self.timeout });
+                    dthread.thread = try std.Thread.spawn(
+                        .{ .allocator = config.allocator orelse self.allocator, .stack_size = config.stack_size },
+                        worker,
+                        .{ self, dthread, @as(u32, @intCast(id)), self.timeout },
+                    );
                     break;
                 }
             }
