@@ -4,6 +4,7 @@
 
 const builtin = @import("builtin");
 const std = @import("std");
+const build_options = @import("build_options");
 
 const root = @import("root");
 pub const options: Options = if (@hasDecl(root, "timer_queue_options")) root.timer_queue_options else .{};
@@ -11,7 +12,7 @@ pub const options: Options = if (@hasDecl(root, "timer_queue_options")) root.tim
 pub const Options = struct {
     /// Force the use of foreign backend even if the target platform is linux
     /// Mostly useful for testing
-    force_foreign_backend: bool = false,
+    force_foreign_backend: bool = build_options.force_foreign_timer_queue,
 };
 
 comptime {

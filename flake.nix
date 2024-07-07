@@ -29,6 +29,8 @@
           zig build test -Dsanitize=true
           echo "zig build test -Dposix=force -Dsanitize=true"
           zig build test -Dposix=force -Dsanitize=true
+          echo "zig build test -Dposix=force -Dforce_foreign_timer_queue=true -Dsanitize=true"
+          zig build test -Dposix=force -Dforce_foreign_timer_queue=true -Dsanitize=true
         else
           echo "zig build test"
           zig build test

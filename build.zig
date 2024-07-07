@@ -5,17 +5,23 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    var opts = b.addOptions();
     const sanitize = b.option(bool, "sanitize", "use sanitizers when running examples or tests") orelse false;
+
+    var aio_opts = b.addOptions();
     const PosixMode = enum { auto, force, disable };
     const posix = b.option(PosixMode, "posix", "posix mode [auto, force, disable]") orelse .auto;
-    opts.addOption(PosixMode, "posix", posix);
+    aio_opts.addOption(PosixMode, "posix", posix);
+
+    var minilib_opts = b.addOptions();
+    const force_foreign_timer_queue = b.option(bool, "force_foreign_timer_queue", "force the use of foreign timer queue backend") orelse false;
+    minilib_opts.addOption(bool, "force_foreign_timer_queue", force_foreign_timer_queue);
 
     const minilib = b.addModule("minilib", .{
         .root_source_file = b.path("src/minilib.zig"),
         .target = target,
         .optimize = optimize,
     });
+    minilib.addImport("build_options", minilib_opts.createModule());
 
     const aio = b.addModule("aio", .{
         .root_source_file = b.path("src/aio.zig"),
@@ -32,7 +38,7 @@ pub fn build(b: *std.Build) void {
         },
     });
     aio.addImport("minilib", minilib);
-    aio.addImport("build_options", opts.createModule());
+    aio.addImport("build_options", aio_opts.createModule());
 
     if (target.query.os_tag orelse builtin.os.tag == .windows) {
         if (b.lazyDependency("zigwin32", .{})) |zigwin32| {
@@ -84,17 +90,18 @@ pub fn build(b: *std.Build) void {
             .single_threaded = aio.single_threaded,
             .sanitize_thread = sanitize,
         });
-        if (mod != .minilib) tst.root_module.addImport("minilib", minilib);
-        if (mod == .aio) {
-            tst.root_module.addImport("build_options", opts.createModule());
-            if (target.query.os_tag orelse builtin.os.tag == .windows) {
-                if (b.lazyDependency("zigwin32", .{})) |zigwin32| {
-                    tst.root_module.addImport("win32", zigwin32.module("zigwin32"));
-                }
-            }
+        switch (mod) {
+            .minilib => addImportsFrom(&tst.root_module, minilib),
+            .aio => addImportsFrom(&tst.root_module, aio),
+            .coro => addImportsFrom(&tst.root_module, coro),
+            else => unreachable,
         }
-        if (mod == .coro) tst.root_module.addImport("aio", aio);
         const run = b.addRunArtifact(tst);
         test_step.dependOn(&run.step);
     }
+}
+
+fn addImportsFrom(dst: *std.Build.Module, src: *std.Build.Module) void {
+    var iter = src.import_table.iterator();
+    while (iter.next()) |e| dst.addImport(e.key_ptr.*, e.value_ptr.*);
 }
