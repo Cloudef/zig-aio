@@ -30,7 +30,7 @@ pub const EventSource = posix.EventSource;
 
 tqueue: TimerQueue, // timer queue implementing linux -like timers
 readiness: []posix.Readiness, // readiness fd that gets polled before we perform the operation
-pfd: FixedArrayList(posix.pollfd, u32), // current fds that we must poll for wakeup
+pfd: FixedArrayList(std.posix.pollfd, u32), // current fds that we must poll for wakeup
 tpool: DynamicThreadPool, // thread pool for performing operations, not all operations will be performed here
 kludge_tpool: DynamicThreadPool, // thread pool for performing operations which can't be polled for readiness
 pending: std.DynamicBitSetUnmanaged, // operation is pending on readiness fd (poll)
@@ -45,7 +45,7 @@ pub fn init(allocator: std.mem.Allocator, n: u16) aio.Error!@This() {
     errdefer tqueue.deinit();
     const readiness = try allocator.alloc(posix.Readiness, n);
     errdefer allocator.free(readiness);
-    var pfd = try FixedArrayList(posix.pollfd, u32).init(allocator, n + 1);
+    var pfd = try FixedArrayList(std.posix.pollfd, u32).init(allocator, n + 1);
     errdefer pfd.deinit(allocator);
     var tpool = DynamicThreadPool.init(allocator, .{ .max_threads = aio.options.max_threads }) catch |err| return switch (err) {
         error.TimerUnsupported => error.Unsupported,
@@ -140,8 +140,13 @@ pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode, cb: ?aio.Dynam
 }
 
 pub fn immediate(comptime len: u16, uops: []Operation.Union) aio.Error!u16 {
-    var sfb = std.heap.stackFallback(len * 1024, std.heap.page_allocator);
-    const allocator = sfb.get();
+    const Static = struct {
+        threadlocal var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    };
+    const allocator = if (builtin.target.os.tag == .wasi) std.heap.wasm_allocator else Static.arena.allocator();
+    defer if (builtin.target.os.tag != .wasi) {
+        _ = Static.arena.reset(.retain_capacity);
+    };
     var wrk = try init(allocator, len);
     defer wrk.deinit(allocator);
     try wrk.queue(len, uops, null);
@@ -191,6 +196,20 @@ fn start(self: *@This(), id: u16, uop: *Operation.Union) !void {
             },
         }
     } else {
+        if (comptime builtin.target.os.tag == .wasi) {
+            switch (uop.*) {
+                inline .read, .write => |*op| {
+                    var stat: std.os.wasi.fdstat_t = undefined;
+                    std.debug.assert(std.os.wasi.fd_fdstat_get(op.file.handle, &stat) == .SUCCESS);
+                    if (uop.* == .read and !stat.fs_rights_base.FD_READ) {
+                        return self.uringlator.finish(id, error.NotOpenForReading);
+                    } else if (uop.* == .write and !stat.fs_rights_base.FD_WRITE) {
+                        return self.uringlator.finish(id, error.NotOpenForWriting);
+                    }
+                },
+                else => {},
+            }
+        }
         // pending for readiness, perform the operation later
         if (self.uringlator.next[id] != id) {
             Uringlator.debug("pending: {}: {} => {}", .{ id, std.meta.activeTag(uop.*), self.uringlator.next[id] });

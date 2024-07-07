@@ -31,6 +31,14 @@ pub const Options = struct {
     timeout: u64 = 5 * std.time.ns_per_s,
 };
 
+fn getCpuCount() usize {
+    const root = @import("root");
+    return switch (builtin.target.os.tag) {
+        .wasi => if (@hasDecl(root, "wasi_thread_count")) root.wasi_thread_count else 1,
+        else => std.Thread.getCpuCount() catch 1,
+    };
+}
+
 pub const InitError = error{OutOfMemory} || std.time.Timer.Error;
 
 pub fn init(allocator: std.mem.Allocator, options: Options) InitError!@This() {
@@ -40,10 +48,7 @@ pub fn init(allocator: std.mem.Allocator, options: Options) InitError!@This() {
 
     _ = try std.time.Timer.start(); // check that we have a timer
 
-    const thread_count = switch (builtin.target.os.tag) {
-        .wasi => 1,
-        else => @max(1, options.max_threads orelse std.Thread.getCpuCount() catch 1),
-    };
+    const thread_count = @max(1, options.max_threads orelse getCpuCount());
 
     var serial = try std.DynamicBitSetUnmanaged.initEmpty(allocator, thread_count);
     errdefer serial.deinit(allocator);
@@ -143,6 +148,17 @@ pub fn spawn(self: *@This(), comptime func: anytype, args: anytype, config: Spaw
     self.cond.broadcast();
 }
 
+fn yield() std.Thread.YieldError!void {
+    return switch (builtin.target.os.tag) {
+        .wasi => switch (std.os.wasi.sched_yield()) {
+            .SUCCESS => return,
+            .NOSYS => return error.SystemCannotYield,
+            else => return error.SystemCannotYield,
+        },
+        else => std.Thread.yield(),
+    };
+}
+
 fn worker(self: *@This(), thread: *DynamicThread, id: u32, timeout: u64) void {
     self.mutex.lock();
     defer self.mutex.unlock();
@@ -163,7 +179,7 @@ fn worker(self: *@This(), thread: *DynamicThread, id: u32, timeout: u64) void {
                 for (0..id) |idx| if (!self.serial.isSet(idx)) {
                     self.mutex.unlock();
                     defer self.mutex.lock();
-                    std.Thread.yield() catch {};
+                    yield() catch {};
                     continue :outer;
                 };
                 break :outer;

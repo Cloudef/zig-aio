@@ -2,6 +2,7 @@
 //! It is possible to both dynamically and statically queue IO work to be executed in a asynchronous fashion
 //! On linux this is a very shim wrapper around `io_uring`, on other systems there might be more overhead
 
+const builtin = @import("builtin");
 const std = @import("std");
 const build_options = @import("build_options");
 
@@ -27,16 +28,14 @@ pub const Options = struct {
     /// <https://lists.apple.com/archives/Darwin-dev/2006/Apr/msg00066.html>
     /// <https://nathancraddock.com/blog/macos-dev-tty-polling/>
     posix_max_kludge_threads: usize = 1024,
+    /// Wasi support
+    wasi: enum { wasi, wasix } = @enumFromInt(@intFromEnum(build_options.wasi)),
 };
 
 /// Use this instead of std.posix.socket to get async sockets on windows ... :)
 /// Unfortunately there is no `ReOpenFile` equivalent for sockets.
 pub inline fn socket(domain: u32, socket_type: u32, protocol: u32) std.posix.SocketError!std.posix.socket_t {
-    if (@import("builtin").target.os.tag == .windows) {
-        return @import("aio/posix/windows.zig").socket(domain, socket_type, protocol);
-    } else {
-        return std.posix.socket(domain, socket_type, protocol);
-    }
+    return @import("aio/posix/posix.zig").socket(domain, socket_type, protocol);
 }
 
 pub const Error = error{
@@ -197,7 +196,7 @@ pub const EventSource = struct {
     }
 };
 
-const IO = switch (@import("builtin").target.os.tag) {
+const IO = switch (builtin.target.os.tag) {
     .linux => @import("aio/linux.zig").IO,
     .windows => @import("aio/Windows.zig"),
     else => @import("aio/Posix.zig"),
@@ -442,7 +441,7 @@ test "RenameAt" {
     var f1 = try tmp.dir.createFile("test", .{});
     f1.close();
     try single(RenameAt{ .old_dir = tmp.dir, .old_path = "test", .new_dir = tmp.dir, .new_path = "new_test" });
-    if (@import("builtin").target.os.tag == .windows) {
+    if (builtin.target.os.tag == .windows) {
         // TODO: wtf? (using openFile instead causes deadlock)
     } else {
         try tmp.dir.access("new_test", .{});
@@ -470,7 +469,7 @@ test "MkDirAt" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try single(MkDirAt{ .dir = tmp.dir, .path = "test" });
-    if (@import("builtin").target.os.tag != .windows) {
+    if (builtin.target.os.tag != .windows) {
         // TODO: need to update the directory handle on windows? weird shit
     } else {
         try tmp.dir.access("test", .{});
@@ -481,7 +480,7 @@ test "MkDirAt" {
 test "SymlinkAt" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    if (@import("builtin").target.os.tag == .windows) {
+    if (builtin.target.os.tag == .windows) {
         const res = single(SymlinkAt{ .dir = tmp.dir, .target = "target", .link_path = "test" });
         // likely NTSTATUS=0xc00000bb (UNSUPPORTED)
         if (res == error.Unexpected) return error.SkipZigTest;
@@ -499,7 +498,7 @@ test "SymlinkAt" {
 }
 
 test "ChildExit" {
-    if (@import("builtin").target.os.tag == .windows) {
+    if (builtin.target.os.tag == .windows or builtin.target.os.tag == .wasi) {
         return error.SkipZigTest;
     }
 
@@ -520,6 +519,10 @@ test "ChildExit" {
 }
 
 test "Socket" {
+    if (builtin.target.os.tag == .wasi) {
+        return error.SkipZigTest;
+    }
+
     var sock: std.posix.socket_t = undefined;
     try single(Socket{
         .domain = std.posix.AF.INET,

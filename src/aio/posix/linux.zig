@@ -22,8 +22,8 @@ pub const EventSource = struct {
     }
 
     pub fn wait(self: *@This()) void {
-        var v: u64 = undefined;
-        _ = std.posix.read(self.fd, std.mem.asBytes(&v)) catch @panic("EventSource.wait failed");
+        var trash: u64 = undefined;
+        _ = std.posix.read(self.fd, std.mem.asBytes(&trash)) catch @panic("EventSource.wait failed");
     }
 
     pub fn waitReadiness(self: *@This()) posix.Readiness {

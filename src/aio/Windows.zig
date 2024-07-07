@@ -175,8 +175,11 @@ pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode, cb: ?aio.Dynam
 }
 
 pub fn immediate(comptime len: u16, work: anytype) aio.Error!u16 {
-    var sfb = std.heap.stackFallback(len * 1024, std.heap.page_allocator);
-    const allocator = sfb.get();
+    const Static = struct {
+        threadlocal var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    };
+    const allocator = Static.arena.allocator();
+    defer _ = Static.arena.reset(.retain_capacity);
     var wrk = try init(allocator, len);
     defer wrk.deinit(allocator);
     try wrk.queue(len, work, null);

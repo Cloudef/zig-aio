@@ -1,6 +1,5 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const socket = @import("../../aio.zig").socket;
 const ops = @import("../ops.zig");
 const Operation = ops.Operation;
 const linux = @import("linux.zig");
@@ -12,12 +11,50 @@ const wasi = @import("wasi.zig");
 // This file implements stuff that's not in std, not implement properly or not
 // abstracted for all the platforms that we want to support
 
+/// Used as last resort
+pub const PipeEventSource = struct {
+    fd: std.posix.fd_t,
+    wfd: std.posix.fd_t,
+
+    pub fn init() !@This() {
+        const fds = if (@hasField(std.posix.O, "CLOEXEC"))
+            try std.posix.pipe2(.{ .CLOEXEC = true })
+        else
+            try pipe();
+        return .{ .fd = fds[0], .wfd = fds[1] };
+    }
+
+    pub fn deinit(self: *@This()) void {
+        std.posix.close(self.fd);
+        std.posix.close(self.wfd);
+        self.* = undefined;
+    }
+
+    pub fn notify(self: *@This()) void {
+        _ = std.posix.write(self.wfd, "1") catch @panic("EventSource.notify failed");
+    }
+
+    pub fn notifyReadiness(self: *@This()) Readiness {
+        return .{ .fd = self.wfd, .mode = .out };
+    }
+
+    pub fn wait(self: *@This()) void {
+        var trash: [1]u8 = undefined;
+        _ = std.posix.read(self.fd, &trash) catch @panic("EventSource.wait failed");
+    }
+
+    pub fn waitReadiness(self: *@This()) Readiness {
+        return .{ .fd = self.fd, .mode = .in };
+    }
+};
+
 pub const EventSource = switch (builtin.target.os.tag) {
     .linux => linux.EventSource,
     .windows => windows.EventSource,
     .freebsd, .openbsd, .dragonfly, .netbsd => bsd.EventSource,
     .macos, .ios, .watchos, .visionos, .tvos => darwin.EventSource,
-    else => @compileError("unsupported"),
+    .wasi => wasi.EventSource,
+    else => PipeEventSource,
 };
 
 pub const ChildWatcher = switch (builtin.target.os.tag) {
@@ -25,6 +62,7 @@ pub const ChildWatcher = switch (builtin.target.os.tag) {
     .windows => windows.ChildWatcher,
     .freebsd, .openbsd, .dragonfly, .netbsd => bsd.ChildWatcher,
     .macos, .ios, .watchos, .visionos, .tvos => darwin.ChildWatcher,
+    .wasi => wasi.ChildWatcher,
     else => @compileError("unsupported"),
 };
 
@@ -116,7 +154,7 @@ pub fn writeUring(fd: std.posix.fd_t, buf: []const u8, off: usize) ops.Write.Err
 }
 
 pub fn openAtUring(dir: std.fs.Dir, path: [*:0]const u8, flags: std.fs.File.OpenFlags) ops.OpenAt.Error!std.fs.File {
-    if (builtin.target.os.tag == .windows) {
+    if (builtin.target.os.tag == .windows or builtin.target.os.tag == .wasi) {
         return dir.openFileZ(path, flags);
     } else {
         const fd = try std.posix.openatZ(dir.fd, path, convertOpenFlags(flags), 0);
@@ -159,23 +197,23 @@ pub fn symlinkAtUring(target: [*:0]const u8, dir: std.fs.Dir, link_path: [*:0]co
 
 pub inline fn perform(op: anytype, readiness: Readiness) Operation.Error!void {
     switch (comptime Operation.tagFromPayloadType(@TypeOf(op.*))) {
-        .fsync => _ = try std.posix.fsync(op.file.handle),
+        .fsync => _ = try fsync(op.file.handle),
         .read_tty => op.out_read.* = try readTty(op.tty.handle, op.buffer, op.mode),
         .read => op.out_read.* = try readUring(op.file.handle, op.buffer, @intCast(op.offset)),
         .write => {
             const written = try writeUring(op.file.handle, op.buffer, @intCast(op.offset));
             if (op.out_written) |w| w.* = written;
         },
-        .accept => op.out_socket.* = try std.posix.accept(op.socket, op.out_addr, op.inout_addrlen, 0),
-        .connect => _ = try std.posix.connect(op.socket, op.addr, op.addrlen),
-        .recv => op.out_read.* = try std.posix.recv(op.socket, op.buffer, 0),
+        .accept => op.out_socket.* = try accept(op.socket, op.out_addr, op.inout_addrlen, 0),
+        .connect => _ = try connect(op.socket, op.addr, op.addrlen),
+        .recv => op.out_read.* = try recv(op.socket, op.buffer, 0),
         .send => {
-            const written = try std.posix.send(op.socket, op.buffer, 0);
+            const written = try send(op.socket, op.buffer, 0);
             if (op.out_written) |w| w.* = written;
         },
         .recv_msg => _ = try recvmsg(op.socket, op.out_msg, 0),
         .send_msg => _ = try sendmsg(op.socket, op.msg, 0),
-        .shutdown => try std.posix.shutdown(op.socket, op.how),
+        .shutdown => try shutdown(op.socket, op.how),
         .open_at => op.out_file.* = try openAtUring(op.dir, op.path, op.flags),
         .close_file => std.posix.close(op.file.handle),
         .close_dir => std.posix.close(op.dir.fd),
@@ -269,18 +307,11 @@ pub const invalid_fd = switch (builtin.target.os.tag) {
     else => -1,
 };
 
-pub const pollfd = switch (builtin.target.os.tag) {
-    .windows => windows.pollfd,
-    else => std.posix.pollfd,
+pub const socket = switch (builtin.target.os.tag) {
+    .windows => windows.socket,
+    .wasi => wasi.socket,
+    else => std.posix.socket,
 };
-
-pub fn poll(pfds: []pollfd, timeout: i32) std.posix.PollError!usize {
-    if (builtin.target.os.tag == .windows) {
-        return windows.poll(pfds, timeout);
-    } else {
-        return std.posix.poll(pfds, timeout);
-    }
-}
 
 pub const msghdr = switch (builtin.target.os.tag) {
     .windows => windows.msghdr,
@@ -329,9 +360,13 @@ fn recvmsgPosix(sockfd: std.posix.socket_t, msg: *msghdr, flags: u32) RecvMsgErr
     unreachable;
 }
 
-pub const SendMsgError = std.posix.SendMsgError;
+pub const recvmsg = switch (builtin.target.os.tag) {
+    .windows => windows.recvmsg,
+    .wasi => wasi.recvmsg,
+    else => recvmsgPosix,
+};
 
-fn sendmsgPosix(sockfd: std.posix.socket_t, msg: *const msghdr_const, flags: u32) SendMsgError!usize {
+fn sendmsgPosix(sockfd: std.posix.socket_t, msg: *const msghdr_const, flags: u32) std.posix.SendMsgError!usize {
     const c = struct {
         pub extern "c" fn sendmsg(sockfd: std.c.fd_t, msg: *const msghdr_const, flags: u32) isize;
     };
@@ -369,15 +404,11 @@ fn sendmsgPosix(sockfd: std.posix.socket_t, msg: *const msghdr_const, flags: u32
     unreachable;
 }
 
-pub const recvmsg = switch (builtin.target.os.tag) {
-    .windows => windows.recvmsg,
-    else => recvmsgPosix,
-};
-
 pub const sendmsg = switch (builtin.target.os.tag) {
     .windows => windows.sendmsg,
     .macos, .ios, .tvos, .watchos, .visionos => sendmsgPosix,
     .dragonfly => sendmsgPosix,
+    .wasi => wasi.sendmsg,
     else => std.posix.sendmsg,
 };
 
@@ -389,4 +420,44 @@ pub const sockaddr = switch (builtin.target.os.tag) {
 pub const socklen_t = switch (builtin.target.os.tag) {
     .wasi => wasi.socklen_t,
     else => std.posix.socklen_t,
+};
+
+pub const accept = switch (builtin.target.os.tag) {
+    .wasi => wasi.accept,
+    else => std.posix.accept,
+};
+
+pub const connect = switch (builtin.target.os.tag) {
+    .wasi => wasi.connect,
+    else => std.posix.connect,
+};
+
+pub const recv = switch (builtin.target.os.tag) {
+    .wasi => wasi.recv,
+    else => std.posix.recv,
+};
+
+pub const send = switch (builtin.target.os.tag) {
+    .wasi => wasi.send,
+    else => std.posix.send,
+};
+
+pub const shutdown = switch (builtin.target.os.tag) {
+    .wasi => wasi.shutdown,
+    else => std.posix.shutdown,
+};
+
+pub const fsync = switch (builtin.target.os.tag) {
+    .wasi => wasi.fsync,
+    else => std.posix.fsync,
+};
+
+pub const pipe = switch (builtin.target.os.tag) {
+    .wasi => wasi.pipe,
+    else => std.posix.pipe,
+};
+
+pub const poll = switch (builtin.target.os.tag) {
+    .wasi => wasi.poll,
+    else => std.posix.poll,
 };
