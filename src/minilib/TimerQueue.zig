@@ -2,8 +2,6 @@
 //! Used on platforms where native timers aren't accurate enough or have other limitations
 //! Requires threading support
 
-// TODO: Bunch of stuff to complete here still, but works for what aio can do at the moment
-
 const builtin = @import("builtin");
 const std = @import("std");
 
