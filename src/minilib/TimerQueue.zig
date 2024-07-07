@@ -22,35 +22,38 @@ comptime {
     }
 }
 
-pub const Closure = struct {
-    pub const Callback = *const fn (context: *anyopaque, user_data: usize) void;
-    context: *anyopaque,
-    callback: Callback,
-};
-
 pub const Clock = enum {
     monotonic,
     boottime,
     realtime,
 };
 
+pub const Closure = struct {
+    pub const Callback = *const fn (context: *anyopaque, user_data: usize) void;
+    context: *anyopaque,
+    callback: Callback,
+};
+
 pub const TimeoutOptions = struct {
-    // repeats?
-    repeat: ?u32 = null,
-    // absolute value?
-    abs: bool = false,
-    // callback
+    /// 0 == repeats forever
+    expirations: u16 = 1,
+    /// Is the time absolute?
+    absolute: bool = false,
+    /// Callback when the timer expires
     closure: Closure,
 };
 
-const Timeout = struct {
-    ns: u128,
-    start: u128,
-    opts: TimeoutOptions,
+const ForeignTimeout = struct {
+    abs: u128,
+    // used only if repeats, otherwise 0
+    // absolute times can't repeat
+    interval: u64,
+    expirations: u16,
+    closure: Closure,
     user_data: usize,
 
     pub fn sort(_: void, a: @This(), b: @This()) std.math.Order {
-        return std.math.order(a.ns, b.ns);
+        return std.math.order(a.abs, b.abs);
     }
 };
 
@@ -59,7 +62,7 @@ fn Mixin(T: type) type {
     return struct {
         pub fn init(allocator: std.mem.Allocator) !T {
             _ = try T.now(); // check that we can get time
-            return .{ .queue = std.PriorityQueue(Timeout, void, Timeout.sort).init(allocator, {}) };
+            return .{ .queue = std.PriorityQueue(ForeignTimeout, void, ForeignTimeout.sort).init(allocator, {}) };
         }
 
         pub fn deinit(self: *T) void {
@@ -75,25 +78,16 @@ fn Mixin(T: type) type {
             self.* = undefined;
         }
 
-        pub fn schedule(self: *T, timeout: Timeout) !void {
+        pub fn schedule(self: *T, timeout: ForeignTimeout) !void {
             {
                 self.mutex.lock();
                 defer self.mutex.unlock();
                 try self.queue.add(timeout);
             }
             self.cond.broadcast();
-            {
-                self.mutex.lock();
-                defer self.mutex.unlock();
-                if (self.thread == null) try self.start();
-            }
-        }
-
-        fn start(self: *T) !void {
-            @setCold(true);
-            if (self.thread) |_| unreachable;
-            self.thread = try std.Thread.spawn(.{ .allocator = self.queue.allocator }, T.threadMain, .{self});
-            self.thread.?.setName(T.Name) catch {};
+            self.mutex.lock();
+            defer self.mutex.unlock();
+            if (self.thread == null) try self.start();
         }
 
         pub fn disarm(self: *T, user_data: usize) void {
@@ -105,6 +99,44 @@ fn Mixin(T: type) type {
                 break;
             }
         }
+
+        fn start(self: *T) !void {
+            @setCold(true);
+            if (self.thread) |_| unreachable;
+            self.thread = try std.Thread.spawn(.{ .allocator = self.queue.allocator }, T.threadMain, .{self});
+            self.thread.?.setName(T.Name) catch {};
+        }
+
+        fn threadMain(self: *T) void {
+            self.mutex.lock();
+            defer self.mutex.unlock();
+            self.onThreadSleepLoop();
+            if (self.thread) |thrd| {
+                thrd.detach();
+                self.thread = null;
+            }
+        }
+
+        fn onThreadProcessExpired(self: *T) void {
+            const rn = T.now() catch unreachable;
+            while (self.queue.items.len > 0) {
+                var to = &self.queue.items[0];
+                if (rn >= to.abs) {
+                    // copy the expired in case we remove it
+                    // this allows callbacks to disarm the timer without side effects
+                    const expired: ForeignTimeout = blk: {
+                        if (to.expirations == 1) break :blk self.queue.removeOrNull().?;
+                        // the timer repats and needs to be rearmed
+                        to.expirations -|= 1;
+                        to.abs = rn + to.interval;
+                        break :blk to.*;
+                    };
+                    self.mutex.unlock();
+                    defer self.mutex.lock();
+                    expired.closure.callback(expired.closure.context, expired.user_data);
+                } else break; // all other timeouts are later
+            }
+        }
     };
 }
 
@@ -113,7 +145,7 @@ fn Mixin(T: type) type {
 const MonotonicQueue = struct {
     pub const Name = "MonotonicQueue";
     thread: ?std.Thread = null,
-    queue: std.PriorityQueue(Timeout, void, Timeout.sort),
+    queue: std.PriorityQueue(ForeignTimeout, void, ForeignTimeout.sort),
     mutex: std.Thread.Mutex = .{},
     cond: std.Thread.Condition = .{},
     usingnamespace Mixin(@This());
@@ -146,41 +178,19 @@ const MonotonicQueue = struct {
             },
             .macos, .ios, .tvos, .watchos, .visionos => std.posix.CLOCK.MONOTONIC_RAW,
             .linux => std.posix.CLOCK.MONOTONIC,
-            .uefi => @panic("unsupported"),
+            .uefi => @compileError("unsupported"),
             else => std.posix.CLOCK.BOOTTIME,
         };
         var ts: std.posix.timespec = undefined;
         std.posix.clock_gettime(clock_id, &ts) catch return error.Unsupported;
-        return @abs((@as(i128, ts.tv_sec) * std.time.ns_per_s) + ts.tv_nsec);
+        return (@as(u128, @intCast(ts.tv_sec)) * std.time.ns_per_s) + @as(u128, @intCast(ts.tv_nsec));
     }
 
-    fn threadMain(self: *@This()) void {
-        self.mutex.lock();
-        defer self.mutex.unlock();
-
+    fn onThreadSleepLoop(self: *@This()) void {
         while (self.queue.peek()) |timeout| {
-            {
-                const rn = now() catch unreachable;
-                if (rn < timeout.start + timeout.ns) {
-                    self.cond.timedWait(&self.mutex, @truncate(timeout.start + timeout.ns - rn)) catch {};
-                }
-            }
             const rn = now() catch unreachable;
-            while (self.queue.peek()) |to| {
-                if (rn >= to.start + to.ns) {
-                    {
-                        self.mutex.unlock();
-                        defer self.mutex.lock();
-                        to.opts.closure.callback(to.opts.closure.context, to.user_data);
-                    }
-                    _ = self.queue.removeOrNull();
-                } else break; // all other timeouts are later
-            }
-        }
-
-        if (self.thread) |thrd| {
-            thrd.detach();
-            self.thread = null;
+            if (rn < timeout.abs) self.cond.timedWait(&self.mutex, @truncate(timeout.abs - rn)) catch {};
+            self.onThreadProcessExpired();
         }
     }
 };
@@ -190,7 +200,7 @@ const MonotonicQueue = struct {
 const BoottimeQueue = struct {
     pub const Name = "BoottimeQueue";
     thread: ?std.Thread = null,
-    queue: std.PriorityQueue(Timeout, void, Timeout.sort),
+    queue: std.PriorityQueue(ForeignTimeout, void, ForeignTimeout.sort),
     mutex: std.Thread.Mutex = .{},
     cond: std.Thread.Condition = .{},
     usingnamespace Mixin(@This());
@@ -221,42 +231,20 @@ const BoottimeQueue = struct {
             },
             .macos, .ios, .tvos, .watchos, .visionos => std.posix.CLOCK.UPTIME_RAW,
             .linux => std.posix.CLOCK.BOOTTIME,
-            .uefi => @panic("unsupported"),
+            .uefi => @compileError("unsupported"),
             else => std.posix.CLOCK.MONOTONIC,
         };
         var ts: std.posix.timespec = undefined;
         std.posix.clock_gettime(clock_id, &ts) catch return error.Unsupported;
-        return @abs((@as(i128, ts.tv_sec) * std.time.ns_per_s) + ts.tv_nsec);
+        return (@as(u128, @intCast(ts.tv_sec)) * std.time.ns_per_s) + @as(u128, @intCast(ts.tv_nsec));
     }
 
-    fn threadMain(self: *@This()) void {
-        self.mutex.lock();
-        defer self.mutex.unlock();
-
+    fn onThreadSleepLoop(self: *@This()) void {
         while (self.queue.peek()) |timeout| {
             // TODO: wakeup if coming out from suspend
-            {
-                const rn = now() catch unreachable;
-                if (rn < timeout.start + timeout.ns) {
-                    self.cond.timedWait(&self.mutex, @truncate(timeout.start + timeout.ns - rn)) catch {};
-                }
-            }
             const rn = now() catch unreachable;
-            while (self.queue.peek()) |to| {
-                if (rn >= to.start + to.ns) {
-                    {
-                        self.mutex.unlock();
-                        defer self.mutex.lock();
-                        to.opts.closure.callback(to.opts.closure.context, to.user_data);
-                    }
-                    _ = self.queue.removeOrNull();
-                } else break; // all other timeouts are later
-            }
-        }
-
-        if (self.thread) |thrd| {
-            thrd.detach();
-            self.thread = null;
+            if (rn < timeout.abs) self.cond.timedWait(&self.mutex, @truncate(timeout.abs - rn)) catch {};
+            self.onThreadProcessExpired();
         }
     }
 };
@@ -266,37 +254,44 @@ const BoottimeQueue = struct {
 const RealtimeQueue = struct {
     pub const Name = "RealtimeQueue";
     thread: ?std.Thread = null,
-    queue: std.PriorityQueue(Timeout, void, Timeout.sort),
+    queue: std.PriorityQueue(ForeignTimeout, void, ForeignTimeout.sort),
     mutex: std.Thread.Mutex = .{},
     cond: std.Thread.Condition = .{},
     usingnamespace Mixin(@This());
 
     pub fn now() !u128 {
-        return @abs(std.time.nanoTimestamp());
+        switch (builtin.os.tag) {
+            .windows => {
+                // FileTime has a granularity of 100 nanoseconds and uses the NTFS/Windows epoch,
+                // which is 1601-01-01.
+                const epoch_adj = std.time.epoch.windows * (std.time.ns_per_s / 100);
+                var ft: std.os.windows.FILETIME = undefined;
+                std.os.windows.kernel32.GetSystemTimeAsFileTime(&ft);
+                const ft64 = (@as(u64, ft.dwHighDateTime) << 32) | ft.dwLowDateTime;
+                return @as(u128, ft64 + epoch_adj) * 100;
+            },
+            .wasi => {
+                var ns: std.os.wasi.timestamp_t = undefined;
+                std.debug.assert(std.os.wasi.clock_time_get(.REALTIME, 1, &ns) == .SUCCESS);
+                return ns;
+            },
+            .uefi => {
+                var value: std.os.uefi.Time = undefined;
+                std.debug.assert(std.os.uefi.system_table.runtime_services.getTime(&value, null) == .Success);
+                return value.toEpoch();
+            },
+            else => {
+                var ts: std.posix.timespec = undefined;
+                std.posix.clock_gettime(std.posix.CLOCK.REALTIME, &ts) catch return error.Unsupported;
+                return (@as(u128, @intCast(ts.tv_sec)) * std.time.ns_per_s) + @as(u128, @intCast(ts.tv_nsec));
+            },
+        }
     }
 
-    fn threadMain(self: *@This()) void {
-        self.mutex.lock();
-        defer self.mutex.unlock();
-
+    fn onThreadSleepLoop(self: *@This()) void {
         while (self.queue.peek()) |_| {
             self.cond.timedWait(&self.mutex, std.time.ns_per_s) catch {};
-            const rn = now() catch unreachable;
-            while (self.queue.peek()) |to| {
-                if (rn >= to.start + to.ns) {
-                    {
-                        self.mutex.unlock();
-                        defer self.mutex.lock();
-                        to.opts.closure.callback(to.opts.closure.context, to.user_data);
-                    }
-                    _ = self.queue.removeOrNull();
-                } else break; // all other timeouts are later
-            }
-        }
-
-        if (self.thread) |thrd| {
-            thrd.detach();
-            self.thread = null;
+            self.onThreadProcessExpired();
         }
     }
 };
@@ -322,11 +317,29 @@ const ForeignTimerQueue = struct {
     }
 
     pub fn schedule(self: *@This(), clock: Clock, ns: u128, user_data: usize, opts: TimeoutOptions) !void {
-        if (opts.repeat != null and opts.abs) unreachable; // repeats can't be used with abs
+        if (opts.expirations != 0 and opts.absolute) unreachable; // expirations must be 1 with absolute time
         try switch (clock) {
-            .monotonic => self.mq.schedule(.{ .ns = ns, .start = if (!opts.abs) MonotonicQueue.now() catch unreachable else 0, .opts = opts, .user_data = user_data }),
-            .boottime => self.bq.schedule(.{ .ns = ns, .start = if (!opts.abs) BoottimeQueue.now() catch unreachable else 0, .opts = opts, .user_data = user_data }),
-            .realtime => self.rq.schedule(.{ .ns = ns, .start = if (!opts.abs) RealtimeQueue.now() catch unreachable else 0, .opts = opts, .user_data = user_data }),
+            .monotonic => self.mq.schedule(.{
+                .abs = if (!opts.absolute) (MonotonicQueue.now() catch unreachable) + ns else ns,
+                .interval = if (!opts.absolute) @intCast(ns) else 0,
+                .expirations = opts.expirations,
+                .closure = opts.closure,
+                .user_data = user_data,
+            }),
+            .boottime => self.bq.schedule(.{
+                .abs = if (!opts.absolute) (BoottimeQueue.now() catch unreachable) + ns else ns,
+                .interval = if (!opts.absolute) @intCast(ns) else 0,
+                .expirations = opts.expirations,
+                .closure = opts.closure,
+                .user_data = user_data,
+            }),
+            .realtime => self.rq.schedule(.{
+                .abs = if (!opts.absolute) (RealtimeQueue.now() catch unreachable) + ns else ns,
+                .interval = if (!opts.absolute) @intCast(ns) else 0,
+                .expirations = opts.expirations,
+                .closure = opts.closure,
+                .user_data = user_data,
+            }),
         };
     }
 
@@ -340,14 +353,14 @@ const ForeignTimerQueue = struct {
 };
 
 const LinuxTimerQueue = struct {
-    const Context = struct {
+    const LinuxTimeout = struct {
         fd: std.posix.fd_t,
-        repeat: ?u32,
+        expirations: u16,
         closure: Closure,
     };
 
     allocator: std.mem.Allocator,
-    fds: std.AutoHashMapUnmanaged(usize, Context) = .{},
+    fds: std.AutoHashMapUnmanaged(usize, LinuxTimeout) = .{},
     efd: std.posix.fd_t,
     epoll: std.posix.fd_t,
     mutex: std.Thread.Mutex = .{},
@@ -387,7 +400,7 @@ const LinuxTimerQueue = struct {
     }
 
     pub fn schedule(self: *@This(), clock: Clock, ns: u128, user_data: usize, opts: TimeoutOptions) !void {
-        if (opts.repeat != null and opts.abs) unreachable; // repeats can't be used with abs
+        if (opts.expirations != 0 and opts.absolute) unreachable; // expirations must be 1 with absolute time
         const fd = switch (clock) {
             .monotonic => std.posix.timerfd_create(std.posix.CLOCK.MONOTONIC, .{ .CLOEXEC = true, .NONBLOCK = true }),
             .boottime => std.posix.timerfd_create(std.posix.CLOCK.BOOTTIME, .{ .CLOEXEC = true, .NONBLOCK = true }),
@@ -397,20 +410,25 @@ const LinuxTimerQueue = struct {
             else => |e| e,
         };
         errdefer std.posix.close(fd);
-        const ts: std.os.linux.itimerspec = .{
-            .it_value = .{
-                .tv_sec = @intCast(ns / std.time.ns_per_s),
-                .tv_nsec = @intCast(ns % std.time.ns_per_s),
-            },
-            .it_interval = .{ .tv_sec = 0, .tv_nsec = 0 },
+        const interval: std.os.linux.timespec = .{
+            .tv_sec = @intCast(ns / std.time.ns_per_s),
+            .tv_nsec = @intCast(ns % std.time.ns_per_s),
         };
-        std.posix.timerfd_settime(fd, .{ .ABSTIME = opts.abs }, &ts, null) catch |err| return switch (err) {
+        const ts: std.os.linux.itimerspec = .{
+            .it_value = interval,
+            .it_interval = if (opts.expirations != 1) interval else .{ .tv_sec = 0, .tv_nsec = 0 },
+        };
+        std.posix.timerfd_settime(fd, .{ .ABSTIME = opts.absolute }, &ts, null) catch |err| return switch (err) {
             error.Canceled, error.InvalidHandle => unreachable,
             error.Unexpected => |e| e,
         };
         self.mutex.lock();
         defer self.mutex.unlock();
-        try self.fds.putNoClobber(self.allocator, user_data, .{ .fd = fd, .repeat = opts.repeat, .closure = opts.closure });
+        try self.fds.putNoClobber(self.allocator, user_data, .{
+            .fd = fd,
+            .expirations = opts.expirations,
+            .closure = opts.closure,
+        });
         errdefer _ = self.fds.remove(user_data);
         var ev: std.os.linux.epoll_event = .{ .data = .{ .ptr = user_data }, .events = std.os.linux.EPOLL.IN };
         std.posix.epoll_ctl(self.epoll, std.os.linux.EPOLL.CTL_ADD, fd, &ev) catch |err| return switch (err) {
@@ -455,17 +473,21 @@ const LinuxTimerQueue = struct {
                 }
                 self.mutex.lock();
                 defer self.mutex.unlock();
-                if (self.fds.get(ev.data.ptr)) |v| {
-                    var exp: usize = undefined;
-                    std.debug.assert(std.posix.read(v.fd, std.mem.asBytes(&exp)) catch unreachable == @sizeOf(usize));
-                    if (v.repeat == null or v.repeat.? <= exp) {
-                        {
-                            self.mutex.unlock();
-                            defer self.mutex.lock();
-                            v.closure.callback(v.closure.context, ev.data.ptr);
+                if (self.fds.getPtr(ev.data.ptr)) |v| {
+                    const expired: LinuxTimeout = blk: {
+                        const expired = v.*;
+                        if (v.expirations == 1) {
+                            self.disarmInternal(undefined, ev.data.ptr, false);
+                        } else {
+                            v.expirations -|= 1;
+                            var trash: usize = undefined;
+                            std.debug.assert(std.posix.read(v.fd, std.mem.asBytes(&trash)) catch unreachable == @sizeOf(usize));
                         }
-                        self.disarmInternal(undefined, ev.data.ptr, false);
-                    }
+                        break :blk expired;
+                    };
+                    self.mutex.unlock();
+                    defer self.mutex.lock();
+                    expired.closure.callback(expired.closure.context, ev.data.ptr);
                 }
             }
         }
@@ -479,7 +501,16 @@ const NativeTimerQueue = switch (builtin.target.os.tag) {
 
 impl: NativeTimerQueue,
 
-pub fn init(allocator: std.mem.Allocator) !@This() {
+pub const InitError = error{
+    ProcessFdQuotaExceeded,
+    SystemFdQuotaExceeded,
+    SystemResources,
+    UserResourceLimitReached,
+    Unsupported,
+    Unexpected,
+};
+
+pub fn init(allocator: std.mem.Allocator) InitError!@This() {
     return .{ .impl = try NativeTimerQueue.init(allocator) };
 }
 
@@ -488,7 +519,14 @@ pub fn deinit(self: *@This()) void {
     self.* = undefined;
 }
 
-pub fn schedule(self: *@This(), clock: Clock, ns: u128, user_data: usize, opts: TimeoutOptions) !void {
+pub const ScheduleError = error{
+    ProcessFdQuotaExceeded,
+    SystemFdQuotaExceeded,
+    UserResourceLimitReached,
+    NoDevice,
+} || std.Thread.SpawnError;
+
+pub fn schedule(self: *@This(), clock: Clock, ns: u128, user_data: usize, opts: TimeoutOptions) ScheduleError!void {
     return self.impl.schedule(clock, ns, user_data, opts);
 }
 
