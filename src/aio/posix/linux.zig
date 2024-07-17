@@ -70,7 +70,8 @@ pub fn pidfd_open(id: std.posix.fd_t, flags: std.posix.O) PidfdOpenError!std.pos
     while (true) {
         const res = std.os.linux.pidfd_open(id, @bitCast(flags));
         const e = errnoFromSyscall(res);
-        if (e != .SUCCESS) return switch (e) {
+        return switch (e) {
+            .SUCCESS => @intCast(res),
             .INVAL, .SRCH => unreachable,
             .AGAIN, .INTR => continue,
             .MFILE => error.ProcessFdQuotaExceeded,
@@ -79,7 +80,6 @@ pub fn pidfd_open(id: std.posix.fd_t, flags: std.posix.O) PidfdOpenError!std.pos
             .NOMEM => error.SystemResources,
             else => std.posix.unexpectedErrno(e),
         };
-        return @intCast(res);
     }
     unreachable;
 }
@@ -96,8 +96,9 @@ pub fn renameat2(
     while (true) {
         const res = std.os.linux.renameat2(old_dir, old_path, new_dir, new_path, flags);
         const e = errnoFromSyscall(res);
-        if (e != .SUCCESS) return switch (e) {
-            .SUCCESS, .INVAL => unreachable,
+        return switch (e) {
+            .SUCCESS => {},
+            .INVAL => unreachable,
             .INTR, .AGAIN => continue,
             .ACCES => error.AccessDenied,
             .PERM => error.AccessDenied,
@@ -118,6 +119,6 @@ pub fn renameat2(
             .XDEV => error.RenameAcrossMountPoints,
             else => std.posix.unexpectedErrno(e),
         };
-        break;
     }
+    unreachable;
 }

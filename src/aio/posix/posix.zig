@@ -385,8 +385,9 @@ fn sendmsgPosix(sockfd: std.posix.socket_t, msg: *const msghdr_const, flags: u32
     while (true) {
         const res = c.sendmsg(sockfd, msg, flags);
         const e = std.posix.errno(res);
-        if (e != .SUCCESS) return switch (e) {
-            .SUCCESS, .INVAL, .BADF, .NOTSOCK => unreachable,
+        return switch (e) {
+            .SUCCESS => @intCast(res),
+            .INVAL, .BADF, .NOTSOCK => unreachable,
             .ACCES => error.AccessDenied,
             .AGAIN => error.WouldBlock,
             .ALREADY => error.FastOpenAlreadyInProgress,
@@ -411,7 +412,6 @@ fn sendmsgPosix(sockfd: std.posix.socket_t, msg: *const msghdr_const, flags: u32
             .NETDOWN => error.NetworkSubsystemFailed,
             else => std.posix.unexpectedErrno(e),
         };
-        return @intCast(res);
     }
     unreachable;
 }
