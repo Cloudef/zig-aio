@@ -52,7 +52,7 @@ pub const ChildWatcher = struct {
 };
 
 // std.os.linux.errnoFromSyscall is not pub :(
-fn errnoFromSyscall(r: usize) std.os.linux.E {
+pub fn errnoFromSyscall(r: usize) std.os.linux.E {
     const signed_r: isize = @bitCast(r);
     const int = if (signed_r > -4096 and signed_r < 0) -signed_r else 0;
     return @enumFromInt(int);

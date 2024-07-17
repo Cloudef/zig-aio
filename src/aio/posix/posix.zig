@@ -339,23 +339,35 @@ fn recvmsgPosix(sockfd: std.posix.socket_t, msg: *msghdr, flags: u32) RecvMsgErr
     const c = struct {
         pub extern "c" fn recvmsg(sockfd: std.c.fd_t, msg: *msghdr, flags: u32) isize;
     };
-    const fun = switch (builtin.target.os.tag) {
-        .linux => std.os.linux.recvmsg,
-        else => c.recvmsg,
-    };
     while (true) {
-        const res = fun(sockfd, msg, flags);
-        const e = std.posix.errno(res);
-        if (e != .SUCCESS) return switch (e) {
-            .SUCCESS, .INVAL, .BADF, .NOTSOCK => unreachable,
-            .INTR, .AGAIN => continue,
-            .CONNREFUSED => error.ConnectionRefused,
-            .FAULT => error.Unexpected,
-            .NOMEM => error.SystemResources,
-            .NOTCONN => error.SocketNotConnected,
-            else => std.posix.unexpectedErrno(e),
-        };
-        return @intCast(res);
+        switch (builtin.target.os.tag) {
+            .linux => {
+                const res = std.os.linux.recvmsg(sockfd, msg, flags);
+                return switch (linux.errnoFromSyscall(res)) {
+                    .SUCCESS => @intCast(res),
+                    .INVAL, .BADF, .NOTSOCK => unreachable,
+                    .INTR, .AGAIN => continue,
+                    .CONNREFUSED => error.ConnectionRefused,
+                    .FAULT => error.Unexpected,
+                    .NOMEM => error.SystemResources,
+                    .NOTCONN => error.SocketNotConnected,
+                    else => |e| std.posix.unexpectedErrno(e),
+                };
+            },
+            else => {
+                const res = c.recvmsg(sockfd, msg, flags);
+                return switch (std.posix.errno(res)) {
+                    .SUCCESS => @intCast(res),
+                    .INVAL, .BADF, .NOTSOCK => unreachable,
+                    .INTR, .AGAIN => continue,
+                    .CONNREFUSED => error.ConnectionRefused,
+                    .FAULT => error.Unexpected,
+                    .NOMEM => error.SystemResources,
+                    .NOTCONN => error.SocketNotConnected,
+                    else => |e| std.posix.unexpectedErrno(e),
+                };
+            },
+        }
     }
     unreachable;
 }
