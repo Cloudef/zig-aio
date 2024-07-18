@@ -56,15 +56,19 @@ const ForeignTimeout = struct {
     }
 };
 
-/// The 3 queues share lots of similarities, so use a mixin
-fn Mixin(T: type) type {
+fn Queue(comptime name: []const u8, Impl: type) type {
     return struct {
-        pub fn init(allocator: std.mem.Allocator) !T {
-            _ = try T.now(); // check that we can get time
+        thread: ?std.Thread = null,
+        queue: std.PriorityQueue(ForeignTimeout, void, ForeignTimeout.sort),
+        mutex: std.Thread.Mutex = .{},
+        cond: std.Thread.Condition = .{},
+
+        pub fn init(allocator: std.mem.Allocator) !@This() {
+            _ = try Impl.now(); // check that we can get time
             return .{ .queue = std.PriorityQueue(ForeignTimeout, void, ForeignTimeout.sort).init(allocator, {}) };
         }
 
-        pub fn deinit(self: *T) void {
+        pub fn deinit(self: *@This()) void {
             self.mutex.lock();
             if (self.thread) |thrd| {
                 while (self.queue.removeOrNull()) |_| {}
@@ -77,7 +81,11 @@ fn Mixin(T: type) type {
             self.* = undefined;
         }
 
-        pub fn schedule(self: *T, timeout: ForeignTimeout) !void {
+        pub fn now() !u128 {
+            return Impl.now();
+        }
+
+        pub fn schedule(self: *@This(), timeout: ForeignTimeout) !void {
             {
                 self.mutex.lock();
                 defer self.mutex.unlock();
@@ -89,7 +97,7 @@ fn Mixin(T: type) type {
             if (self.thread == null) try self.start();
         }
 
-        pub fn disarm(self: *T, user_data: usize) void {
+        pub fn disarm(self: *@This(), user_data: usize) void {
             self.mutex.lock();
             defer self.mutex.unlock();
             for (self.queue.items, 0..) |*to, idx| {
@@ -99,25 +107,25 @@ fn Mixin(T: type) type {
             }
         }
 
-        fn start(self: *T) !void {
+        fn start(self: *@This()) !void {
             @setCold(true);
             if (self.thread) |_| unreachable;
-            self.thread = try std.Thread.spawn(.{ .allocator = self.queue.allocator, .stack_size = 1024 * 8 }, T.threadMain, .{self});
-            self.thread.?.setName(T.Name) catch {};
+            self.thread = try std.Thread.spawn(.{ .allocator = self.queue.allocator, .stack_size = 1024 * 8 }, threadMain, .{self});
+            self.thread.?.setName(name) catch {};
         }
 
-        fn threadMain(self: *T) void {
+        fn threadMain(self: *@This()) void {
             self.mutex.lock();
             defer self.mutex.unlock();
-            self.onThreadSleepLoop();
+            Impl.onThreadSleepLoop(self);
             if (self.thread) |thrd| {
                 thrd.detach();
                 self.thread = null;
             }
         }
 
-        fn onThreadProcessExpired(self: *T) void {
-            const ns_now = T.now() catch unreachable;
+        fn onThreadProcessExpired(self: *@This()) void {
+            const ns_now = Impl.now() catch unreachable;
             while (self.queue.items.len > 0) {
                 var to = &self.queue.items[0];
                 if (ns_now >= to.ns_abs) {
@@ -141,14 +149,7 @@ fn Mixin(T: type) type {
 
 /// Monotonic timers by linux definition do not count the suspend time
 /// This is the simplest one to implement, as we don't have to register suspend callbacks from the OS
-const MonotonicQueue = struct {
-    pub const Name = "MonotonicQueue";
-    thread: ?std.Thread = null,
-    queue: std.PriorityQueue(ForeignTimeout, void, ForeignTimeout.sort),
-    mutex: std.Thread.Mutex = .{},
-    cond: std.Thread.Condition = .{},
-    usingnamespace Mixin(@This());
-
+const MonotonicQueue = Queue("MonotonicQueue", struct {
     pub fn now() !u128 {
         const clock_id = switch (builtin.os.tag) {
             .windows => {
@@ -189,25 +190,18 @@ const MonotonicQueue = struct {
         return (@as(u128, @intCast(ts.tv_sec)) * std.time.ns_per_s) + @as(u128, @intCast(ts.tv_nsec));
     }
 
-    fn onThreadSleepLoop(self: *@This()) void {
-        while (self.queue.peek()) |timeout| {
+    fn onThreadSleepLoop(super: anytype) void {
+        while (super.queue.peek()) |timeout| {
             const ns_now = now() catch unreachable;
-            if (ns_now < timeout.ns_abs) self.cond.timedWait(&self.mutex, @truncate(timeout.ns_abs - ns_now)) catch {};
-            self.onThreadProcessExpired();
+            if (ns_now < timeout.ns_abs) super.cond.timedWait(&super.mutex, @truncate(timeout.ns_abs - ns_now)) catch {};
+            super.onThreadProcessExpired();
         }
     }
-};
+});
 
 /// Similar to monotonic queue but needs to be woken up when PC wakes up from suspend
 /// and check if any timers got expired
-const BoottimeQueue = struct {
-    pub const Name = "BoottimeQueue";
-    thread: ?std.Thread = null,
-    queue: std.PriorityQueue(ForeignTimeout, void, ForeignTimeout.sort),
-    mutex: std.Thread.Mutex = .{},
-    cond: std.Thread.Condition = .{},
-    usingnamespace Mixin(@This());
-
+const BoottimeQueue = Queue("BoottimeQueue", struct {
     pub fn now() !u128 {
         const clock_id = switch (builtin.os.tag) {
             .windows => {
@@ -246,26 +240,19 @@ const BoottimeQueue = struct {
         return (@as(u128, @intCast(ts.tv_sec)) * std.time.ns_per_s) + @as(u128, @intCast(ts.tv_nsec));
     }
 
-    fn onThreadSleepLoop(self: *@This()) void {
-        while (self.queue.peek()) |timeout| {
+    fn onThreadSleepLoop(super: anytype) void {
+        while (super.queue.peek()) |timeout| {
             // TODO: wakeup if coming out from suspend
             const ns_now = now() catch unreachable;
-            if (ns_now < timeout.ns_abs) self.cond.timedWait(&self.mutex, @truncate(timeout.ns_abs - ns_now)) catch {};
-            self.onThreadProcessExpired();
+            if (ns_now < timeout.ns_abs) super.cond.timedWait(&super.mutex, @truncate(timeout.ns_abs - ns_now)) catch {};
+            super.onThreadProcessExpired();
         }
     }
-};
+});
 
 /// Checks every second whether any timers has been expired.
 /// Not great accuracy but every second lets us do the implementation without needing any facilities from the OS.
-const RealtimeQueue = struct {
-    pub const Name = "RealtimeQueue";
-    thread: ?std.Thread = null,
-    queue: std.PriorityQueue(ForeignTimeout, void, ForeignTimeout.sort),
-    mutex: std.Thread.Mutex = .{},
-    cond: std.Thread.Condition = .{},
-    usingnamespace Mixin(@This());
-
+const RealtimeQueue = Queue("RealtimeQueue", struct {
     pub fn now() !u128 {
         switch (builtin.os.tag) {
             .windows => {
@@ -297,13 +284,13 @@ const RealtimeQueue = struct {
         }
     }
 
-    fn onThreadSleepLoop(self: *@This()) void {
-        while (self.queue.peek()) |_| {
-            self.cond.timedWait(&self.mutex, std.time.ns_per_s) catch {};
-            self.onThreadProcessExpired();
+    fn onThreadSleepLoop(super: anytype) void {
+        while (super.queue.peek()) |_| {
+            super.cond.timedWait(&super.mutex, std.time.ns_per_s) catch {};
+            super.onThreadProcessExpired();
         }
     }
-};
+});
 
 const ForeignTimerQueue = struct {
     mq: MonotonicQueue,
