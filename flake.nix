@@ -70,6 +70,20 @@
 
       Project is tested on zig version $(zig version)
 
+      ## Support matrix
+
+      | OS      | AIO             | CORO            |
+      |---------|-----------------|-----------------|
+      | Linux   | io_uring, posix | x86_64, aarch64 |
+      | Windows | iocp            | x86_64, aarch64 |
+      | *BSD    | posix           | x86_64, aarch64 |
+      | WASI    | posix           | ❌              |
+
+      * io_uring AIO backend is very light wrapper, where all the code does is mostly error mapping
+      * iocp also maps quite well to the io_uring style API
+      * posix backend is for compatibility, it may not be very effecient
+      * WASI may eventually get coro support [Stack Switching Proposal](https://github.com/WebAssembly/stack-switching/blob/main/proposals/continuations/Explainer.md)
+
       ## Example
 
       ```zig
