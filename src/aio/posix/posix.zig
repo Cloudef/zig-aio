@@ -254,28 +254,15 @@ pub inline fn openReadiness(op: anytype) OpenReadinessError!Readiness {
     return switch (comptime Operation.tagFromPayloadType(@TypeOf(op.*))) {
         .nop => .{},
         .fsync => .{},
-        .write => switch (builtin.target.os.tag) {
-            .windows => .{ .mode = .kludge },
-            else => .{ .fd = op.file.handle, .mode = .out },
-        },
+        .write => .{ .fd = op.file.handle, .mode = .out },
         .read_tty => switch (builtin.target.os.tag) {
-            .windows => .{ .mode = .kludge },
             .macos, .ios, .watchos, .visionos, .tvos => .{ .mode = .kludge },
             else => .{ .fd = op.tty.handle, .mode = .in },
         },
-        .read => switch (builtin.target.os.tag) {
-            .windows => .{ .mode = .kludge },
-            else => .{ .fd = op.file.handle, .mode = .in },
-        },
-        .accept, .recv, .recv_msg => switch (builtin.target.os.tag) {
-            .windows => .{ .mode = .kludge },
-            else => .{ .fd = op.socket, .mode = .in },
-        },
+        .read => .{ .fd = op.file.handle, .mode = .in },
+        .accept, .recv, .recv_msg => .{ .fd = op.socket, .mode = .in },
         .socket, .connect, .shutdown => .{},
-        .send, .send_msg => switch (builtin.target.os.tag) {
-            .windows => .{ .mode = .kludge },
-            else => .{ .fd = op.socket, .mode = .out },
-        },
+        .send, .send_msg => .{ .fd = op.socket, .mode = .out },
         .open_at, .close_file, .close_dir, .close_socket => .{},
         .timeout, .link_timeout => .{},
         .cancel, .rename_at, .unlink_at, .mkdir_at, .symlink_at => .{},
