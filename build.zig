@@ -45,7 +45,6 @@ pub fn build(b: *std.Build) void {
         .link_libc = switch (target.query.os_tag orelse builtin.os.tag) {
             .windows => true,
             .freebsd, .openbsd, .dragonfly, .netbsd => true,
-            .wasi => false,
             else => false,
         },
         .single_threaded = minilib.single_threaded,
