@@ -15,15 +15,14 @@ fn blockingCode() u32 {
 }
 
 fn task(pool: *ThreadPool) !void {
-    const ret = try pool.yieldForCompletition(blockingCode, .{});
+    const ret = try pool.yieldForCompletition(blockingCode, .{}, .{});
     try std.testing.expectEqual(69, ret);
 }
 
 var scheduler = try Scheduler.init(std.testing.allocator, .{});
 defer scheduler.deinit();
 
-var pool: ThreadPool = .{};
-try pool.start(std.testing.allocator, 0);
+var pool: ThreadPool = try ThreadPool.init(std.testing.allocator, .{});
 defer pool.deinit(); // pool must always be destroyed before scheduler
 
 _ = try scheduler.spawn(task, .{&pool}, .{});
@@ -31,6 +30,6 @@ _ = try scheduler.spawn(task, .{&pool}, .{});
 // Or alternatively, which does the same as above
 _ = try pool.spawnForCompletition(&scheduler, blockingCode, .{}, .{});
 
-try scheduler.run();
+try scheduler.run(.wait);
 ```
 

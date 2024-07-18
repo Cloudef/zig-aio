@@ -55,8 +55,8 @@ This blocks until all the operations are complete and returns the number of erro
 const num_errors = try work.completeAll();
 ```
 
-### Completition callback
+### Callbacks
 
-If callbacks for completions are required then it is possible to set the `callback` field of `aio.Dynamic`
-to a function of prototype `fn (uop: *Uop) void`. This is for example used by the `coro.Scheduler` to link
-IO operations into tasks.
+It is possible to set callbacks for queued and completed operations by setting the `queue_callback` and `completion_callback` of `aio.Dynamic`
+to a functions with a prototypes `fn (uop: *aio.Dynamic.Uop, id: aio.Id) void` and `fn (uop: *aio.Dynamic.Uop, id: aio.Id, failed: bool) void` respectively.
+This is for example used by the `coro.Scheduler` to link IO operations into tasks.

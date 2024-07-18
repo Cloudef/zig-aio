@@ -232,3 +232,33 @@ Closes a `socket`.
 ```zig
 socket: std.posix.socket_t,
 ```
+
+### NotifyEventSource
+
+Notifies a event source.
+Event sources have a Semaphore semantics, meaning there is a internal counter which is incremented by every notification.
+The event source is signaled as ready until the counter is fully drained by either using `aio.WaitEventSource` or directly with
+`source.wait()`.
+
+```zig
+source: *aio.EventSource,
+```
+
+### WaitEventSource
+
+Waits for a event source to signal ready.
+Event sources have a Semaphore semantics, meaning there is a internal counter which is incremented by every notification.
+The event source is signaled as ready until the counter is fully drained by either using `aio.WaitEventSource` or directly with
+`source.wait()`.
+
+```zig
+source: *aio.EventSource,
+```
+
+### CloseEventSource
+
+Closes a event source. This is same as calling `source.deinit()`.
+
+```zig
+source: *aio.EventSource,
+```

@@ -31,7 +31,7 @@ yields or performs a IO operation using one of the `coro.io` namespace functions
 var task = try scheduler.spawn(entrypoint, .{ 1, "args" }, .{});
 ```
 
-In case the return type of the function can not be deduced by the compiler, use the spawnAny variant.
+In case the return type of the function can not be deduced by the compiler, use the `spawnAny` variant.
 
 ```zig
 var task = try scheduler.spawnAny(void, entrypoint, .{ 1, "args" }, .{});
@@ -50,6 +50,12 @@ To cancel and collect partial result.
 
 ```zig
 const res = task.complete(.cancel);
+```
+
+To only cancel and ignore the result.
+
+```zig
+task.cancel();
 ```
 
 ### Running
