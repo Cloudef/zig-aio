@@ -57,13 +57,28 @@ pub const EventSource = switch (builtin.target.os.tag) {
     else => PipeEventSource,
 };
 
+const DummyChildWatcher = struct {
+    id: std.process.Child.Id,
+    fd: std.posix.fd_t,
+
+    pub fn init(_: std.process.Child.Id) !@This() {
+        @panic("platform does not support posix ChildWatcher");
+    }
+
+    pub fn wait(_: *@This()) std.process.Child.Term {
+        @panic("platform does not support posix ChildWatcher");
+    }
+
+    pub fn deinit(_: *@This()) void {
+        @panic("platform does not support posix ChildWatcher");
+    }
+};
+
 pub const ChildWatcher = switch (builtin.target.os.tag) {
     .linux => linux.ChildWatcher,
-    .windows => windows.ChildWatcher,
     .freebsd, .openbsd, .dragonfly, .netbsd => bsd.ChildWatcher,
     .macos, .ios, .watchos, .visionos, .tvos => darwin.ChildWatcher,
-    .wasi => wasi.ChildWatcher,
-    else => @compileError("unsupported"),
+    else => DummyChildWatcher,
 };
 
 pub fn convertOpenFlags(flags: std.fs.File.OpenFlags) std.posix.O {

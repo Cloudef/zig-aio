@@ -8,24 +8,6 @@ const log = std.log.scoped(.aio_wasi);
 // so not implementing that until something there changes
 pub const EventSource = posix.PipeEventSource;
 
-pub const ChildWatcher = struct {
-    id: std.process.Child.Id,
-    fd: std.posix.fd_t,
-
-    pub fn init(id: std.process.Child.Id) !@This() {
-        if (true) @panic("unavailable on the wasi platform");
-        return .{ .id = id, .fd = 0 };
-    }
-
-    pub fn wait(_: *@This()) std.process.Child.Term {
-        if (true) @panic("unavailable on the wasi platform");
-    }
-
-    pub fn deinit(self: *@This()) void {
-        self.* = undefined;
-    }
-};
-
 pub const BIGGEST_ALIGNMENT = 16;
 
 pub const sa_family_t = u16;

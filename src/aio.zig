@@ -498,15 +498,22 @@ test "SymlinkAt" {
 }
 
 test "ChildExit" {
-    if (builtin.target.os.tag == .windows or builtin.target.os.tag == .wasi) {
-        return error.SkipZigTest;
-    }
-
-    const pid = try std.posix.fork();
-    if (pid == 0) {
-        std.time.sleep(1 * std.time.ns_per_s);
-        std.posix.exit(69);
-    }
+    const pid = switch (builtin.target.os.tag) {
+        .linux, .freebsd, .openbsd, .dragonfly, .netbsd, .macos, .ios, .watchos, .visionos, .tvos => blk: {
+            const pid = try std.posix.fork();
+            if (pid == 0) {
+                std.time.sleep(1 * std.time.ns_per_s);
+                std.posix.exit(69);
+            }
+            break :blk pid;
+        },
+        .windows => blk: {
+            var child = std.process.Child.init(&.{ "cmd.exe", "/c", "exit 69" }, std.heap.page_allocator);
+            try child.spawn();
+            break :blk child.id;
+        },
+        else => return error.SkipZigTest,
+    };
     var term: std.process.Child.Term = undefined;
     try single(ChildExit{ .child = pid, .out_term = &term });
     if (term == .Signal) {

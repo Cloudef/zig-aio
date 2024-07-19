@@ -45,13 +45,15 @@ pub fn checked(ret: anytype) void {
 
 // Light wrapper, mainly to link EventSources to this
 pub const Iocp = struct {
-    pub const Notification = packed struct(u32) {
-        pub const Key = std.math.maxInt(usize);
+    pub const Key = packed struct(usize) {
         type: enum(u16) {
             shutdown,
             event_source,
+            child_exit,
+            overlapped,
         },
         id: u16,
+        _: @Type(.{ .Int = .{ .bits = @bitSizeOf(usize) - @bitSizeOf(u16) * 2, .signedness = .unsigned } }) = undefined,
     };
 
     port: HANDLE,
@@ -64,9 +66,9 @@ pub const Iocp = struct {
         return .{ .port = port, .num_threads = num_threads };
     }
 
-    pub fn notify(self: *@This(), data: Notification, ptr: ?*anyopaque) void {
+    pub fn notify(self: *@This(), key: Key, ptr: ?*anyopaque) void {
         // data for notification is put into the transferred bytes, overlapped can be anything
-        checked(io.PostQueuedCompletionStatus(self.port, @bitCast(data), Notification.Key, @ptrCast(@alignCast(ptr))));
+        checked(io.PostQueuedCompletionStatus(self.port, 0, @bitCast(key), @ptrCast(@alignCast(ptr))));
     }
 
     pub fn deinit(self: *@This()) void {
@@ -78,9 +80,9 @@ pub const Iocp = struct {
         self.* = undefined;
     }
 
-    pub fn associateHandle(self: *@This(), handle: HANDLE) !void {
-        // always assiocate the handle as the key, because the key should have the life time of a handle
-        const res = io.CreateIoCompletionPort(handle, self.port, @intFromPtr(handle), 0);
+    pub fn associateHandle(self: *@This(), id: u16, handle: HANDLE) !void {
+        const key: Key = .{ .type = .overlapped, .id = id };
+        const res = io.CreateIoCompletionPort(handle, self.port, @bitCast(key), 0);
         if (res == null or res.? == INVALID_HANDLE) {
             // ignore 87 as it may mean that we just re-registered the handle
             if (GetLastError() == .ERROR_INVALID_PARAMETER) return;
@@ -88,8 +90,8 @@ pub const Iocp = struct {
         }
     }
 
-    pub fn associateSocket(self: *@This(), sock: std.posix.socket_t) !void {
-        return self.associateHandle(@ptrCast(sock));
+    pub fn associateSocket(self: *@This(), id: u16, sock: std.posix.socket_t) !void {
+        return self.associateHandle(id, @ptrCast(sock));
     }
 };
 
@@ -155,24 +157,6 @@ pub const EventSource = struct {
             }
         }
         node.* = .{ .data = .{} };
-    }
-};
-
-pub const ChildWatcher = struct {
-    id: std.process.Child.Id,
-    fd: std.posix.fd_t,
-
-    pub fn init(id: std.process.Child.Id) !@This() {
-        if (true) @panic("fixme");
-        return .{ .id = id, .fd = 0 };
-    }
-
-    pub fn wait(_: *@This()) std.process.Child.Term {
-        if (true) @panic("fixme");
-    }
-
-    pub fn deinit(self: *@This()) void {
-        self.* = undefined;
     }
 };
 

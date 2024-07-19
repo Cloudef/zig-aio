@@ -45,6 +45,7 @@ const IoContext = struct {
     // needs to be cleaned up
     owned: union(enum) {
         handle: HANDLE,
+        job: HANDLE,
         none: void,
     } = .none,
 
@@ -53,7 +54,7 @@ const IoContext = struct {
 
     pub fn deinit(self: *@This()) void {
         switch (self.owned) {
-            .handle => |h| checked(CloseHandle(h)),
+            inline .handle, .job => |h| checked(CloseHandle(h)),
             .none => {},
         }
         self.* = undefined;
@@ -123,31 +124,37 @@ pub fn queue(self: *@This(), comptime len: u16, work: anytype, cb: ?aio.Dynamic.
 fn iocpDrainThread(self: *@This()) void {
     while (true) {
         var transferred: u32 = undefined;
-        var key: usize = undefined;
+        var key: Iocp.Key = undefined;
         var maybe_ovl: ?*io.OVERLAPPED = null;
-        const res = io.GetQueuedCompletionStatus(self.iocp.port, &transferred, &key, &maybe_ovl, INFINITE);
+        const res = io.GetQueuedCompletionStatus(self.iocp.port, &transferred, @ptrCast(&key), &maybe_ovl, INFINITE);
         if (res == 1) {
-            if (key == Iocp.Notification.Key) {
-                const note: Iocp.Notification = @bitCast(transferred);
-                switch (note.type) {
-                    .shutdown => break,
-                    .event_source => {
-                        const source: *EventSource = @ptrCast(@alignCast(maybe_ovl.?));
-                        source.wait();
-                        self.uringlator.finish(note.id, error.Success);
-                    },
-                }
-            } else {
-                const ctx: *IoContext = @fieldParentPtr("overlapped", maybe_ovl.?);
-                ctx.res = transferred;
-                const id: u16 = @intCast((@intFromPtr(ctx) - @intFromPtr(self.ovls.ptr)) / @sizeOf(IoContext));
-                self.uringlator.finish(id, error.Success);
+            switch (key.type) {
+                .shutdown => break,
+                .event_source => {
+                    const source: *EventSource = @ptrCast(@alignCast(maybe_ovl.?));
+                    source.wait();
+                },
+                .child_exit => {
+                    switch (transferred) {
+                        win32.system.system_services.JOB_OBJECT_MSG_EXIT_PROCESS, win32.system.system_services.JOB_OBJECT_MSG_ABNORMAL_EXIT_PROCESS => {},
+                        else => continue,
+                    }
+                    const op = &self.uringlator.ops.nodes[key.id].used.child_exit;
+                    if (op.out_term) |term| {
+                        var code: u32 = undefined;
+                        if (win32.system.threading.GetExitCodeProcess(op.child, &code) == 0) {
+                            term.* = .{ .Unknown = 0 };
+                        } else {
+                            term.* = .{ .Exited = @truncate(code) };
+                        }
+                    }
+                },
+                .overlapped => self.ovls[key.id].res = transferred,
             }
+            self.uringlator.finish(key.id, error.Success);
         } else if (maybe_ovl) |_| {
-            std.debug.assert(key != Iocp.Notification.Key);
-            const ctx: *IoContext = @fieldParentPtr("overlapped", maybe_ovl.?);
-            const id: u16 = @intCast((@intFromPtr(ctx) - @intFromPtr(self.ovls.ptr)) / @sizeOf(IoContext));
-            self.uringlator.finish(id, werr(0));
+            std.debug.assert(key.type != .shutdown);
+            self.uringlator.finish(key.id, werr(0));
         } else {
             break;
         }
@@ -239,52 +246,65 @@ fn start(self: *@This(), id: u16, uop: *Operation.Union) !void {
     switch (uop.*) {
         .read => |*op| {
             const flags = try getHandleAccessInfo(op.file.handle);
-            if (flags.FILE_READ_DATA != 1) {
-                self.uringlator.finish(id, error.NotOpenForReading);
-                return;
-            }
-            const h = fs.ReOpenFile(op.file.handle, flags, .{ .READ = 1, .WRITE = 1 }, fs.FILE_FLAG_OVERLAPPED).?;
-            wtry(h != INVALID_HANDLE) catch |err| return self.uringlator.finish(id, err);
-            self.iocp.associateHandle(h) catch |err| return self.uringlator.finish(id, err);
-            self.ovls[id] = .{ .overlapped = ovlOff(op.offset), .owned = .{ .handle = h } };
-            wtry(fs.ReadFile(h, op.buffer.ptr, @intCast(op.buffer.len), &trash, &self.ovls[id].overlapped)) catch |err| return self.uringlator.finish(id, err);
+            if (flags.FILE_READ_DATA != 1) return self.uringlator.finish(id, error.NotOpenForReading);
+            const h = fs.ReOpenFile(op.file.handle, flags, .{ .READ = 1, .WRITE = 1 }, fs.FILE_FLAG_OVERLAPPED);
+            wtry(h != null and h.? != INVALID_HANDLE) catch |err| return self.uringlator.finish(id, err);
+            self.iocp.associateHandle(id, h.?) catch |err| return self.uringlator.finish(id, err);
+            self.ovls[id] = .{ .overlapped = ovlOff(op.offset), .owned = .{ .handle = h.? } };
+            wtry(fs.ReadFile(h.?, op.buffer.ptr, @intCast(op.buffer.len), &trash, &self.ovls[id].overlapped)) catch |err| return self.uringlator.finish(id, err);
         },
         .write => |*op| {
             const flags = try getHandleAccessInfo(op.file.handle);
-            if (flags.FILE_WRITE_DATA != 1) {
-                self.uringlator.finish(id, error.NotOpenForWriting);
-                return;
-            }
-            const h = fs.ReOpenFile(op.file.handle, flags, .{ .READ = 1, .WRITE = 1 }, fs.FILE_FLAG_OVERLAPPED).?;
-            wtry(h != INVALID_HANDLE) catch |err| return self.uringlator.finish(id, err);
-            self.iocp.associateHandle(h) catch |err| return self.uringlator.finish(id, err);
-            self.ovls[id] = .{ .overlapped = ovlOff(op.offset), .owned = .{ .handle = h } };
-            wtry(fs.WriteFile(h, op.buffer.ptr, @intCast(op.buffer.len), &trash, &self.ovls[id].overlapped)) catch |err| return self.uringlator.finish(id, err);
+            if (flags.FILE_WRITE_DATA != 1) return self.uringlator.finish(id, error.NotOpenForWriting);
+            const h = fs.ReOpenFile(op.file.handle, flags, .{ .READ = 1, .WRITE = 1 }, fs.FILE_FLAG_OVERLAPPED);
+            wtry(h != null and h.? != INVALID_HANDLE) catch |err| return self.uringlator.finish(id, err);
+            self.iocp.associateHandle(id, h.?) catch |err| return self.uringlator.finish(id, err);
+            self.ovls[id] = .{ .overlapped = ovlOff(op.offset), .owned = .{ .handle = h.? } };
+            wtry(fs.WriteFile(h.?, op.buffer.ptr, @intCast(op.buffer.len), &trash, &self.ovls[id].overlapped)) catch |err| return self.uringlator.finish(id, err);
         },
         .accept => |*op| {
-            self.iocp.associateSocket(op.socket) catch |err| return self.uringlator.finish(id, err);
+            self.iocp.associateSocket(id, op.socket) catch |err| return self.uringlator.finish(id, err);
             op.out_socket.* = aio.socket(std.posix.AF.INET, 0, 0) catch |err| return self.uringlator.finish(id, err);
             wtry(win_sock.AcceptEx(op.socket, op.out_socket.*, &op._, 0, @sizeOf(std.posix.sockaddr) + 16, @sizeOf(std.posix.sockaddr) + 16, &trash, &self.ovls[id].overlapped) == 1) catch |err| return self.uringlator.finish(id, err);
         },
         .recv => |*op| {
-            self.iocp.associateSocket(op.socket) catch |err| return self.uringlator.finish(id, err);
+            self.iocp.associateSocket(id, op.socket) catch |err| return self.uringlator.finish(id, err);
             _ = wposix.recvEx(op.socket, &op._, 0, &self.ovls[id].overlapped) catch |err| return self.uringlator.finish(id, err);
         },
         .send => |*op| {
-            self.iocp.associateSocket(op.socket) catch |err| return self.uringlator.finish(id, err);
+            self.iocp.associateSocket(id, op.socket) catch |err| return self.uringlator.finish(id, err);
             _ = wposix.sendEx(op.socket, &op._, 0, &self.ovls[id].overlapped) catch |err| return self.uringlator.finish(id, err);
         },
         .send_msg => |*op| {
-            self.iocp.associateSocket(op.socket) catch |err| return self.uringlator.finish(id, err);
+            self.iocp.associateSocket(id, op.socket) catch |err| return self.uringlator.finish(id, err);
             _ = wposix.sendmsgEx(op.socket, @constCast(op.msg), 0, &self.ovls[id].overlapped) catch |err| return self.uringlator.finish(id, err);
         },
         .recv_msg => |*op| {
-            self.iocp.associateSocket(op.socket) catch |err| return self.uringlator.finish(id, err);
+            self.iocp.associateSocket(id, op.socket) catch |err| return self.uringlator.finish(id, err);
             _ = wposix.recvmsgEx(op.socket, op.out_msg, 0, &self.ovls[id].overlapped) catch |err| return self.uringlator.finish(id, err);
         },
         inline .timeout, .link_timeout => |*op| {
             const closure: TimerQueue.Closure = .{ .context = self, .callback = onThreadTimeout };
-            self.tqueue.schedule(.monotonic, op.ns, id, .{ .closure = closure }) catch self.uringlator.finish(id, error.Unexpected);
+            self.tqueue.schedule(.monotonic, op.ns, id, .{ .closure = closure }) catch return self.uringlator.finish(id, error.Unexpected);
+        },
+        .child_exit => |*op| {
+            const job = win32.system.job_objects.CreateJobObjectW(null, null);
+            wtry(job != null and job.? != INVALID_HANDLE) catch |err| return self.uringlator.finish(id, err);
+            errdefer checked(CloseHandle(job.?));
+            wtry(win32.system.job_objects.AssignProcessToJobObject(job.?, op.child)) catch return self.uringlator.finish(id, error.Unexpected);
+            const key: Iocp.Key = .{ .type = .child_exit, .id = id };
+            var assoc: win32.system.job_objects.JOBOBJECT_ASSOCIATE_COMPLETION_PORT = .{
+                .CompletionKey = @ptrFromInt(@as(usize, @bitCast(key))),
+                .CompletionPort = self.iocp.port,
+            };
+            self.ovls[id] = .{ .owned = .{ .job = job.? } };
+            errdefer self.ovls[id] = .{};
+            wtry(win32.system.job_objects.SetInformationJobObject(
+                job.?,
+                win32.system.job_objects.JobObjectAssociateCompletionPortInformation,
+                @ptrCast(&assoc),
+                @sizeOf(@TypeOf(assoc)),
+            )) catch return self.uringlator.finish(id, error.Unexpected);
         },
         .wait_event_source => |*op| op.source.native.addWaiter(&op._.link),
         // can be performed without a thread
@@ -303,6 +323,12 @@ fn cancel(self: *@This(), id: u16, uop: *Operation.Union) bool {
         },
         inline .accept, .recv, .send, .send_msg, .recv_msg => |*op| {
             return io.CancelIoEx(@ptrCast(op.socket), &self.ovls[id].overlapped) != 0;
+        },
+        .child_exit => {
+            self.ovls[id].deinit();
+            self.ovls[id] = .{};
+            self.uringlator.finish(id, error.Canceled);
+            return true;
         },
         .timeout, .link_timeout, .wait_event_source => {
             self.tqueue.disarm(.monotonic, id);
