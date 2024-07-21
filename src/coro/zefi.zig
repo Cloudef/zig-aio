@@ -222,28 +222,28 @@ const Intel_SysV = struct {
 
     pub const entry_offset = word_count - 1;
 
+    // workaround for macos undefined symbol linking error
+    const under_line = if (builtin.os.tag == .macos) "_" else "";
     comptime {
-        asm (
-            \\.global zefi_stack_swap
-            \\zefi_stack_swap:
-            \\  pushq %rbx
-            \\  pushq %rbp
-            \\  pushq %r12
-            \\  pushq %r13
-            \\  pushq %r14
-            \\  pushq %r15
-            \\
-            \\  movq %rsp, (%rdi)
-            \\  movq (%rsi), %rsp
-            \\
-            \\  popq %r15
-            \\  popq %r14
-            \\  popq %r13
-            \\  popq %r12
-            \\  popq %rbp
-            \\  popq %rbx
-            \\
-            \\  retq
+        asm (".global " ++ under_line ++ "zefi_stack_swap\n " ++ under_line ++ "zefi_stack_swap:" ++
+                \\  pushq %rbx
+                \\  pushq %rbp
+                \\  pushq %r12
+                \\  pushq %r13
+                \\  pushq %r14
+                \\  pushq %r15
+                \\
+                \\  movq %rsp, (%rdi)
+                \\  movq (%rsi), %rsp
+                \\
+                \\  popq %r15
+                \\  popq %r14
+                \\  popq %r13
+                \\  popq %r12
+                \\  popq %rbp
+                \\  popq %rbx
+                \\
+                \\  retq
         );
     }
 };
@@ -253,38 +253,38 @@ const Arm_64 = struct {
 
     pub const entry_offset = 0;
 
+    // workaround for macos undefined symbol linking error
+    const under_line = if (builtin.os.tag == .macos) "_" else "";
     comptime {
-        asm (
-            \\.global _zefi_stack_swap
-            \\_zefi_stack_swap:
-            \\  stp lr, fp, [sp, #-20*8]!
-            \\  stp d8, d9, [sp, #2*8]
-            \\  stp d10, d11, [sp, #4*8]
-            \\  stp d12, d13, [sp, #6*8]
-            \\  stp d14, d15, [sp, #8*8]
-            \\  stp x19, x20, [sp, #10*8]
-            \\  stp x21, x22, [sp, #12*8]
-            \\  stp x23, x24, [sp, #14*8]
-            \\  stp x25, x26, [sp, #16*8]
-            \\  stp x27, x28, [sp, #18*8]
-            \\
-            \\  mov x9, sp
-            \\  str x9, [x0]
-            \\  ldr x9, [x1]
-            \\  mov sp, x9
-            \\
-            \\  ldp x27, x28, [sp, #18*8]
-            \\  ldp x25, x26, [sp, #16*8]
-            \\  ldp x23, x24, [sp, #14*8]
-            \\  ldp x21, x22, [sp, #12*8]
-            \\  ldp x19, x20, [sp, #10*8]
-            \\  ldp d14, d15, [sp, #8*8]
-            \\  ldp d12, d13, [sp, #6*8]
-            \\  ldp d10, d11, [sp, #4*8]
-            \\  ldp d8, d9, [sp, #2*8]
-            \\  ldp lr, fp, [sp], #20*8
-            \\
-            \\  ret
+        asm (".global " ++ under_line ++ "zefi_stack_swap\n " ++ under_line ++ "zefi_stack_swap:" ++
+                \\  stp lr, fp, [sp, #-20*8]!
+                \\  stp d8, d9, [sp, #2*8]
+                \\  stp d10, d11, [sp, #4*8]
+                \\  stp d12, d13, [sp, #6*8]
+                \\  stp d14, d15, [sp, #8*8]
+                \\  stp x19, x20, [sp, #10*8]
+                \\  stp x21, x22, [sp, #12*8]
+                \\  stp x23, x24, [sp, #14*8]
+                \\  stp x25, x26, [sp, #16*8]
+                \\  stp x27, x28, [sp, #18*8]
+                \\
+                \\  mov x9, sp
+                \\  str x9, [x0]
+                \\  ldr x9, [x1]
+                \\  mov sp, x9
+                \\
+                \\  ldp x27, x28, [sp, #18*8]
+                \\  ldp x25, x26, [sp, #16*8]
+                \\  ldp x23, x24, [sp, #14*8]
+                \\  ldp x21, x22, [sp, #12*8]
+                \\  ldp x19, x20, [sp, #10*8]
+                \\  ldp d14, d15, [sp, #8*8]
+                \\  ldp d12, d13, [sp, #6*8]
+                \\  ldp d10, d11, [sp, #4*8]
+                \\  ldp d8, d9, [sp, #2*8]
+                \\  ldp lr, fp, [sp], #20*8
+                \\
+                \\  ret
         );
     }
 };
