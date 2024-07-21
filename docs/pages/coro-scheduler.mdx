@@ -18,8 +18,7 @@ defer scheduler.deinit();
 
 ### Spawning tasks
 
-A new task can be spawned by specifying `entrypoint`, which must be a function with either `void` or `!void` return type.
-If it's `!void` and returns a error then a stacktrace of the error is dumped, similarly to how std's `std.Thread` works.
+A new task can be spawned by specifying `entrypoint`.
 Supply arguments to the `entrypoint` by providing a tuple as the second parameter.
 The third parameter takes a optional `SpawnOptions`, which can be used to specify the stack size of the Task, or
 provide a pre-allocated unmanaged stack.
