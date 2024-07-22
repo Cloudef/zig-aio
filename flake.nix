@@ -31,6 +31,11 @@
           zig build test -Dposix=force -Dsanitize=true
           echo "zig build test -Dposix=force -Dforce_foreign_timer_queue=true -Dsanitize=true"
           zig build test -Dposix=force -Dforce_foreign_timer_queue=true -Dsanitize=true
+        elif [[ "$(uname)" == "Darwin" ]]; then
+          echo "zig build test"
+          zig build test
+          echo "zig build test -Dtarget=x86_64-macos"
+          zig build test -Dtarget=x86_64-macos
         else
           echo "zig build test"
           zig build test
