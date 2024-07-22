@@ -81,6 +81,7 @@
       |---------|-----------------|-----------------|
       | Linux   | io_uring, posix | x86_64, aarch64 |
       | Windows | iocp            | x86_64, aarch64 |
+      | Darwin  | posix           | x86_64, aarch64 |
       | *BSD    | posix           | x86_64, aarch64 |
       | WASI    | posix           | ❌              |
 
