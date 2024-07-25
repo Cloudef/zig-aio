@@ -260,7 +260,7 @@ inline fn uring_queue(io: *std.os.linux.IoUring, op: anytype, user_data: u64) ai
             break :blk try io.timeout(user_data, &ts, 0, 0);
         },
         .link_timeout => blk: {
-            const ts: std.os.linux.timespec = .{
+            const ts: std.os.linux.kernel_timespec = .{
                 .tv_sec = @intCast(op.ns / std.time.ns_per_s),
                 .tv_nsec = @intCast(op.ns % std.time.ns_per_s),
             };
