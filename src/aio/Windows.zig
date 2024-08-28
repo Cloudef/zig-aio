@@ -215,12 +215,9 @@ fn onThreadTimeout(ctx: *anyopaque, user_data: usize) void {
 }
 
 fn ovlOff(offset: u64) io.OVERLAPPED {
-    return .{
-        .Internal = undefined,
-        .InternalHigh = undefined,
-        .Anonymous = .{ .Anonymous = @bitCast(offset) },
-        .hEvent = undefined,
-    };
+    var result = std.mem.zeroes(io.OVERLAPPED);
+    result.Anonymous = .{ .Anonymous = @bitCast(offset) };
+    return result;
 }
 
 const AccessInfo = packed struct {
