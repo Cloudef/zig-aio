@@ -108,6 +108,23 @@ pub fn build(b: *std.Build) void {
         var cmd = makeRunStep(b, target, tst, 3.355e+7, "test-" ++ @tagName(mod), "Run " ++ @tagName(mod) ++ " tests");
         test_step.dependOn(&cmd.step);
     }
+
+    inline for (.{
+        .ping_pongs,
+    }) |bench| {
+        const exe = b.addExecutable(.{
+            .name = @tagName(bench),
+            .root_source_file = b.path("bench/" ++ @tagName(bench) ++ ".zig"),
+            .target = target,
+            .optimize = optimize,
+            .sanitize_thread = sanitize,
+            .single_threaded = minilib.single_threaded,
+        });
+        exe.root_module.addImport("aio", aio);
+        exe.root_module.addImport("coro", coro);
+        var cmd = makeRunStep(b, target, exe, 3.355e+7, @tagName(bench), "Run " ++ @tagName(bench) ++ " benchmark");
+        run_all.dependOn(&cmd.step);
+    }
 }
 
 fn addImportsFrom(dst: *std.Build.Module, src: *std.Build.Module) void {
