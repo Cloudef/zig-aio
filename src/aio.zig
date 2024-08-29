@@ -469,7 +469,7 @@ test "MkDirAt" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try single(MkDirAt{ .dir = tmp.dir, .path = "test" });
-    if (builtin.target.os.tag != .windows) {
+    if (builtin.target.os.tag == .windows) {
         // TODO: need to update the directory handle on windows? weird shit
     } else {
         try tmp.dir.access("test", .{});
