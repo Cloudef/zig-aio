@@ -52,6 +52,13 @@ pub const Iocp = struct {
             child_exit,
             overlapped,
         },
+        // The ID is only used for custom events, for CreateIoCompletionPort assocations its useless,
+        // as it prevents from having multiple keys for a single handle:
+        // > Use the CompletionKey parameter to help your application track which I/O operations have completed.
+        // > This value is not used by CreateIoCompletionPort for functional control; rather, it is attached to
+        // > the file handle specified in the FileHandle parameter at the time of association with an I/O completion port.
+        // > This completion key should be unique for each file handle, and it accompanies the file handle throughout the
+        // > internal completion queuing process.
         id: u16,
         _: @Type(.{ .Int = .{ .bits = @bitSizeOf(usize) - @bitSizeOf(u16) * 2, .signedness = .unsigned } }) = undefined,
     };
@@ -80,8 +87,8 @@ pub const Iocp = struct {
         self.* = undefined;
     }
 
-    pub fn associateHandle(self: *@This(), id: u16, handle: HANDLE) !void {
-        const key: Key = .{ .type = .overlapped, .id = id };
+    pub fn associateHandle(self: *@This(), _: u16, handle: HANDLE) !void {
+        const key: Key = .{ .type = .overlapped, .id = undefined };
         const res = io.CreateIoCompletionPort(handle, self.port, @bitCast(key), 0);
         if (res == null or res.? == INVALID_HANDLE) {
             // ignore 87 as it may mean that we just re-registered the handle

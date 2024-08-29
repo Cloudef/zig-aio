@@ -40,7 +40,7 @@ const INVALID_SOCKET = win_sock.INVALID_SOCKET;
 const threading = win32.system.threading;
 
 const IoContext = struct {
-    overlapped: io.OVERLAPPED = undefined,
+    overlapped: io.OVERLAPPED = std.mem.zeroes(io.OVERLAPPED),
 
     // needs to be cleaned up
     owned: union(enum) {
@@ -127,6 +127,20 @@ fn iocpDrainThread(self: *@This()) void {
         var key: Iocp.Key = undefined;
         var maybe_ovl: ?*io.OVERLAPPED = null;
         const res = io.GetQueuedCompletionStatus(self.iocp.port, &transferred, @ptrCast(&key), &maybe_ovl, INFINITE);
+        if (res != 1 and maybe_ovl == null) {
+            break;
+        }
+
+        const id: u16 = switch (key.type) {
+            .shutdown,
+            .event_source,
+            .child_exit => key.id,
+            .overlapped => blk: {
+                const parent: *IoContext = @fieldParentPtr("overlapped", maybe_ovl.?);
+                break :blk @intCast((@intFromPtr(parent) - @intFromPtr(self.ovls.ptr)) / @sizeOf(IoContext));
+            }
+        };
+
         if (res == 1) {
             switch (key.type) {
                 .shutdown => break,
@@ -139,7 +153,7 @@ fn iocpDrainThread(self: *@This()) void {
                         win32.system.system_services.JOB_OBJECT_MSG_EXIT_PROCESS, win32.system.system_services.JOB_OBJECT_MSG_ABNORMAL_EXIT_PROCESS => {},
                         else => continue,
                     }
-                    const op = &self.uringlator.ops.nodes[key.id].used.child_exit;
+                    const op = &self.uringlator.ops.nodes[id].used.child_exit;
                     if (op.out_term) |term| {
                         var code: u32 = undefined;
                         if (win32.system.threading.GetExitCodeProcess(op.child, &code) == 0) {
@@ -149,14 +163,12 @@ fn iocpDrainThread(self: *@This()) void {
                         }
                     }
                 },
-                .overlapped => self.ovls[key.id].res = transferred,
+                .overlapped => self.ovls[id].res = transferred,
             }
-            self.uringlator.finish(key.id, error.Success);
-        } else if (maybe_ovl) |_| {
-            std.debug.assert(key.type != .shutdown);
-            self.uringlator.finish(key.id, werr(0));
+            self.uringlator.finish(id, error.Success);
         } else {
-            break;
+            std.debug.assert(key.type != .shutdown);
+            self.uringlator.finish(id, werr(0));
         }
     }
 }
