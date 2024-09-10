@@ -78,7 +78,7 @@ pub fn yieldForCompletition(self: *@This(), func: anytype, args: anytype, config
 /// Spawn a new coroutine which will immediately call `yieldForCompletition` for later collection of the result
 /// Normally one would use the `spawnForCompletition` method, but in case a generic functions return type can't be deduced, use this any variant.
 pub fn spawnAnyForCompletition(self: *@This(), scheduler: *Scheduler, Result: type, func: anytype, args: anytype, config: DynamicThreadPool.SpawnConfig) Scheduler.SpawnError!Task {
-    return scheduler.spawnAny(Result, yieldForCompletition, .{ self, func, args, config }, .{ .stack = .{ .managed = 1024 * 16 } });
+    return scheduler.spawnAny(Result, yieldForCompletition, .{ self, func, args, config }, .{ .stack = .{ .managed = 1024 * 24 } });
 }
 
 /// Helper for getting the Task.Generic when using spawnForCompletition tasks.
