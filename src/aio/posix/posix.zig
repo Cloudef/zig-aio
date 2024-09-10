@@ -224,13 +224,13 @@ pub inline fn perform(op: anytype, readiness: Readiness) Operation.Error!void {
         },
         .accept => op.out_socket.* = try accept(op.socket, op.out_addr, op.inout_addrlen, 0),
         .connect => _ = try connect(op.socket, op.addr, op.addrlen),
-        .recv => op.out_read.* = try recv(op.socket, op.buffer, std.posix.MSG.DONTWAIT),
+        .recv => op.out_read.* = try recv(op.socket, op.buffer, MSG.DONTWAIT),
         .send => {
-            const written = try send(op.socket, op.buffer, std.posix.MSG.DONTWAIT);
+            const written = try send(op.socket, op.buffer, MSG.DONTWAIT);
             if (op.out_written) |w| w.* = written;
         },
-        .recv_msg => _ = try recvmsg(op.socket, op.out_msg, std.posix.MSG.DONTWAIT),
-        .send_msg => _ = try sendmsg(op.socket, op.msg, std.posix.MSG.DONTWAIT),
+        .recv_msg => _ = try recvmsg(op.socket, op.out_msg, MSG.DONTWAIT),
+        .send_msg => _ = try sendmsg(op.socket, op.msg, MSG.DONTWAIT),
         .shutdown => try shutdown(op.socket, op.how),
         .open_at => op.out_file.* = try openAtUring(op.dir, op.path, op.flags),
         .close_file => std.posix.close(op.file.handle),
@@ -316,6 +316,22 @@ pub const socket = switch (builtin.target.os.tag) {
     .windows => windows.socket,
     .wasi => wasi.socket,
     else => std.posix.socket,
+};
+
+pub const MSG = switch (builtin.target.os.tag) {
+    .freebsd,
+    .openbsd,
+    .dragonfly,
+    .netbsd,
+    .macos,
+    .ios,
+    .watchos,
+    .visionos,
+    .tvos,
+    => struct {
+        pub const DONTWAIT = 0x0080;
+    },
+    else => std.posix.MSG,
 };
 
 pub const msghdr = switch (builtin.target.os.tag) {
