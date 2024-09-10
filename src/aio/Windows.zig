@@ -321,7 +321,8 @@ fn start(self: *@This(), id: u16, uop: *Operation.Union) !void {
         .notify_event_source, .close_event_source => self.onThreadPosixExecutor(id, uop),
         else => {
             // perform non IOCP supported operation on a thread
-            try self.tpool.spawn(onThreadPosixExecutor, .{ self, id, uop }, .{ .stack_size = 4096 * 16 });
+            const posix = @import("posix/posix.zig");
+            try self.tpool.spawn(onThreadPosixExecutor, .{ self, id, uop }, .{ .stack_size = posix.stack_size });
         },
     }
 }

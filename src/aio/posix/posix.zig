@@ -8,6 +8,9 @@ const darwin = @import("darwin.zig");
 const windows = @import("windows.zig");
 const wasi = @import("wasi.zig");
 
+// Minimum stack size for the `perform` function
+pub const stack_size = 1.049e+6;
+
 // This file implements stuff that's not in std, not implement properly or not
 // abstracted for all the platforms that we want to support
 
