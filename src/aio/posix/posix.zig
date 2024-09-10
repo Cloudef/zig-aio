@@ -9,7 +9,7 @@ const windows = @import("windows.zig");
 const wasi = @import("wasi.zig");
 
 // Minimum stack size for the `perform` function
-pub const stack_size = 1.049e+6;
+pub const stack_size = 512000; // 512KB
 
 // This file implements stuff that's not in std, not implement properly or not
 // abstracted for all the platforms that we want to support
