@@ -132,13 +132,11 @@ fn iocpDrainThread(self: *@This()) void {
         }
 
         const id: u16 = switch (key.type) {
-            .shutdown,
-            .event_source,
-            .child_exit => key.id,
+            .shutdown, .event_source, .child_exit => key.id,
             .overlapped => blk: {
                 const parent: *IoContext = @fieldParentPtr("overlapped", maybe_ovl.?);
                 break :blk @intCast((@intFromPtr(parent) - @intFromPtr(self.ovls.ptr)) / @sizeOf(IoContext));
-            }
+            },
         };
 
         if (res == 1) {
