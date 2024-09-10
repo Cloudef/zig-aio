@@ -120,8 +120,9 @@ pub fn spawn(self: *@This(), comptime func: anytype, args: anytype, config: Spaw
 
         // Activate a new thread if the run queue is running hot
         if (self.idling_threads == 0 and self.active_threads < self.threads.len) {
-            for (self.threads[self.active_threads..], 0..) |*dthread, id| {
+            for (self.threads[self.active_threads..], 0..) |*dthread, off| {
                 if (!dthread.active and dthread.thread == null) {
+                    const id = self.active_threads + off;
                     dthread.active = true;
                     self.serial.unset(id);
                     self.active_threads += 1;
