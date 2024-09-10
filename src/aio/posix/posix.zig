@@ -224,13 +224,13 @@ pub inline fn perform(op: anytype, readiness: Readiness) Operation.Error!void {
         },
         .accept => op.out_socket.* = try accept(op.socket, op.out_addr, op.inout_addrlen, 0),
         .connect => _ = try connect(op.socket, op.addr, op.addrlen),
-        .recv => op.out_read.* = try recv(op.socket, op.buffer, 0),
+        .recv => op.out_read.* = try recv(op.socket, op.buffer, std.posix.MSG.DONTWAIT),
         .send => {
-            const written = try send(op.socket, op.buffer, 0);
+            const written = try send(op.socket, op.buffer, std.posix.MSG.DONTWAIT);
             if (op.out_written) |w| w.* = written;
         },
-        .recv_msg => _ = try recvmsg(op.socket, op.out_msg, 0),
-        .send_msg => _ = try sendmsg(op.socket, op.msg, 0),
+        .recv_msg => _ = try recvmsg(op.socket, op.out_msg, std.posix.MSG.DONTWAIT),
+        .send_msg => _ = try sendmsg(op.socket, op.msg, std.posix.MSG.DONTWAIT),
         .shutdown => try shutdown(op.socket, op.how),
         .open_at => op.out_file.* = try openAtUring(op.dir, op.path, op.flags),
         .close_file => std.posix.close(op.file.handle),

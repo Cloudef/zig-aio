@@ -185,6 +185,10 @@ fn start(self: *@This(), id: u16, uop: *Operation.Union) !void {
             .notify_event_source,
             .wait_event_source,
             .close_event_source,
+            .send,
+            .recv,
+            .send_msg,
+            .recv_msg,
             => self.onThreadExecutor(id, uop, self.readiness[id]),
             else => {
                 // perform on thread
