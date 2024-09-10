@@ -122,7 +122,7 @@ pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode, cb: ?aio.Dynam
                 defer self.pending.unset(id);
                 if (pfd.revents & std.posix.POLL.ERR != 0 or pfd.revents & std.posix.POLL.HUP != 0 or pfd.revents & std.posix.POLL.NVAL != 0) {
                     self.uringlator.finish(@intCast(id), error.Unexpected);
-                    continue;
+                    break;
                 }
                 // start it for real this time
                 const uop = &self.uringlator.ops.nodes[id].used;
@@ -132,6 +132,7 @@ pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode, cb: ?aio.Dynam
                     Uringlator.debug("ready: {}: {}", .{ id, std.meta.activeTag(uop.*) });
                 }
                 try self.start(@intCast(id), uop);
+                break;
             };
         }
     }
