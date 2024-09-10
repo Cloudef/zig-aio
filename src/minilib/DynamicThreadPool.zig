@@ -10,6 +10,7 @@ const DynamicThread = struct {
 };
 
 allocator: std.mem.Allocator,
+arena: std.heap.ArenaAllocator,
 mutex: std.Thread.Mutex = .{},
 cond: std.Thread.Condition = .{},
 threads: []DynamicThread = &.{},
@@ -57,6 +58,7 @@ pub fn init(allocator: std.mem.Allocator, options: Options) InitError!@This() {
     @memset(threads, .{});
     return .{
         .allocator = allocator,
+        .arena = std.heap.ArenaAllocator.init(allocator),
         .timeout = options.timeout,
         .serial = serial,
         .threads = threads,
@@ -74,6 +76,7 @@ pub fn deinit(self: *@This()) void {
         for (self.threads) |*dthread| if (dthread.thread) |thrd| thrd.join();
         self.allocator.free(self.threads);
         self.serial.deinit(self.allocator);
+        self.arena.deinit();
     }
     self.* = undefined;
 }
@@ -110,7 +113,7 @@ pub fn spawn(self: *@This(), comptime func: anytype, args: anytype, config: Spaw
             // The thread pool's allocator is protected by the mutex.
             pool.mutex.lock();
             defer pool.mutex.unlock();
-            pool.allocator.destroy(closure);
+            pool.arena.allocator().destroy(closure);
         }
     };
 
@@ -138,7 +141,7 @@ pub fn spawn(self: *@This(), comptime func: anytype, args: anytype, config: Spaw
 
         // TODO: Optimize closure allocations
         //       Closures are often same size, so they can be bucketed and reused
-        const closure = try self.allocator.create(Closure);
+        const closure = try self.arena.allocator().create(Closure);
         closure.* = .{ .arguments = args };
         self.run_queue.prepend(&closure.run_node);
     }
