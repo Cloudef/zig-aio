@@ -13,6 +13,8 @@ pub const Options = struct {
     /// Force the use of foreign backend even if the target platform is linux
     /// Mostly useful for testing
     force_foreign_backend: bool = build_options.force_foreign_timer_queue,
+    /// Stack size of a timer thread (includes expiration callbacks)
+    stack_size: usize = 1024 * 16,
 };
 
 comptime {
@@ -110,7 +112,7 @@ fn Queue(comptime name: []const u8, Impl: type) type {
         fn start(self: *@This()) !void {
             @setCold(true);
             if (self.thread) |_| unreachable;
-            self.thread = try std.Thread.spawn(.{ .allocator = self.queue.allocator, .stack_size = 1024 * 8 }, threadMain, .{self});
+            self.thread = try std.Thread.spawn(.{ .allocator = self.queue.allocator, .stack_size = options.stack_size }, threadMain, .{self});
             self.thread.?.setName(name) catch {};
         }
 
@@ -454,7 +456,7 @@ const LinuxTimerQueue = struct {
     fn start(self: *@This()) !void {
         @setCold(true);
         if (self.thread) |_| unreachable;
-        self.thread = try std.Thread.spawn(.{ .allocator = self.allocator, .stack_size = 1024 * 8 }, threadMain, .{self});
+        self.thread = try std.Thread.spawn(.{ .allocator = self.allocator, .stack_size = options.stack_size }, threadMain, .{self});
         self.thread.?.setName("TimerQueue Thread") catch {};
     }
 
