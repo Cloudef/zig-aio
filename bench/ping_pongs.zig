@@ -50,7 +50,7 @@ fn server(startup: *coro.ResetEvent) !void {
     }
 
     try coro.io.multi(.{
-        aio.CloseSocket{ .socket = client_sock, .link = .soft },
+        aio.CloseSocket{ .socket = client_sock, .link = .hard },
         aio.CloseSocket{ .socket = socket },
     });
 }
@@ -103,7 +103,7 @@ fn client(startup: *coro.ResetEvent) !void {
     std.log.info("{d:.2} seconds total", .{elapsed / 1e9});
 
     try coro.io.multi(.{
-        aio.Send{ .socket = socket, .buffer = "" },
+        aio.Send{ .socket = socket, .buffer = "", .link = .hard },
         aio.CloseSocket{ .socket = socket },
     });
 }
