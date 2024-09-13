@@ -57,7 +57,7 @@ pub fn yieldForCompletition(self: *@This(), func: anytype, args: anytype, config
     try self.pool.spawn(entrypoint, .{ self, &completed, &token, func, &res, args }, config);
     while (!completed.load(.acquire)) {
         const nerr = io.do(.{
-            aio.WaitEventSource{ .source = &self.source, .link = .soft },
+            aio.WaitEventSource{ .source = &self.source },
         }, if (token.canceled) .io_cancel else .io) catch 1;
         if (nerr > 0) {
             if (Frame.current()) |frame| {
