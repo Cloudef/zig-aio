@@ -5,8 +5,7 @@ const Scheduler = @import("Scheduler.zig");
 const Task = @import("Task.zig");
 const Frame = @import("Frame.zig");
 const DynamicThreadPool = @import("minilib").DynamicThreadPool;
-const ReturnType = @import("minilib").ReturnType;
-const ReturnTypeMixedWithErrorSet = @import("minilib").ReturnTypeMixedWithErrorSet;
+const MixErrorUnionWithErrorSet = @import("minilib").MixErrorUnionWithErrorSet;
 
 pool: DynamicThreadPool,
 source: aio.EventSource,
@@ -33,9 +32,13 @@ pub const CancellationToken = struct {
     canceled: bool = false,
 };
 
-fn entrypoint(self: *@This(), completed: *std.atomic.Value(bool), token: *CancellationToken, comptime func: anytype, res: anytype, args: anytype) void {
+fn hasToken(comptime func: anytype) bool {
     const fun_info = @typeInfo(@TypeOf(func)).Fn;
-    if (fun_info.params.len > 0 and fun_info.params[0].type.? == *const CancellationToken) {
+    return fun_info.params.len > 0 and fun_info.params[0].type.? == *const CancellationToken;
+}
+
+fn entrypoint(self: *@This(), completed: *std.atomic.Value(bool), token: *CancellationToken, comptime func: anytype, res: anytype, args: anytype) void {
+    if (comptime hasToken(func)) {
         res.* = @call(.auto, func, .{token} ++ args);
     } else {
         res.* = @call(.auto, func, args);
@@ -48,12 +51,12 @@ fn entrypoint(self: *@This(), completed: *std.atomic.Value(bool), token: *Cancel
 pub const YieldError = DynamicThreadPool.SpawnError;
 
 /// Yield until `func` finishes on another thread
-pub fn yieldForCompletition(self: *@This(), func: anytype, args: anytype, config: DynamicThreadPool.SpawnConfig) ReturnTypeMixedWithErrorSet(func, YieldError) {
+pub fn yieldForCompletition(self: *@This(), func: anytype, args: anytype, config: DynamicThreadPool.SpawnConfig) MixErrorUnionWithErrorSet(@TypeOf(@call(.auto, func, if (comptime hasToken(func)) .{&CancellationToken{}} ++ args else args)), YieldError) {
     var completed = std.atomic.Value(bool).init(false);
-    var res: ReturnType(func) = undefined;
     _ = self.num_tasks.fetchAdd(1, .monotonic);
     defer _ = self.num_tasks.fetchSub(1, .release);
     var token: CancellationToken = .{};
+    var res: @TypeOf(@call(.auto, func, if (comptime hasToken(func)) .{&token} ++ args else args)) = undefined;
     try self.pool.spawn(entrypoint, .{ self, &completed, &token, func, &res, args }, config);
     while (!completed.load(.acquire)) {
         const nerr = io.do(.{
@@ -76,19 +79,20 @@ pub fn yieldForCompletition(self: *@This(), func: anytype, args: anytype, config
 }
 
 /// Spawn a new coroutine which will immediately call `yieldForCompletition` for later collection of the result
-/// Normally one would use the `spawnForCompletition` method, but in case a generic functions return type can't be deduced, use this any variant.
 pub fn spawnAnyForCompletition(self: *@This(), scheduler: *Scheduler, Result: type, func: anytype, args: anytype, config: DynamicThreadPool.SpawnConfig) Scheduler.SpawnError!Task {
     return scheduler.spawnAny(Result, yieldForCompletition, .{ self, func, args, config }, .{ .stack = .{ .managed = 1024 * 24 } });
 }
 
 /// Helper for getting the Task.Generic when using spawnForCompletition tasks.
 pub fn Generic2(comptime func: anytype) type {
+    const ReturnTypeMixedWithErrorSet = @import("minilib").ReturnTypeMixedWithErrorSet;
     return Task.Generic(ReturnTypeMixedWithErrorSet(func, YieldError));
 }
 
 /// Spawn a new coroutine which will immediately call `yieldForCompletition` for later collection of the result
-pub fn spawnForCompletition(self: *@This(), scheduler: *Scheduler, func: anytype, args: anytype, config: DynamicThreadPool.SpawnConfig) Scheduler.SpawnError!Generic2(func) {
-    const Result = ReturnTypeMixedWithErrorSet(func, YieldError);
+pub fn spawnForCompletition(self: *@This(), scheduler: *Scheduler, func: anytype, args: anytype, config: DynamicThreadPool.SpawnConfig) Scheduler.SpawnError!Task.Generic(MixErrorUnionWithErrorSet(@TypeOf(@call(.auto, func, if (comptime hasToken(func)) .{&CancellationToken{}} ++ args else args)), YieldError)) {
+    const RT = @TypeOf(@call(.auto, func, args));
+    const Result = MixErrorUnionWithErrorSet(RT, YieldError);
     const task = try self.spawnAnyForCompletition(scheduler, Result, func, args, config);
     return task.generic(Result);
 }
