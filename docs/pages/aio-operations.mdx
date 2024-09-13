@@ -12,7 +12,7 @@ Every operation supports these common fields.
 ```zig
 out_id: ?*Id = null,
 out_error: ?*Operation.Error = null,
-link_next: bool = false,
+link: Link = .unlinked,
 userdata: usize = 0,
 ```
 
@@ -32,12 +32,34 @@ When operations are linked, the next operation won't start until this operation 
 
 `userdata` is not interpreted or modified any way, it can be used to link the operations to application specific context.
 
+### Nop
+
+Can be used to wakeup the backend, custom notifications, etc...
+
+```zig
+pub const Error = SharedError;
+ident: usize,
+```
+
 ### Fsync
 
 Synchronizes the contents of a `file` onto the disk.
 
 ```zig
 file: std.fs.File,
+```
+
+### ReadTty
+
+Reads a tty device pointed by `file` into a `buffer`.
+The amount of bytes read is stored in the location pointed by `out_read`.
+If `mode.translation` is given a `TranslationState`, then the input on windows will be translated to VT sequences. (currently unimplemented)
+
+```zig
+tty: std.fs.File,
+buffer: []u8,
+out_read: *usize,
+mode: Mode = .direct,
 ```
 
 ### Read
@@ -103,6 +125,33 @@ See `man send(2)`
 socket: std.posix.socket_t,
 buffer: []const u8,
 out_written: ?*usize = null,
+```
+
+### RecvMsg
+
+See `man recvmsg(2)`
+
+```zig
+socket: std.posix.socket_t,
+out_msg: *posix.msghdr,
+```
+
+### SendMsg
+
+See `man sendmsg(2)`
+
+```zig
+socket: std.posix.socket_t,
+msg: *const posix.msghdr_const,
+```
+
+### Shutdown
+
+See `man shutdown(2)`
+
+```zig
+socket: std.posix.socket_t,
+how: std.posix.ShutdownHow,
 ```
 
 ### OpenAt
