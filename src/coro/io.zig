@@ -18,6 +18,8 @@ pub const OperationContext = struct {
 pub const Error = aio.Error || error{Canceled};
 
 pub fn do(operations: anytype, status: Frame.Status) Error!u16 {
+    // .io_cancel status means the io operation must complete and cannot be canceled
+    // that is, the frame is put in `io_cancel` state rather than normal `io` state.
     std.debug.assert(status == .io or status == .io_cancel);
     if (Frame.current()) |frame| {
         if (frame.canceled) return error.Canceled;
@@ -43,6 +45,7 @@ pub fn do(operations: anytype, status: Frame.Status) Error!u16 {
 
         // check if this was a cancel
         if (whole.num_operations > 0) {
+            // this branch should not ever be executed if status == .io_cancel
             std.debug.assert(status != .io_cancel);
 
             var num_cancels: u16 = 0;
@@ -56,6 +59,9 @@ pub fn do(operations: anytype, status: Frame.Status) Error!u16 {
 
             std.debug.assert(num_cancels > 0);
             whole.num_operations += num_cancels;
+
+            // it's not possible to cancel the `io_cancel` state, so we don't have to
+            // wait for confirmation that scheduler has submitted our cancelation
             Frame.yield(.io_cancel);
             return error.Canceled;
         }
