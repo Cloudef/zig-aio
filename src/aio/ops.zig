@@ -44,6 +44,22 @@ pub const Fsync = struct {
     userdata: usize = 0,
 };
 
+/// std.io.poll
+pub const Poll = struct {
+    pub const Events = enum(u32) {
+        in = std.posix.POLL.IN,
+        out = std.posix.POLL.OUT,
+    };
+
+    pub const Error = std.posix.PollError || SharedError;
+    fd: std.posix.fd_t,
+    events: Events = .in,
+    out_id: ?*Id = null,
+    out_error: ?*Error = null,
+    link: Link = .unlinked,
+    userdata: usize = 0,
+};
+
 /// Special variant of read meant for reading a TTY fd/HANDLE
 /// - Uses workarounds on broken platforms such as MacOS where aio.Read would return EINVAL,
 ///   <https://lists.apple.com/archives/Darwin-dev/2006/Apr/msg00066.html>
@@ -414,6 +430,7 @@ pub const CloseEventSource = struct {
 pub const Operation = enum {
     nop,
     fsync,
+    poll,
     read_tty,
     read,
     write,
@@ -444,6 +461,7 @@ pub const Operation = enum {
     pub const map = std.enums.EnumMap(@This(), type).init(.{
         .nop = Nop,
         .fsync = Fsync,
+        .poll = Poll,
         .read_tty = ReadTty,
         .read = Read,
         .write = Write,

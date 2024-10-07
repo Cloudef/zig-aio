@@ -206,6 +206,7 @@ const ops = @import("aio/ops.zig");
 pub const Id = ops.Id;
 pub const Nop = ops.Nop;
 pub const Fsync = ops.Fsync;
+pub const Poll = ops.Poll;
 pub const ReadTty = ops.ReadTty;
 pub const Read = ops.Read;
 pub const Write = ops.Write;
@@ -286,6 +287,15 @@ test "Fsync" {
     var f = try tmp.dir.createFile("test", .{});
     defer f.close();
     try single(Fsync{ .file = f });
+}
+
+test "Poll" {
+    var source = try EventSource.init();
+    try multi(.{
+        NotifyEventSource{ .source = &source },
+        Poll{ .fd = source.native.fd },
+        CloseEventSource{ .source = &source },
+    });
 }
 
 test "Read" {
