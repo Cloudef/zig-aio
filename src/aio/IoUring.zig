@@ -40,6 +40,7 @@ pub fn isSupported(op_types: []const type) bool {
         op.* = switch (Operation.tagFromPayloadType(op_type)) {
             .nop => std.os.linux.IORING_OP.NOP,
             .fsync => std.os.linux.IORING_OP.FSYNC, // 5.4
+            .poll, .child_exit => std.os.linux.IORING_OP.POLL_ADD, // 5.13 (child_exit uses waitid if available)
             .read_tty, .read, .wait_event_source => std.os.linux.IORING_OP.READ, // 5.6
             .write, .notify_event_source => std.os.linux.IORING_OP.WRITE, // 5.6
             .accept => std.os.linux.IORING_OP.ACCEPT, // 5.5
@@ -58,7 +59,6 @@ pub fn isSupported(op_types: []const type) bool {
             .unlink_at => std.os.linux.IORING_OP.UNLINKAT, // 5.11
             .mkdir_at => std.os.linux.IORING_OP.MKDIRAT, // 5.15
             .symlink_at => std.os.linux.IORING_OP.SYMLINKAT, // 5.15
-            .child_exit => std.os.linux.IORING_OP.POLL_ADD, // 5.13 (uses waitid if available)
             .socket => std.os.linux.IORING_OP.SOCKET, // 5.19
         };
     }
@@ -234,6 +234,7 @@ inline fn uring_queue(io: *std.os.linux.IoUring, op: anytype, user_data: u64) ai
     };
     var sqe = switch (comptime Operation.tagFromPayloadType(@TypeOf(op.*))) {
         .nop => try io.nop(user_data),
+        .poll => try io.poll_add(user_data, op.fd, @intFromEnum(op.events)),
         .fsync => try io.fsync(user_data, op.file.handle, 0),
         .read_tty => try io.read(user_data, op.tty.handle, .{ .buffer = op.buffer }, 0),
         .read => try io.read(user_data, op.file.handle, .{ .buffer = op.buffer }, op.offset),
@@ -349,6 +350,11 @@ inline fn uring_handle_completion(op: anytype, cqe: *std.os.linux.io_uring_cqe) 
                 .NOSPC => error.NoSpaceLeft,
                 .DQUOT => error.DiskQuota,
                 .PERM => error.AccessDenied,
+                else => std.posix.unexpectedErrno(err),
+            },
+            .poll => switch (err) {
+                .SUCCESS, .INTR, .AGAIN, .FAULT, .INVAL => unreachable,
+                .CANCELED => error.Canceled,
                 else => std.posix.unexpectedErrno(err),
             },
             .read_tty, .read => switch (err) {
@@ -661,6 +667,7 @@ inline fn uring_handle_completion(op: anytype, cqe: *std.os.linux.io_uring_cqe) 
     switch (comptime Operation.tagFromPayloadType(@TypeOf(op.*))) {
         .nop => {},
         .fsync => {},
+        .poll => {},
         .read_tty, .read => op.out_read.* = @intCast(cqe.res),
         .write => if (op.out_written) |w| {
             w.* = @intCast(cqe.res);

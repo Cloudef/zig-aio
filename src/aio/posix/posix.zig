@@ -216,6 +216,7 @@ pub fn symlinkAtUring(target: [*:0]const u8, dir: std.fs.Dir, link_path: [*:0]co
 pub inline fn perform(op: anytype, readiness: Readiness) Operation.Error!void {
     switch (comptime Operation.tagFromPayloadType(@TypeOf(op.*))) {
         .fsync => _ = try fsync(op.file.handle),
+        .poll => {},
         .read_tty => op.out_read.* = try readTty(op.tty.handle, op.buffer, op.mode),
         .read => op.out_read.* = try readUring(op.file.handle, op.buffer, @intCast(op.offset)),
         .write => {
@@ -272,6 +273,10 @@ pub inline fn openReadiness(op: anytype) OpenReadinessError!Readiness {
     return switch (comptime Operation.tagFromPayloadType(@TypeOf(op.*))) {
         .nop => .{},
         .fsync => .{},
+        .poll => .{ .fd = op.fd, .mode = switch (op.events) {
+            .in => .in,
+            .out => .out,
+        } },
         .write => .{ .fd = op.file.handle, .mode = .out },
         .read_tty => switch (builtin.target.os.tag) {
             .macos, .ios, .watchos, .visionos, .tvos => .{ .mode = .kludge },
