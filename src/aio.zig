@@ -292,8 +292,8 @@ test "Fsync" {
 test "Poll" {
     var source = try EventSource.init();
     try multi(.{
-        NotifyEventSource{ .source = &source },
-        Poll{ .fd = source.native.fd },
+        NotifyEventSource{ .source = &source, .link = .soft },
+        Poll{ .fd = source.native.fd, .link = .soft },
         CloseEventSource{ .source = &source },
     });
 }

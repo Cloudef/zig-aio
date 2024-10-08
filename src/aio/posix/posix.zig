@@ -273,10 +273,13 @@ pub inline fn openReadiness(op: anytype) OpenReadinessError!Readiness {
     return switch (comptime Operation.tagFromPayloadType(@TypeOf(op.*))) {
         .nop => .{},
         .fsync => .{},
-        .poll => .{ .fd = op.fd, .mode = switch (op.events) {
-            .in => .in,
-            .out => .out,
-        } },
+        .poll => .{
+            .fd = op.fd,
+            .mode = switch (op.events) {
+                .in => .in,
+                .out => .out,
+            },
+        },
         .write => .{ .fd = op.file.handle, .mode = .out },
         .read_tty => switch (builtin.target.os.tag) {
             .macos, .ios, .watchos, .visionos, .tvos => .{ .mode = .kludge },
