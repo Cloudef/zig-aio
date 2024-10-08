@@ -49,6 +49,7 @@ pub const Poll = struct {
     pub const Events = enum(u32) {
         in = std.posix.POLL.IN,
         out = std.posix.POLL.OUT,
+        pri = std.posix.POLL.PRI,
     };
 
     pub const Error = std.posix.PollError || SharedError;
