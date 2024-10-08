@@ -18,7 +18,7 @@ pub const EventSource = struct {
     }
 
     pub fn notifyReadiness(self: *@This()) posix.Readiness {
-        return .{ .fd = self.fd, .mode = .out };
+        return .{ .fd = self.fd, .mode = .{ .out = true } };
     }
 
     pub fn wait(self: *@This()) void {
@@ -27,7 +27,7 @@ pub const EventSource = struct {
     }
 
     pub fn waitReadiness(self: *@This()) posix.Readiness {
-        return .{ .fd = self.fd, .mode = .in };
+        return .{ .fd = self.fd, .mode = .{ .in = true } };
     }
 };
 

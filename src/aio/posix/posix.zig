@@ -38,7 +38,7 @@ pub const PipeEventSource = struct {
     }
 
     pub fn notifyReadiness(self: *@This()) Readiness {
-        return .{ .fd = self.wfd, .mode = .out };
+        return .{ .fd = self.wfd, .mode = .{ .out = true } };
     }
 
     pub fn wait(self: *@This()) void {
@@ -47,7 +47,7 @@ pub const PipeEventSource = struct {
     }
 
     pub fn waitReadiness(self: *@This()) Readiness {
-        return .{ .fd = self.fd, .mode = .in };
+        return .{ .fd = self.fd, .mode = .{ .in = true } };
     }
 };
 
@@ -258,7 +258,13 @@ pub inline fn perform(op: anytype, readiness: Readiness) Operation.Error!void {
 
 pub const Readiness = struct {
     fd: std.posix.fd_t = invalid_fd,
-    mode: enum { nopoll, in, out, pri, kludge } = .nopoll,
+    mode: packed struct(i16) {
+        in: bool = false,
+        out: bool = false,
+        pri: bool = false,
+        kludge: bool = false,
+        _: u12 = 0,
+    } = .{},
 };
 
 pub const OpenReadinessError = error{
@@ -273,27 +279,20 @@ pub inline fn openReadiness(op: anytype) OpenReadinessError!Readiness {
     return switch (comptime Operation.tagFromPayloadType(@TypeOf(op.*))) {
         .nop => .{},
         .fsync => .{},
-        .poll => .{
-            .fd = op.fd,
-            .mode = switch (op.events) {
-                .in => .in,
-                .out => .out,
-                .pri => .pri,
-            },
-        },
-        .write => .{ .fd = op.file.handle, .mode = .out },
+        .poll => .{ .fd = op.fd, .mode = @bitCast(@as(u16, @truncate(@as(u32, @bitCast(op.events))))) },
+        .write => .{ .fd = op.file.handle, .mode = .{ .out = true } },
         .read_tty => switch (builtin.target.os.tag) {
-            .macos, .ios, .watchos, .visionos, .tvos => .{ .mode = .kludge },
-            else => .{ .fd = op.tty.handle, .mode = .in },
+            .macos, .ios, .watchos, .visionos, .tvos => .{ .mode = .{ .kludge } },
+            else => .{ .fd = op.tty.handle, .mode = .{ .in = true } },
         },
-        .read => .{ .fd = op.file.handle, .mode = .in },
-        .accept, .recv, .recv_msg => .{ .fd = op.socket, .mode = .in },
+        .read => .{ .fd = op.file.handle, .mode = .{ .in = true } },
+        .accept, .recv, .recv_msg => .{ .fd = op.socket, .mode = .{ .in = true } },
         .socket, .connect, .shutdown => .{},
-        .send, .send_msg => .{ .fd = op.socket, .mode = .out },
+        .send, .send_msg => .{ .fd = op.socket, .mode = .{ .out = true } },
         .open_at, .close_file, .close_dir, .close_socket => .{},
         .timeout, .link_timeout => .{},
         .cancel, .rename_at, .unlink_at, .mkdir_at, .symlink_at => .{},
-        .child_exit => .{ .fd = (try ChildWatcher.init(op.child)).fd, .mode = .in },
+        .child_exit => .{ .fd = (try ChildWatcher.init(op.child)).fd, .mode = .{ .in = true } },
         .wait_event_source => op.source.native.waitReadiness(),
         .notify_event_source => op.source.native.notifyReadiness(),
         .close_event_source => .{},

@@ -58,7 +58,7 @@ pub const EventSource = switch (builtin.target.os.tag) {
         }
 
         pub fn waitReadiness(self: *@This()) posix.Readiness {
-            return .{ .fd = self.fd, .mode = .in };
+            return .{ .fd = self.fd, .mode = .{ .in } };
         }
     },
 };
