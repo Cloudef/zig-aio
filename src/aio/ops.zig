@@ -46,15 +46,16 @@ pub const Fsync = struct {
 
 /// std.io.poll
 pub const Poll = struct {
-    pub const Events = enum(u32) {
-        in = std.posix.POLL.IN,
-        out = std.posix.POLL.OUT,
-        pri = std.posix.POLL.PRI,
+    pub const Events = packed struct(u32) {
+        in: bool = false,
+        out: bool = false,
+        pri: bool = false,
+        _: u29 = 0,
     };
 
     pub const Error = std.posix.PollError || SharedError;
     fd: std.posix.fd_t,
-    events: Events = .in,
+    events: Events = .{ .in = true },
     out_id: ?*Id = null,
     out_error: ?*Error = null,
     link: Link = .unlinked,
