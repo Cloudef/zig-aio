@@ -228,6 +228,7 @@ fn start(self: *@This(), id: u16, uop: *Operation.Union) !void {
                 .nopoll, .kludge => unreachable,
                 .in => std.posix.POLL.IN,
                 .out => std.posix.POLL.OUT,
+                .pri => std.posix.POLL.PRI,
             },
             .revents = 0,
         }) catch unreachable;

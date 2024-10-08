@@ -258,7 +258,7 @@ pub inline fn perform(op: anytype, readiness: Readiness) Operation.Error!void {
 
 pub const Readiness = struct {
     fd: std.posix.fd_t = invalid_fd,
-    mode: enum { nopoll, in, out, kludge } = .nopoll,
+    mode: enum { nopoll, in, out, pri, kludge } = .nopoll,
 };
 
 pub const OpenReadinessError = error{
@@ -278,6 +278,7 @@ pub inline fn openReadiness(op: anytype) OpenReadinessError!Readiness {
             .mode = switch (op.events) {
                 .in => .in,
                 .out => .out,
+                .pri => .pri,
             },
         },
         .write => .{ .fd = op.file.handle, .mode = .out },
