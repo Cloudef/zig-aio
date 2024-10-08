@@ -110,6 +110,7 @@ pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
 fn queueCallback(self: *@This(), id: u16, uop: *Operation.Union) aio.Error!void {
     self.ovls[id] = .{};
     switch (uop.*) {
+        .poll => return aio.Error.Unsupported,
         .wait_event_source => |*op| op._ = .{ .id = id, .iocp = &self.iocp },
         .accept => |*op| op.out_socket.* = INVALID_SOCKET,
         inline .recv, .send => |*op| op._ = .{.{ .buf = @constCast(@ptrCast(op.buffer.ptr)), .len = @intCast(op.buffer.len) }},
@@ -254,6 +255,7 @@ fn getHandleAccessInfo(handle: HANDLE) !fs.FILE_ACCESS_FLAGS {
 fn start(self: *@This(), id: u16, uop: *Operation.Union) !void {
     var trash: u32 = undefined;
     switch (uop.*) {
+        .poll => unreachable,
         .read => |*op| {
             const flags = try getHandleAccessInfo(op.file.handle);
             if (flags.FILE_READ_DATA != 1) return self.uringlator.finish(id, error.NotOpenForReading);

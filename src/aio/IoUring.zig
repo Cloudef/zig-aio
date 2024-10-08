@@ -38,9 +38,9 @@ pub fn isSupported(op_types: []const type) bool {
     var ops: [op_types.len]std.os.linux.IORING_OP = undefined;
     inline for (op_types, &ops) |op_type, *op| {
         op.* = switch (Operation.tagFromPayloadType(op_type)) {
-            .nop => std.os.linux.IORING_OP.NOP,
-            .fsync => std.os.linux.IORING_OP.FSYNC, // 5.4
-            .poll, .child_exit => std.os.linux.IORING_OP.POLL_ADD, // 5.13 (child_exit uses waitid if available)
+            .nop => std.os.linux.IORING_OP.NOP, // 5.1
+            .fsync => std.os.linux.IORING_OP.FSYNC, // 5.1
+            .poll, .child_exit => std.os.linux.IORING_OP.POLL_ADD, // 5.1 (child_exit uses waitid if available 6.5)
             .read_tty, .read, .wait_event_source => std.os.linux.IORING_OP.READ, // 5.6
             .write, .notify_event_source => std.os.linux.IORING_OP.WRITE, // 5.6
             .accept => std.os.linux.IORING_OP.ACCEPT, // 5.5
