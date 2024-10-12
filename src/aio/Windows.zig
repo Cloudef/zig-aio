@@ -172,7 +172,7 @@ fn iocpDrainThread(self: *@This()) void {
 }
 
 fn spawnIocpThreads(self: *@This()) !void {
-    @setCold(true);
+    @branchHint(.cold);
     for (0..self.iocp.num_threads) |_| try self.tpool.spawn(iocpDrainThread, .{self}, .{ .stack_size = 1024 * 16 });
     self.iocp_threads_spawned = true;
 }

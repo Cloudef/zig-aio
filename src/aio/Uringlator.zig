@@ -267,7 +267,7 @@ pub fn finish(self: *@This(), id: u16, failure: Operation.Error) void {
     self.source.notify();
 }
 
-pub fn uopUnwrapCall(uop: *Operation.Union, comptime func: anytype, args: anytype) @typeInfo(@TypeOf(func)).Fn.return_type.? {
+pub fn uopUnwrapCall(uop: *Operation.Union, comptime func: anytype, args: anytype) @typeInfo(@TypeOf(func)).@"fn".return_type.? {
     switch (uop.*) {
         inline else => |*op| return @call(.auto, func, .{op} ++ args),
     }

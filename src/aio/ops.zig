@@ -496,7 +496,7 @@ pub const Operation = enum {
             .alignment = 0,
         }};
         break :blk @Type(.{
-            .Union = .{
+            .@"union" = .{
                 .layout = .auto,
                 .tag_type = Operation,
                 .fields = fields,
