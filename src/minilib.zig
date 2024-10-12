@@ -28,7 +28,7 @@ pub fn Link(comptime T: type, comptime field: []const u8, comptime container: en
 
 /// Returns the return type of a function
 pub fn ReturnType(comptime func: anytype) type {
-    return @typeInfo(@TypeOf(func)).Fn.return_type orelse @compileError("Return type of a generic function could not be deduced");
+    return @typeInfo(@TypeOf(func)).@"fn".return_type orelse @compileError("Return type of a generic function could not be deduced");
 }
 
 /// Returns the return type of a function with error set mixed in it.
@@ -40,7 +40,7 @@ pub fn ReturnTypeMixedWithErrorSet(comptime func: anytype, comptime E: type) typ
 /// Mix error union with a error set
 pub fn MixErrorUnionWithErrorSet(comptime T: type, comptime E: type) type {
     return switch (@typeInfo(T)) {
-        .ErrorUnion => |eu| (E || eu.error_set)!eu.payload,
+        .error_union => |eu| (E || eu.error_set)!eu.payload,
         else => E!T,
     };
 }
