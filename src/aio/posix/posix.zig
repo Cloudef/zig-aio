@@ -331,6 +331,9 @@ pub const MSG = switch (builtin.target.os.tag) {
     => struct {
         pub const DONTWAIT = 0x0080;
     },
+    .wasi => struct {
+        pub const DONTWAIT = 0x0;
+    },
     else => std.posix.MSG,
 };
 
