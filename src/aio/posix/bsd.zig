@@ -4,8 +4,7 @@ const posix = @import("posix.zig");
 
 pub const EVFILT_USER = switch (builtin.target.os.tag) {
     .openbsd => @compileError("openbsd lacks EVFILT_USER"),
-    .dragonfly => -9,
-    else => std.posix.system.EVFILT_USER,
+    else => std.posix.system.EVFILT.USER,
 };
 
 pub const msghdr_const = switch (builtin.target.os.tag) {
@@ -41,8 +40,8 @@ pub const EventSource = switch (builtin.target.os.tag) {
             _ = std.posix.kevent(self.fd, &.{.{
                 .ident = self.counter.fetchAdd(1, .monotonic),
                 .filter = EVFILT_USER,
-                .flags = std.posix.system.EV_ADD | std.posix.system.EV_ENABLE | std.posix.system.EV_ONESHOT,
-                .fflags = std.posix.system.NOTE_TRIGGER,
+                .flags = std.posix.system.EV.ADD | std.posix.system.EV.ENABLE | std.posix.system.EV.ONESHOT,
+                .fflags = std.posix.system.NOTE.TRIGGER,
                 .data = 0,
                 .udata = 0,
             }}, &.{}, null) catch @panic("EventSource.notify failed");
@@ -71,9 +70,9 @@ pub const ChildWatcher = struct {
         const fd = try std.posix.kqueue();
         _ = std.posix.kevent(fd, &.{.{
             .ident = @intCast(id),
-            .filter = std.posix.system.EVFILT_PROC,
-            .flags = std.posix.system.EV_ADD | std.posix.system.EV_ENABLE | std.posix.system.EV_ONESHOT,
-            .fflags = std.posix.system.NOTE_EXIT,
+            .filter = std.posix.system.EVFILT.PROC,
+            .flags = std.posix.system.EV.ADD | std.posix.system.EV.ENABLE | std.posix.system.EV.ONESHOT,
+            .fflags = std.posix.system.NOTE.EXIT,
             .data = 0,
             .udata = 0,
         }}, &.{}, null) catch |err| return switch (err) {
