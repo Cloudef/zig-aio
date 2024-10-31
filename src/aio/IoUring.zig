@@ -234,7 +234,7 @@ inline fn uring_queue(io: *std.os.linux.IoUring, op: anytype, user_data: u64) ai
     };
     var sqe = switch (comptime Operation.tagFromPayloadType(@TypeOf(op.*))) {
         .nop => try io.nop(user_data),
-        .poll => try io.poll_add(user_data, op.fd, @bitCast(op.events)),
+        .poll => try io.poll_add(user_data, op.fd, @intCast(@as(u16, @bitCast(op.events)))),
         .fsync => try io.fsync(user_data, op.file.handle, 0),
         .read_tty => try io.read(user_data, op.tty.handle, .{ .buffer = op.buffer }, 0),
         .read => try io.read(user_data, op.file.handle, .{ .buffer = op.buffer }, op.offset),
@@ -332,7 +332,7 @@ inline fn uring_copy_cqes(io: *std.os.linux.IoUring, cqes: []std.os.linux.io_uri
 
 inline fn uring_handle_completion(op: anytype, cqe: *std.os.linux.io_uring_cqe) !void {
     defer if (comptime @TypeOf(op.*) == aio.ChildExit) {
-        if (!Supported.waitid) posix.closeReadiness(op, .{ .fd = op._.fd, .mode = .{ .in = true } });
+        if (!Supported.waitid) posix.closeReadiness(op, .{ .fd = op._.fd, .events = .{ .in = true } });
     };
 
     const err = cqe.err();
@@ -689,7 +689,7 @@ inline fn uring_handle_completion(op: anytype, cqe: *std.os.linux.io_uring_cqe) 
             if (Supported.waitid) {
                 if (op.out_term) |term| term.* = posix.statusToTerm(@intCast(op._.siginfo.fields.common.second.sigchld.status));
             } else {
-                try posix.perform(op, .{ .fd = op._.fd, .mode = .{ .in = true } });
+                try posix.perform(op, .{ .fd = op._.fd, .events= .{ .in = true } });
             }
         },
         .socket => op.out_socket.* = cqe.res,

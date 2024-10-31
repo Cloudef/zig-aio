@@ -175,9 +175,7 @@ fn onThreadTimeout(ctx: *anyopaque, user_data: usize) void {
 }
 
 fn start(self: *@This(), id: u16, uop: *Operation.Union) !void {
-    if (@as(i16, @bitCast(self.readiness[id].mode)) == 0 or self.readiness[id].mode.kludge or self.pending.isSet(id)) {
-        // only single mode
-        std.debug.assert(@as(u16, @bitCast(self.readiness[id].mode)) % 2 == 0);
+    if (@as(i16, @bitCast(self.readiness[id].events)) == 0 or self.readiness[id].kludge or self.pending.isSet(id)) {
         switch (uop.*) {
             inline .timeout, .link_timeout => |*op| {
                 const closure: TimerQueue.Closure = .{ .context = self, .callback = onThreadTimeout };
@@ -195,7 +193,7 @@ fn start(self: *@This(), id: u16, uop: *Operation.Union) !void {
             => self.onThreadExecutor(id, uop, self.readiness[id]),
             else => {
                 // perform on thread
-                if (!self.readiness[id].mode.kludge) {
+                if (!self.readiness[id].kludge) {
                     try self.tpool.spawn(onThreadExecutor, .{ self, id, uop, self.readiness[id] }, .{ .stack_size = posix.stack_size });
                 } else {
                     try self.kludge_tpool.spawn(onThreadExecutor, .{ self, id, uop, self.readiness[id] }, .{ .stack_size = posix.stack_size });
@@ -226,7 +224,7 @@ fn start(self: *@This(), id: u16, uop: *Operation.Union) !void {
         std.debug.assert(self.readiness[id].fd != posix.invalid_fd);
         self.pfd.add(.{
             .fd = self.readiness[id].fd,
-            .events = @bitCast(self.readiness[id].mode),
+            .events = @bitCast(self.readiness[id].events),
             .revents = 0,
         }) catch unreachable;
         self.pending.set(id);

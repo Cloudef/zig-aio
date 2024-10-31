@@ -46,11 +46,11 @@ pub const Fsync = struct {
 
 /// std.io.poll
 pub const Poll = struct {
-    pub const Events = packed struct(u32) {
+    pub const Events = packed struct(u16) {
         in: bool = false,
-        out: bool = false,
         pri: bool = false,
-        _: u29 = 0,
+        out: bool = false,
+        _: u13 = 0,
     };
 
     pub const Error = std.posix.PollError || SharedError;
