@@ -290,12 +290,29 @@ test "Fsync" {
 }
 
 test "Poll" {
-    var source = try EventSource.init();
-    try multi(.{
-        NotifyEventSource{ .source = &source, .link = .soft },
-        Poll{ .fd = source.native.fd, .link = .soft },
-        CloseEventSource{ .source = &source },
-    });
+    {
+        var source = try EventSource.init();
+        try multi(.{
+            NotifyEventSource{ .source = &source, .link = .soft },
+            Poll{ .fd = source.native.fd, .link = .soft },
+            CloseEventSource{ .source = &source },
+        });
+    }
+    {
+        var source = try EventSource.init();
+        try multi(.{
+            Poll{ .fd = source.native.fd, .events = .{ .out = true }, .link = .soft },
+            CloseEventSource{ .source = &source },
+        });
+    }
+    {
+        var source = try EventSource.init();
+        try multi(.{
+            NotifyEventSource{ .source = &source, .link = .soft },
+            Poll{ .fd = source.native.fd, .events = .{ .in = true, .out = true }, .link = .soft },
+            CloseEventSource{ .source = &source },
+        });
+    }
 }
 
 test "Read" {

@@ -258,13 +258,8 @@ pub inline fn perform(op: anytype, readiness: Readiness) Operation.Error!void {
 
 pub const Readiness = struct {
     fd: std.posix.fd_t = invalid_fd,
-    mode: packed struct(i16) {
-        in: bool = false,
-        out: bool = false,
-        pri: bool = false,
-        kludge: bool = false,
-        _: u12 = 0,
-    } = .{},
+    events: ops.Poll.Events = .{},
+    kludge: bool = false,
 };
 
 pub const OpenReadinessError = error{
@@ -279,20 +274,20 @@ pub inline fn openReadiness(op: anytype) OpenReadinessError!Readiness {
     return switch (comptime Operation.tagFromPayloadType(@TypeOf(op.*))) {
         .nop => .{},
         .fsync => .{},
-        .poll => .{ .fd = op.fd, .mode = @bitCast(@as(u16, @truncate(@as(u32, @bitCast(op.events))))) },
-        .write => .{ .fd = op.file.handle, .mode = .{ .out = true } },
+        .poll => .{ .fd = op.fd, .events = op.events },
+        .write => .{ .fd = op.file.handle, .events = .{ .out = true } },
         .read_tty => switch (builtin.target.os.tag) {
-            .macos, .ios, .watchos, .visionos, .tvos => .{ .mode = .{ .kludge } },
-            else => .{ .fd = op.tty.handle, .mode = .{ .in = true } },
+            .macos, .ios, .watchos, .visionos, .tvos => .{ .kludge = true },
+            else => .{ .fd = op.tty.handle, .events = .{ .in = true } },
         },
-        .read => .{ .fd = op.file.handle, .mode = .{ .in = true } },
-        .accept, .recv, .recv_msg => .{ .fd = op.socket, .mode = .{ .in = true } },
+        .read => .{ .fd = op.file.handle, .events = .{ .in = true } },
+        .accept, .recv, .recv_msg => .{ .fd = op.socket, .events = .{ .in = true } },
         .socket, .connect, .shutdown => .{},
-        .send, .send_msg => .{ .fd = op.socket, .mode = .{ .out = true } },
+        .send, .send_msg => .{ .fd = op.socket, .events = .{ .out = true } },
         .open_at, .close_file, .close_dir, .close_socket => .{},
         .timeout, .link_timeout => .{},
         .cancel, .rename_at, .unlink_at, .mkdir_at, .symlink_at => .{},
-        .child_exit => .{ .fd = (try ChildWatcher.init(op.child)).fd, .mode = .{ .in = true } },
+        .child_exit => .{ .fd = (try ChildWatcher.init(op.child)).fd, .events = .{ .in = true } },
         .wait_event_source => op.source.native.waitReadiness(),
         .notify_event_source => op.source.native.notifyReadiness(),
         .close_event_source => .{},
