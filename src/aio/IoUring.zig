@@ -255,15 +255,15 @@ inline fn uring_queue(io: *std.os.linux.IoUring, op: anytype, user_data: u64) ai
         .close_dir => try io.close(user_data, op.dir.fd),
         .timeout => blk: {
             const ts: std.os.linux.kernel_timespec = .{
-                .tv_sec = @intCast(op.ns / std.time.ns_per_s),
-                .tv_nsec = @intCast(op.ns % std.time.ns_per_s),
+                .sec = @intCast(op.ns / std.time.ns_per_s),
+                .nsec = @intCast(op.ns % std.time.ns_per_s),
             };
             break :blk try io.timeout(user_data, &ts, 0, 0);
         },
         .link_timeout => blk: {
             const ts: std.os.linux.kernel_timespec = .{
-                .tv_sec = @intCast(op.ns / std.time.ns_per_s),
-                .tv_nsec = @intCast(op.ns % std.time.ns_per_s),
+                .sec = @intCast(op.ns / std.time.ns_per_s),
+                .nsec = @intCast(op.ns % std.time.ns_per_s),
             };
             break :blk try io.link_timeout(user_data, &ts, 0);
         },

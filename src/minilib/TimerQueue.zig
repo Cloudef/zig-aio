@@ -110,7 +110,7 @@ fn Queue(comptime name: []const u8, Impl: type) type {
         }
 
         fn start(self: *@This()) !void {
-            @setCold(true);
+            @branchHint(.cold);
             if (self.thread) |_| unreachable;
             self.thread = try std.Thread.spawn(.{ .allocator = self.queue.allocator, .stack_size = options.stack_size }, threadMain, .{self});
             self.thread.?.setName(name) catch {};
@@ -184,12 +184,12 @@ const MonotonicQueue = Queue("MonotonicQueue", struct {
                 return ns;
             },
             .macos, .ios, .tvos, .watchos, .visionos => std.posix.CLOCK.UPTIME_RAW,
-            .linux => std.posix.CLOCK.MONOTONIC,
-            else => std.posix.CLOCK.BOOTTIME,
+            .linux, .openbsd => std.posix.CLOCK.MONOTONIC,
+            else => std.posix.CLOCK.UPTIME,
         };
         var ts: std.posix.timespec = undefined;
         std.posix.clock_gettime(clock_id, &ts) catch return error.Unsupported;
-        return (@as(u128, @intCast(ts.tv_sec)) * std.time.ns_per_s) + @as(u128, @intCast(ts.tv_nsec));
+        return (@as(u128, @intCast(ts.sec)) * std.time.ns_per_s) + @as(u128, @intCast(ts.nsec));
     }
 
     fn onThreadSleepLoop(super: anytype) void {
@@ -239,7 +239,7 @@ const BoottimeQueue = Queue("BoottimeQueue", struct {
         };
         var ts: std.posix.timespec = undefined;
         std.posix.clock_gettime(clock_id, &ts) catch return error.Unsupported;
-        return (@as(u128, @intCast(ts.tv_sec)) * std.time.ns_per_s) + @as(u128, @intCast(ts.tv_nsec));
+        return (@as(u128, @intCast(ts.sec)) * std.time.ns_per_s) + @as(u128, @intCast(ts.nsec));
     }
 
     fn onThreadSleepLoop(super: anytype) void {
@@ -281,7 +281,7 @@ const RealtimeQueue = Queue("RealtimeQueue", struct {
             else => {
                 var ts: std.posix.timespec = undefined;
                 std.posix.clock_gettime(std.posix.CLOCK.REALTIME, &ts) catch return error.Unsupported;
-                return (@as(u128, @intCast(ts.tv_sec)) * std.time.ns_per_s) + @as(u128, @intCast(ts.tv_nsec));
+                return (@as(u128, @intCast(ts.sec)) * std.time.ns_per_s) + @as(u128, @intCast(ts.nsec));
             },
         }
     }
@@ -409,12 +409,12 @@ const LinuxTimerQueue = struct {
         };
         errdefer std.posix.close(fd);
         const interval: std.os.linux.timespec = .{
-            .tv_sec = @intCast(ns / std.time.ns_per_s),
-            .tv_nsec = @intCast(ns % std.time.ns_per_s),
+            .sec = @intCast(ns / std.time.ns_per_s),
+            .nsec = @intCast(ns % std.time.ns_per_s),
         };
         const ts: std.os.linux.itimerspec = .{
             .it_value = interval,
-            .it_interval = if (opts.expirations != 1) interval else .{ .tv_sec = 0, .tv_nsec = 0 },
+            .it_interval = if (opts.expirations != 1) interval else .{ .sec = 0, .nsec = 0 },
         };
         std.posix.timerfd_settime(fd, .{ .ABSTIME = opts.absolute }, &ts, null) catch |err| return switch (err) {
             error.Canceled, error.InvalidHandle => unreachable,
@@ -454,7 +454,7 @@ const LinuxTimerQueue = struct {
     }
 
     fn start(self: *@This()) !void {
-        @setCold(true);
+        @branchHint(.cold);
         if (self.thread) |_| unreachable;
         self.thread = try std.Thread.spawn(.{ .allocator = self.allocator, .stack_size = options.stack_size }, threadMain, .{self});
         self.thread.?.setName("TimerQueue Thread") catch {};

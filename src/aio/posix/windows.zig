@@ -60,7 +60,7 @@ pub const Iocp = struct {
         // > This completion key should be unique for each file handle, and it accompanies the file handle throughout the
         // > internal completion queuing process.
         id: u16,
-        _: @Type(.{ .Int = .{ .bits = @bitSizeOf(usize) - @bitSizeOf(u16) * 2, .signedness = .unsigned } }) = undefined,
+        _: @Type(.{ .int = .{ .bits = @bitSizeOf(usize) - @bitSizeOf(u16) * 2, .signedness = .unsigned } }) = undefined,
     };
 
     port: HANDLE,

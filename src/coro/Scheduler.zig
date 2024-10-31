@@ -1,6 +1,5 @@
 const std = @import("std");
 const aio = @import("aio");
-const io = @import("io.zig");
 const Frame = @import("Frame.zig");
 const Task = @import("Task.zig");
 const options = @import("../coro.zig").options;

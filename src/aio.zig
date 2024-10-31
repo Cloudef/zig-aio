@@ -85,12 +85,12 @@ pub const Dynamic = struct {
     /// The call is atomic, if any of the operations fail to queue, then the given operations are reverted
     pub inline fn queue(self: *@This(), operations: anytype) Error!void {
         const ti = @typeInfo(@TypeOf(operations));
-        if (comptime ti == .Struct and ti.Struct.is_tuple) {
+        if (comptime ti == .@"struct" and ti.@"struct".is_tuple) {
             if (comptime operations.len == 0) @compileError("no work to be done");
             var uops: [operations.len]ops.Operation.Union = undefined;
             inline for (operations, &uops) |op, *uop| uop.* = ops.Operation.uopFromOp(op);
             return self.io.queue(operations.len, &uops, self.queue_callback);
-        } else if (comptime ti == .Array) {
+        } else if (comptime ti == .array) {
             if (comptime operations.len == 0) @compileError("no work to be done");
             var uops: [operations.len]ops.Operation.Union = undefined;
             inline for (operations, &uops) |op, *uop| uop.* = ops.Operation.uopFromOp(op);
@@ -132,12 +132,12 @@ pub const Dynamic = struct {
 /// Returns the number of errors occured, 0 if there were no errors
 pub inline fn complete(operations: anytype) Error!u16 {
     const ti = @typeInfo(@TypeOf(operations));
-    if (comptime ti == .Struct and ti.Struct.is_tuple) {
+    if (comptime ti == .@"struct" and ti.@"struct".is_tuple) {
         if (comptime operations.len == 0) @compileError("no work to be done");
         var uops: [operations.len]ops.Operation.Union = undefined;
         inline for (operations, &uops) |op, *uop| uop.* = ops.Operation.uopFromOp(op);
         return IO.immediate(operations.len, &uops);
-    } else if (comptime ti == .Array) {
+    } else if (comptime ti == .array) {
         if (comptime operations.len == 0) @compileError("no work to be done");
         var uops: [operations.len]ops.Operation.Union = undefined;
         inline for (operations, &uops) |op, *uop| uop.* = ops.Operation.uopFromOp(op);
