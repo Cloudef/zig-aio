@@ -3,7 +3,7 @@
     .version = "0.0.0",
     .dependencies = .{
         .zigwin32 = .{
-            .url = "git+https://github.com/kcbanner/zigwin32#49874d0c5bce4a28db649b3365af314c3bf876f92",
+            .url = "git+https://github.com/kcbanner/zigwin32#49874d0c5bce4a28db649b3365af314c3bf876f9",
             .hash = "122098d4c1d45686f4f40b4387ddafbc5401fd1138aba2cfc90d1f34cf3d471849a7",
             .lazy = true,
         },
