@@ -290,6 +290,7 @@ test "Fsync" {
 }
 
 test "Poll" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
     {
         var source = try EventSource.init();
         try multi(.{
@@ -298,20 +299,17 @@ test "Poll" {
             CloseEventSource{ .source = &source },
         });
     }
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
     {
-        var source = try EventSource.init();
-        try multi(.{
-            Poll{ .fd = source.native.fd, .events = .{ .out = true }, .link = .soft },
-            CloseEventSource{ .source = &source },
-        });
+        var f = try tmp.dir.createFile("test", .{ .read = true });
+        defer f.close();
+        try single(Poll{ .fd = f.handle, .events = .{ .out = true }, .link = .soft });
     }
     {
-        var source = try EventSource.init();
-        try multi(.{
-            NotifyEventSource{ .source = &source, .link = .soft },
-            Poll{ .fd = source.native.fd, .events = .{ .in = true, .out = true }, .link = .soft },
-            CloseEventSource{ .source = &source },
-        });
+        var f = try tmp.dir.createFile("test", .{ .read = true });
+        defer f.close();
+        try single(Poll{ .fd = f.handle, .events = .{ .in = true, .out = true }, .link = .soft });
     }
 }
 
