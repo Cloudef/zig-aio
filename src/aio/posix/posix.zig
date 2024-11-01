@@ -38,7 +38,7 @@ pub const PipeEventSource = struct {
     }
 
     pub fn notifyReadiness(self: *@This()) Readiness {
-        return .{ .fd = self.wfd, .mode = .{ .out = true } };
+        return .{ .fd = self.wfd, .events = .{ .out = true } };
     }
 
     pub fn wait(self: *@This()) void {
@@ -47,7 +47,7 @@ pub const PipeEventSource = struct {
     }
 
     pub fn waitReadiness(self: *@This()) Readiness {
-        return .{ .fd = self.fd, .mode = .{ .in = true } };
+        return .{ .fd = self.fd, .events = .{ .in = true } };
     }
 };
 
