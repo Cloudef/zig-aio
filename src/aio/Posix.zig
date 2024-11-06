@@ -222,9 +222,13 @@ fn start(self: *@This(), id: u16, uop: *Operation.Union) !void {
             Uringlator.debug("pending: {}: {}", .{ id, std.meta.activeTag(uop.*) });
         }
         std.debug.assert(self.readiness[id].fd != posix.invalid_fd);
+        var events: i16 = 0;
+        if (self.readiness[id].events.in) events |= std.posix.POLL.IN;
+        if (self.readiness[id].events.out) events |= std.posix.POLL.OUT;
+        if (@hasDecl(std.posix.POLL, "PRI") and self.readiness[id].events.pri) events |= std.posix.POLL.PRI;
         self.pfd.add(.{
             .fd = self.readiness[id].fd,
-            .events = @bitCast(self.readiness[id].events),
+            .events = events,
             .revents = 0,
         }) catch unreachable;
         self.pending.set(id);

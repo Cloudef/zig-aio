@@ -46,6 +46,7 @@ pub const Fsync = struct {
 
 /// std.io.poll
 pub const Poll = struct {
+    // Matches Linux structure
     pub const Events = packed struct(u16) {
         in: bool = false,
         pri: bool = false,
