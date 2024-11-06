@@ -136,29 +136,36 @@ pub fn pipe() std.posix.PipeError![2]std.posix.fd_t {
 pub fn poll(fds: []std.posix.pollfd, timeout: i32) std.posix.PollError!usize {
     // TODO: maybe use thread local arena instead?
     const MAX_POLL_FDS = 4096;
-    const sub_len = fds.len + @intFromBool(timeout >= 0);
-    std.debug.assert(sub_len <= MAX_POLL_FDS);
-    var subs: [MAX_POLL_FDS]std.os.wasi.subscription_t = undefined;
-    for (fds, subs[0..fds.len]) |*pfd, *sub| {
+    std.debug.assert(fds.len > 0);
+    var subs: std.BoundedArray(std.os.wasi.subscription_t, MAX_POLL_FDS) = .{};
+    for (fds) |*pfd| {
         pfd.revents = 0;
-        sub.userdata = @intFromPtr(pfd);
-        const mask = std.posix.POLL.IN | std.posix.POLL.OUT;
-        if (pfd.events & mask == mask) return error.Unexpected;
         if (pfd.events & std.posix.POLL.IN != 0) {
-            sub.u = .{
-                .tag = .FD_READ,
-                .u = .{ .fd_read = .{ .fd = pfd.fd } },
-            };
-        } else if (pfd.events & std.posix.POLL.OUT != 0) {
-            sub.u = .{
-                .tag = .FD_WRITE,
-                .u = .{ .fd_write = .{ .fd = pfd.fd } },
-            };
+            subs.append(.{
+                .userdata = @intFromPtr(pfd),
+                .u = .{
+                    .tag = .FD_READ,
+                    .u = .{ .fd_read = .{ .fd = pfd.fd } },
+                },
+            }) catch return error.SystemResources;
+        }
+        if (pfd.events & std.posix.POLL.OUT != 0) {
+            subs.append(.{
+                .userdata = @intFromPtr(pfd),
+                .u = .{
+                    .tag = .FD_WRITE,
+                    .u = .{ .fd_write = .{ .fd = pfd.fd } },
+                },
+            }) catch return error.SystemResources;
         }
     }
 
+    if (subs.len == 0) {
+        return error.Unexpected;
+    }
+
     if (timeout >= 0) {
-        subs[fds.len] = .{
+        subs.append(.{
             .userdata = 0,
             .u = .{
                 .tag = .CLOCK,
@@ -171,12 +178,12 @@ pub fn poll(fds: []std.posix.pollfd, timeout: i32) std.posix.PollError!usize {
                     },
                 },
             },
-        };
+        }) catch return error.SystemResources;
     }
 
     var n: usize = 0;
     var events: [MAX_POLL_FDS]std.os.wasi.event_t = undefined;
-    switch (std.os.wasi.poll_oneoff(@ptrCast(subs[0..sub_len].ptr), @ptrCast(events[0..sub_len].ptr), sub_len, &n)) {
+    switch (std.os.wasi.poll_oneoff(@ptrCast(subs.constSlice().ptr), @ptrCast(events[0..subs.len].ptr), subs.len, &n)) {
         .SUCCESS => {},
         else => |e| {
             log.err("poll: {}", .{e});
