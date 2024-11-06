@@ -290,7 +290,9 @@ test "Fsync" {
 }
 
 test "Poll" {
-    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    if (builtin.os.tag == .windows) {
+        return error.SkipZigTest;
+    }
     {
         var source = try EventSource.init();
         try multi(.{
