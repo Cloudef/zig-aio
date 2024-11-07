@@ -511,7 +511,7 @@ pub const Operation = enum {
 
     pub const Union = blk: {
         var fields: []const std.builtin.Type.UnionField = &.{};
-        for (Operation.map.values, 0..) |v, idx| fields = fields ++ .{.{
+        for (Operation.map.values, 0..) |v, idx| fields = fields ++ .{ std.builtin.Type.UnionField{
             .name = @tagName(@as(Operation, @enumFromInt(idx))),
             .type = v,
             .alignment = 0,
