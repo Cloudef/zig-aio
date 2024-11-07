@@ -51,7 +51,7 @@ fn entrypoint(self: *@This(), completed: *std.atomic.Value(bool), token: *Cancel
 pub const YieldError = DynamicThreadPool.SpawnError;
 
 /// Yield until `func` finishes on another thread
-pub fn yieldForCompletition(self: *@This(), func: anytype, args: anytype, config: DynamicThreadPool.SpawnConfig) MixErrorUnionWithErrorSet(@TypeOf(@call(.auto, func, if (comptime hasToken(func)) .{&CancellationToken{}} ++ args else args)), YieldError) {
+pub fn yieldForCompletion(self: *@This(), func: anytype, args: anytype, config: DynamicThreadPool.SpawnConfig) MixErrorUnionWithErrorSet(@TypeOf(@call(.auto, func, if (comptime hasToken(func)) .{&CancellationToken{}} ++ args else args)), YieldError) {
     var completed = std.atomic.Value(bool).init(false);
     _ = self.num_tasks.fetchAdd(1, .monotonic);
     defer _ = self.num_tasks.fetchSub(1, .release);
@@ -78,22 +78,22 @@ pub fn yieldForCompletition(self: *@This(), func: anytype, args: anytype, config
     return res;
 }
 
-/// Spawn a new coroutine which will immediately call `yieldForCompletition` for later collection of the result
-pub fn spawnAnyForCompletition(self: *@This(), scheduler: *Scheduler, Result: type, func: anytype, args: anytype, config: DynamicThreadPool.SpawnConfig) Scheduler.SpawnError!Task {
-    return scheduler.spawnAny(Result, yieldForCompletition, .{ self, func, args, config }, .{ .stack = .{ .managed = 1024 * 24 } });
+/// Spawn a new coroutine which will immediately call `yieldForCompletion` for later collection of the result
+pub fn spawnAnyForCompletion(self: *@This(), scheduler: *Scheduler, Result: type, func: anytype, args: anytype, config: DynamicThreadPool.SpawnConfig) Scheduler.SpawnError!Task {
+    return scheduler.spawnAny(Result, yieldForCompletion, .{ self, func, args, config }, .{ .stack = .{ .managed = 1024 * 24 } });
 }
 
-/// Helper for getting the Task.Generic when using spawnForCompletition tasks.
+/// Helper for getting the Task.Generic when using spawnForCompletion tasks.
 pub fn Generic2(comptime func: anytype) type {
     const ReturnTypeMixedWithErrorSet = @import("minilib").ReturnTypeMixedWithErrorSet;
     return Task.Generic(ReturnTypeMixedWithErrorSet(func, YieldError));
 }
 
-/// Spawn a new coroutine which will immediately call `yieldForCompletition` for later collection of the result
-pub fn spawnForCompletition(self: *@This(), scheduler: *Scheduler, func: anytype, args: anytype, config: DynamicThreadPool.SpawnConfig) Scheduler.SpawnError!Task.Generic(MixErrorUnionWithErrorSet(@TypeOf(@call(.auto, func, if (comptime hasToken(func)) .{&CancellationToken{}} ++ args else args)), YieldError)) {
+/// Spawn a new coroutine which will immediately call `yieldForCompletion` for later collection of the result
+pub fn spawnForCompletion(self: *@This(), scheduler: *Scheduler, func: anytype, args: anytype, config: DynamicThreadPool.SpawnConfig) Scheduler.SpawnError!Task.Generic(MixErrorUnionWithErrorSet(@TypeOf(@call(.auto, func, if (comptime hasToken(func)) .{&CancellationToken{}} ++ args else args)), YieldError)) {
     const RT = @TypeOf(@call(.auto, func, args));
     const Result = MixErrorUnionWithErrorSet(RT, YieldError);
-    const task = try self.spawnAnyForCompletition(scheduler, Result, func, args, config);
+    const task = try self.spawnAnyForCompletion(scheduler, Result, func, args, config);
     return task.generic(Result);
 }
 
@@ -107,7 +107,7 @@ test "ThreadPool" {
         }
 
         fn task(pool: *ThreadPool) !void {
-            const ret = try pool.yieldForCompletition(blocking, .{}, .{});
+            const ret = try pool.yieldForCompletion(blocking, .{}, .{});
             try std.testing.expectEqual(69, ret);
         }
 
@@ -119,7 +119,7 @@ test "ThreadPool" {
         }
 
         fn task2(pool: *ThreadPool) !u32 {
-            return try pool.yieldForCompletition(blockingCanceled, .{}, .{});
+            return try pool.yieldForCompletion(blockingCanceled, .{}, .{});
         }
     };
 
@@ -138,7 +138,7 @@ test "ThreadPool" {
     }
 
     {
-        var task = try pool.spawnForCompletition(&scheduler, Test.blocking, .{}, .{});
+        var task = try pool.spawnForCompletion(&scheduler, Test.blocking, .{}, .{});
         const res = task.complete(.wait);
         try std.testing.expectEqual(69, res);
     }

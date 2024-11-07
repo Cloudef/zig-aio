@@ -234,7 +234,7 @@ pub fn complete(
             num_errors += @intFromBool(failure != error.Success);
         }
 
-        uopUnwrapCall(&self.ops.nodes[res.id].used, completition, .{ self, .{ .id = res.id, .failure = failure } });
+        uopUnwrapCall(&self.ops.nodes[res.id].used, completion, .{ self, .{ .id = res.id, .failure = failure } });
 
         var uop = self.ops.nodes[res.id].used;
         self.removeOp(res.id);
@@ -244,7 +244,7 @@ pub fn complete(
     return .{ .num_completed = @truncate(finished.len), .num_errors = num_errors };
 }
 
-inline fn completition(op: anytype, self: *@This(), res: Result) void {
+inline fn completion(op: anytype, self: *@This(), res: Result) void {
     if (op.out_error) |err| err.* = @errorCast(res.failure);
     if (op.link != .unlinked and self.next[res.id] != res.id) {
         if (self.ops.nodes[self.next[res.id]].used == .link_timeout) {
