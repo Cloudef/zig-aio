@@ -6,7 +6,7 @@ Inside a task it is possible to use the IO functions inside the `coro.io` namesp
 IO with the `Scheduler`. When calling a `coro.io` operation from a task, the task setups some internal state,
 queues the IO operations for `Scheduler` and then yields, allowing other code to run in the program.
 
-All the IO operations are merged into one `aio.Dynamic` instance for completition during the next scheduler tick.
+All the IO operations are merged into one `aio.Dynamic` instance for completion during the next scheduler tick.
 While this may not be beneficial on all backends, the io_uring backend allows the kernel to execute all
 the yielding tasks IO operations with a single syscall.
 
