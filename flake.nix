@@ -45,6 +45,11 @@
         fi
       '';
 
+      # nix run .#check
+      apps.check = env.app [] ''
+        zig fmt --check .
+      '';
+
       # nix run .#docs
       apps.docs = env.app [] "zig build docs -- \"$@\"";
 
