@@ -267,27 +267,27 @@ pub fn finish(self: *@This(), id: u16, failure: Operation.Error) void {
     self.source.notify();
 }
 
-fn uopUnwrapCallArgsType(func: anytype) type {
+fn UopUnwrapCallArgsType(func: anytype) type {
     const params = @typeInfo(@TypeOf(func)).@"fn".params;
     comptime var fields: [params.len - 1]std.builtin.Type.StructField = undefined;
     for (&fields, params.ptr + 1, 0..) |*f, p, i| {
         f.* = .{
-            .name = std.fmt.comptimePrint("{}", .{ i }),
+            .name = std.fmt.comptimePrint("{}", .{i}),
             .default_value = null,
             .type = p.type orelse unreachable,
             .is_comptime = false,
-            .alignment = @alignOf(p.type orelse unreachable),
+            .alignment = 0,
         };
     }
     return @Type(.{ .@"struct" = .{
-       .layout = .auto,
-       .fields = &fields,
-       .decls = &.{},
-       .is_tuple = true,
+        .layout = .auto,
+        .fields = &fields,
+        .decls = &.{},
+        .is_tuple = true,
     } });
 }
 
-pub fn uopUnwrapCall(uop: *Operation.Union, comptime func: anytype, args: uopUnwrapCallArgsType(func)) @typeInfo(@TypeOf(func)).@"fn".return_type.? {
+pub fn uopUnwrapCall(uop: *Operation.Union, comptime func: anytype, args: UopUnwrapCallArgsType(func)) @typeInfo(@TypeOf(func)).@"fn".return_type.? {
     switch (uop.*) {
         inline else => |*op| return @call(.auto, func, .{op} ++ args),
     }

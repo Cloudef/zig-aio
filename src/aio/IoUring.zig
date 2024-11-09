@@ -689,7 +689,7 @@ inline fn uring_handle_completion(op: anytype, cqe: *std.os.linux.io_uring_cqe) 
             if (Supported.waitid) {
                 if (op.out_term) |term| term.* = posix.statusToTerm(@intCast(op._.siginfo.fields.common.second.sigchld.status));
             } else {
-                try posix.perform(op, .{ .fd = op._.fd, .events= .{ .in = true } });
+                try posix.perform(op, .{ .fd = op._.fd, .events = .{ .in = true } });
             }
         },
         .socket => op.out_socket.* = cqe.res,
