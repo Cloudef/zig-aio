@@ -494,11 +494,9 @@ pub const Operation = enum {
     });
 
     pub fn tagFromPayloadType(comptime Op: type) @This() {
+        @setEvalBranchQuota(1_000_000);
         inline for (map.values, 0..) |v, idx| {
-            if (Op == v) {
-                @setEvalBranchQuota(1_000_0);
-                return @enumFromInt(idx);
-            }
+            if (Op == v) return @enumFromInt(idx);
         }
         unreachable;
     }
