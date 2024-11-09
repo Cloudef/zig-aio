@@ -1,3 +1,4 @@
+const builtin = @import("builtin");
 const std = @import("std");
 const aio = @import("../aio.zig");
 const Operation = @import("ops.zig").Operation;
@@ -5,6 +6,10 @@ const ItemPool = @import("minilib").ItemPool;
 const posix = @import("posix/posix.zig");
 const linux = @import("posix/linux.zig");
 const log = std.log.scoped(.aio_io_uring);
+
+comptime {
+    std.debug.assert(@bitSizeOf(u128) == @bitSizeOf(std.os.linux.kernel_timespec));
+}
 
 const Supported = struct {
     var once = std.once(do_once);
@@ -258,14 +263,16 @@ inline fn uring_queue(io: *std.os.linux.IoUring, op: anytype, user_data: u64) ai
                 .sec = @intCast(op.ns / std.time.ns_per_s),
                 .nsec = @intCast(op.ns % std.time.ns_per_s),
             };
-            break :blk try io.timeout(user_data, &ts, 0, 0);
+            op.ns = @bitCast(ts);
+            break :blk try io.timeout(user_data, @ptrCast(&op.ns), 0, 0);
         },
         .link_timeout => blk: {
             const ts: std.os.linux.kernel_timespec = .{
                 .sec = @intCast(op.ns / std.time.ns_per_s),
                 .nsec = @intCast(op.ns % std.time.ns_per_s),
             };
-            break :blk try io.link_timeout(user_data, &ts, 0);
+            op.ns = @bitCast(ts);
+            break :blk try io.link_timeout(user_data, @ptrCast(&op.ns), 0);
         },
         .cancel => try io.cancel(user_data, @intFromEnum(op.id), 0),
         .rename_at => try io.renameat(user_data, op.old_dir.fd, op.old_path, op.new_dir.fd, op.new_path, linux.RENAME_NOREPLACE),
