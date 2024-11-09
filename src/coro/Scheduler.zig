@@ -7,8 +7,8 @@ const options = @import("../coro.zig").options;
 allocator: std.mem.Allocator,
 io: aio.Dynamic,
 io_ack: u8 = 0,
-frames: Frame.List = .{},
-num_complete: usize = 0,
+running: Frame.List = .{},
+completed: Frame.List = .{},
 state: enum { init, tear_down } = .init,
 
 pub const InitOptions = struct {
@@ -27,11 +27,16 @@ pub fn deinit(self: *@This()) void {
     if (self.state == .tear_down) self.state = .init;
     self.run(.cancel) catch {}; // try stop everything gracefully
     self.io.deinit(self.allocator); // if not possible shutdown IO
-    var next = self.frames.first; // then force collect all the frames
-    while (next) |node| { // this may cause the program to leak memory
+    // force collect all frames, this may cause the program to leak memory
+    var next = self.completed.first;
+    while (next) |node| {
         next = node.next;
+        node.data.cast().deinit();
+    }
+    while (self.running.popFirst()) |node| {
         var frame = node.data.cast();
         frame.status = .completed;
+        self.completed.append(&frame.link);
         frame.deinit();
     }
     self.* = undefined;
@@ -44,6 +49,7 @@ pub const SpawnOptions = struct {
         unmanaged: Frame.Stack,
         managed: usize,
     } = .{ .managed = options.stack_size },
+    detached: bool = false,
 };
 
 /// Spawns a new task, the task may do local IO operations which will not block the whole process using the `io` namespace functions
@@ -59,6 +65,7 @@ pub fn spawnAny(self: *@This(), Result: type, comptime func: anytype, args: anyt
 
     errdefer if (opts.stack == .managed) self.allocator.free(stack);
     const frame = try Frame.init(self, stack, opts.stack == .managed, Result, func, args);
+    if (opts.detached) frame.detach();
     return .{ .frame = frame };
 }
 
@@ -72,13 +79,28 @@ pub fn spawn(self: *@This(), comptime func: anytype, args: anytype, opts: SpawnO
 }
 
 /// Step the scheduler by a single step.
-/// If `mode` is `.blocking` will block until there is `IO` activity.
+/// If `mode` is `.blocking` will block until there is `IO` activity or one of the frames completes.
 /// Returns the number of tasks running.
 pub fn tick(self: *@This(), mode: aio.Dynamic.CompletionMode) aio.Error!usize {
     if (self.state == .tear_down) return error.Unexpected;
     self.io_ack +%= 1;
-    _ = try self.io.complete(mode);
-    return self.frames.len - self.num_complete;
+    if (self.completed.first) |first| {
+        var next: ?*Frame.List.Node = first;
+        while (next) |node| {
+            next = node.next;
+            var frame = node.data.cast();
+            if (frame.detached) {
+                std.debug.assert(frame.completer == null);
+                frame.deinit();
+            } else if (frame.completer) |completer| {
+                completer.wakeup(.waiting_frame);
+            }
+        }
+        _ = try self.io.complete(.nonblocking);
+    } else {
+        _ = try self.io.complete(mode);
+    }
+    return self.running.len;
 }
 
 pub const CompleteMode = Frame.CompleteMode;
@@ -87,7 +109,7 @@ pub const CompleteMode = Frame.CompleteMode;
 pub fn run(self: *@This(), mode: CompleteMode) aio.Error!void {
     if (mode == .cancel) {
         // start canceling tasks starting from the most recent one
-        while (self.frames.last) |node| {
+        while (self.running.last) |node| {
             if (self.state == .tear_down) return error.Unexpected;
             node.data.cast().complete(.cancel, void);
         }
