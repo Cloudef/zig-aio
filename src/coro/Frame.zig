@@ -30,13 +30,14 @@ fiber: *Fiber,
 stack: ?Fiber.Stack = null,
 result: *anyopaque,
 scheduler: *Scheduler,
+detached: bool = false,
 canceled: bool = false,
 cancelable: bool = true,
 status: Status = .active,
 yield_state: u8 = 0,
 link: List.Node = .{ .data = .{} },
-waiters: WaitList = .{},
 wait_link: WaitList.Node = .{ .data = .{} },
+completer: ?*@This() = null,
 
 pub fn current() ?*@This() {
     if (Fiber.current()) |fiber| {
@@ -68,12 +69,13 @@ fn entrypoint(
         .result = &res,
     };
     frame.fiber.getUserDataPtr().* = @intFromPtr(&frame);
-    scheduler.frames.append(&frame.link);
+    scheduler.running.append(&frame.link);
     out_frame.* = &frame;
 
     debug("spawned: {}", .{frame});
     res = @call(.always_inline, func, args);
-    scheduler.num_complete += 1;
+    scheduler.running.remove(&frame.link);
+    scheduler.completed.append(&frame.link);
 
     // keep the stack alive, until the task is collected
     yield(.completed);
@@ -100,20 +102,10 @@ pub fn init(
     return frame;
 }
 
-fn wakeupWaiters(self: *@This()) void {
-    var next = self.waiters.first;
-    while (next) |node| {
-        next = node.next;
-        node.data.cast().wakeup(.waiting_frame);
-    }
-}
-
 pub fn deinit(self: *@This()) void {
     debug("deinit: {}", .{self});
     std.debug.assert(self.status == .completed);
-    self.scheduler.frames.remove(&self.link);
-    self.scheduler.num_complete -= 1;
-    self.wakeupWaiters();
+    self.scheduler.completed.remove(&self.link);
     if (self.stack) |stack| self.scheduler.allocator.free(stack);
     // stack is now gone, doing anything after this with @This() is ub
 }
@@ -150,12 +142,12 @@ pub fn complete(self: *@This(), mode: CompleteMode, comptime Result: type) Resul
     debug("complete: {}, {s}", .{ self, @tagName(mode) });
 
     if (current()) |frame| {
+        self.completer = frame;
         while (self.status != .completed) {
             if (mode == .cancel and tryCancel(self)) break;
-            self.waiters.prepend(&frame.wait_link);
-            defer self.waiters.remove(&frame.wait_link);
             yield(.waiting_frame);
         }
+        std.debug.assert(self.completer == frame);
     } else {
         var timer: ?std.time.Timer = std.time.Timer.start() catch null;
         while (self.status != .completed) {
@@ -183,6 +175,7 @@ pub fn complete(self: *@This(), mode: CompleteMode, comptime Result: type) Resul
                 },
             };
         }
+        std.debug.assert(self.completer == null);
     }
 
     if (comptime Result != void) {
@@ -229,6 +222,12 @@ pub fn tryCancel(self: *@This()) bool {
         }
     }
     return self.status == .completed;
+}
+
+pub fn detach(self: *@This()) void {
+    std.debug.assert(!self.canceled);
+    debug("detach: {}", .{self});
+    self.detached = true;
 }
 
 fn debug(comptime fmt: []const u8, args: anytype) void {
