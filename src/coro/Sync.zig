@@ -18,6 +18,7 @@ pub const Semaphore = struct {
         if (Frame.current()) |frame| {
             if (frame.canceled) return error.Canceled;
             self.counter += 1;
+            if (self.counter == 1) return;
             self.waiters.prepend(&frame.wait_link);
             defer self.waiters.remove(&frame.wait_link);
             while (self.counter > 0 and !frame.canceled) Frame.yield(.semaphore);
