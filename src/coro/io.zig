@@ -24,19 +24,30 @@ pub fn do(operations: anytype, status: Frame.Status) Error!u16 {
     if (Frame.current()) |frame| {
         if (frame.canceled) return error.Canceled;
 
-        var work = struct { ops: @TypeOf(operations) }{ .ops = operations };
         var whole: WholeContext = .{ .num_operations = operations.len, .frame = frame };
         var ctx_list: [operations.len]OperationContext = undefined;
 
-        inline for (&work.ops, &ctx_list) |*op, *ctx| {
-            ctx.* = .{ .whole = &whole };
-            op.userdata = @intFromPtr(ctx);
+        const ti = @typeInfo(@TypeOf(operations));
+        if (comptime (ti == .@"struct" and ti.@"struct".is_tuple) or ti == .array) {
+            if (comptime operations.len == 0) @compileError("no work to be done");
+            var uops: [operations.len]aio.Dynamic.Uop = undefined;
+            inline for (operations, &uops, &ctx_list, 0..) |op, *uop, *ctx, idx| {
+                ctx.* = .{ .whole = &whole };
+                var cpy = op;
+                cpy.userdata = @intFromPtr(ctx);
+                // coro io operations get merged into one, having .link on last operation is always a mistake
+                if (idx == operations.len - 1) cpy.link = .unlinked;
+                uop.* = aio.Operation.uopFromOp(cpy);
+            }
+            try frame.scheduler.io.io.queue(operations.len, &uops, frame.scheduler.io.queue_callback);
+        } else {
+            var cpy = operations;
+            cpy.userdata = @intFromPtr(&ctx_list[0]);
+            cpy.link = .unlinked;
+            var uops: [1]aio.Dynamic.Uop = .{aio.Operation.uopFromOp(cpy)};
+            try frame.scheduler.io.io.queue(1, &uops, frame.scheduler.io.queue_callback);
         }
 
-        // coro io operations get merged into one, having .link on last operation is always a mistake
-        work.ops[operations.len - 1].link = .unlinked;
-
-        try frame.scheduler.io.queue(work.ops);
         // wait until scheduler actually submits our work
         const ack = frame.scheduler.io_ack;
         while (ack == frame.scheduler.io_ack) {

@@ -62,7 +62,7 @@ pub const CompletionResult = struct {
 
 /// Queue operations dynamically and complete them on demand
 pub const Dynamic = struct {
-    pub const Uop = ops.Operation.Union;
+    pub const Uop = Operation.Union;
     pub const QueueCallback = *const fn (uop: Uop, id: Id) void;
     pub const CompletionCallback = *const fn (uop: Uop, id: Id, failed: bool) void;
 
@@ -85,18 +85,13 @@ pub const Dynamic = struct {
     /// The call is atomic, if any of the operations fail to queue, then the given operations are reverted
     pub inline fn queue(self: *@This(), operations: anytype) Error!void {
         const ti = @typeInfo(@TypeOf(operations));
-        if (comptime ti == .@"struct" and ti.@"struct".is_tuple) {
+        if (comptime (ti == .@"struct" and ti.@"struct".is_tuple) or ti == .array) {
             if (comptime operations.len == 0) @compileError("no work to be done");
-            var uops: [operations.len]ops.Operation.Union = undefined;
-            inline for (operations, &uops) |op, *uop| uop.* = ops.Operation.uopFromOp(op);
-            return self.io.queue(operations.len, &uops, self.queue_callback);
-        } else if (comptime ti == .array) {
-            if (comptime operations.len == 0) @compileError("no work to be done");
-            var uops: [operations.len]ops.Operation.Union = undefined;
-            inline for (operations, &uops) |op, *uop| uop.* = ops.Operation.uopFromOp(op);
+            var uops: [operations.len]Operation.Union = undefined;
+            inline for (operations, &uops) |op, *uop| uop.* = Operation.uopFromOp(op);
             return self.io.queue(operations.len, &uops, self.queue_callback);
         } else {
-            var uops: [1]ops.Operation.Union = .{ops.Operation.uopFromOp(operations)};
+            var uops: [1]Operation.Union = .{Operation.uopFromOp(operations)};
             return self.io.queue(1, &uops, self.queue_callback);
         }
     }
@@ -132,15 +127,10 @@ pub const Dynamic = struct {
 /// Returns the number of errors occured, 0 if there were no errors
 pub inline fn complete(operations: anytype) Error!u16 {
     const ti = @typeInfo(@TypeOf(operations));
-    if (comptime ti == .@"struct" and ti.@"struct".is_tuple) {
+    if (comptime (ti == .@"struct" and ti.@"struct".is_tuple) or ti == .array) {
         if (comptime operations.len == 0) @compileError("no work to be done");
-        var uops: [operations.len]ops.Operation.Union = undefined;
-        inline for (operations, &uops) |op, *uop| uop.* = ops.Operation.uopFromOp(op);
-        return IO.immediate(operations.len, &uops);
-    } else if (comptime ti == .array) {
-        if (comptime operations.len == 0) @compileError("no work to be done");
-        var uops: [operations.len]ops.Operation.Union = undefined;
-        inline for (operations, &uops) |op, *uop| uop.* = ops.Operation.uopFromOp(op);
+        var uops: [operations.len]Operation.Union = undefined;
+        inline for (operations, &uops) |op, *uop| uop.* = Operation.uopFromOp(op);
         return IO.immediate(operations.len, &uops);
     } else {
         @compileError("expected a tuple or array of operations");
@@ -203,6 +193,7 @@ const IO = switch (builtin.target.os.tag) {
 };
 
 const ops = @import("aio/ops.zig");
+pub const Operation = ops.Operation;
 pub const Id = ops.Id;
 pub const Nop = ops.Nop;
 pub const Fsync = ops.Fsync;
