@@ -681,11 +681,11 @@ inline fn uring_handle_completion(op: anytype, cqe: *std.os.linux.io_uring_cqe) 
         },
         .accept => op.out_socket.* = cqe.res,
         .connect => {},
-        .recv => op.out_read.* = @intCast(cqe.res),
-        .send => if (op.out_written) |w| {
+        .recv, .recv_msg => op.out_read.* = @intCast(cqe.res),
+        .send, .send_msg => if (op.out_written) |w| {
             w.* = @intCast(cqe.res);
         },
-        .recv_msg, .send_msg, .shutdown => {},
+        .shutdown => {},
         .open_at => op.out_file.handle = cqe.res,
         .close_file, .close_dir, .close_socket => {},
         .notify_event_source, .wait_event_source, .close_event_source => {},

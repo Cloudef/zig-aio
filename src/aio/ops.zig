@@ -207,6 +207,7 @@ pub const RecvMsg = struct {
     } || SharedError;
     socket: std.posix.socket_t,
     out_msg: *posix.msghdr,
+    out_read: *usize,
     out_id: ?*Id = null,
     out_error: ?*Error = null,
     link: Link = .unlinked,
@@ -218,6 +219,7 @@ pub const SendMsg = struct {
     pub const Error = std.posix.SendMsgError || SharedError;
     socket: std.posix.socket_t,
     msg: *const posix.msghdr_const,
+    out_written: ?*usize = null,
     out_id: ?*Id = null,
     out_error: ?*Error = null,
     link: Link = .unlinked,
