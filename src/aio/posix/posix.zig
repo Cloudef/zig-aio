@@ -230,8 +230,11 @@ pub inline fn perform(op: anytype, readiness: Readiness) Operation.Error!void {
             const written = try send(op.socket, op.buffer, MSG.DONTWAIT);
             if (op.out_written) |w| w.* = written;
         },
-        .recv_msg => _ = try recvmsg(op.socket, op.out_msg, MSG.DONTWAIT),
-        .send_msg => _ = try sendmsg(op.socket, op.msg, MSG.DONTWAIT),
+        .recv_msg => op.out_read.* = try recvmsg(op.socket, op.out_msg, MSG.DONTWAIT),
+        .send_msg => {
+            const written = try sendmsg(op.socket, op.msg, MSG.DONTWAIT);
+            if (op.out_written) |w| w.* = written;
+        },
         .shutdown => try shutdown(op.socket, op.how),
         .open_at => op.out_file.* = try openAtUring(op.dir, op.path, op.flags),
         .close_file => std.posix.close(op.file.handle),
