@@ -20,23 +20,23 @@ pub const sockaddr = extern struct {
 pub const socklen_t = u32;
 
 pub const msghdr = extern struct {
-    msg_name: *anyopaque,
-    msg_namelen: socklen_t,
-    msg_iov: std.posix.iovec,
-    msg_iovlen: i32,
-    msg_control: *anyopaque,
-    msg_controllen: socklen_t,
-    msg_flags: i32,
+    name: *anyopaque,
+    namelen: socklen_t,
+    iov: std.posix.iovec,
+    iovlen: i32,
+    control: *anyopaque,
+    controllen: socklen_t,
+    flags: i32,
 };
 
 pub const msghdr_const = extern struct {
-    msg_name: *const anyopaque,
-    msg_namelen: socklen_t,
-    msg_iov: std.posix.iovec,
-    msg_iovlen: i32,
-    msg_control: *anyopaque,
-    msg_controllen: socklen_t,
-    msg_flags: i32,
+    name: *const anyopaque,
+    namelen: socklen_t,
+    iov: std.posix.iovec,
+    iovlen: i32,
+    control: *anyopaque,
+    controllen: socklen_t,
+    flags: i32,
 };
 
 pub fn socket(_: u32, _: u32, _: u32) std.posix.SocketError!std.posix.socket_t {
