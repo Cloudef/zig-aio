@@ -9,13 +9,13 @@ pub const EVFILT_USER = switch (builtin.target.os.tag) {
 
 pub const msghdr_const = switch (builtin.target.os.tag) {
     .dragonfly => extern struct {
-        msg_name: ?*const anyopaque,
-        msg_namelen: std.posix.socklen_t,
-        msg_iov: [*]std.posix.iovec,
-        msg_iovlen: c_int,
-        msg_control: ?*anyopaque,
-        msg_controllen: std.posix.socklen_t,
-        msg_flags: c_int,
+        name: ?*const anyopaque,
+        namelen: std.posix.socklen_t,
+        iov: [*]std.posix.iovec,
+        iovlen: c_int,
+        control: ?*anyopaque,
+        controllen: std.posix.socklen_t,
+        flags: c_int,
     },
     else => std.posix.system.msghdr_const,
 };
