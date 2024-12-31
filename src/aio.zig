@@ -32,10 +32,13 @@ pub const Options = struct {
     wasi: enum { wasi, wasix } = @enumFromInt(@intFromEnum(build_options.wasi)),
 };
 
+/// This is mostly std compatible, but contains also stuff that std does not have such a msghdr for all the supported platforms
+pub const posix = @import("aio/posix/posix.zig");
+
 /// Use this instead of std.posix.socket to get async sockets on windows ... :)
 /// Unfortunately there is no `ReOpenFile` equivalent for sockets.
 pub inline fn socket(domain: u32, socket_type: u32, protocol: u32) std.posix.SocketError!std.posix.socket_t {
-    return @import("aio/posix/posix.zig").socket(domain, socket_type, protocol);
+    return posix.socket(domain, socket_type, protocol);
 }
 
 pub const Error = error{
