@@ -17,7 +17,7 @@
       system-triple = env.lib.zigTripleFromString system;
     in with builtins; with env.lib; with env.pkgs.lib; {
       # nix run .
-      apps.default = env.app [] "zig build run -- \"$@\"";
+      apps.default = env.app [] "zig build example -- \"$@\"";
 
       # nix run .#build
       apps.build = env.app [] "zig build \"$@\"";
@@ -33,7 +33,7 @@
           echo "zig build test -Dposix=force -Dforce_foreign_timer_queue=true -Dsanitize=true"
           zig build test -Dposix=force -Dforce_foreign_timer_queue=true -Dsanitize=true
           echo "zig build -Dtarget=wasm32-wasi-none"
-          zig build test-aio test-minilib -Dtarget=wasm32-wasi-none
+          zig build test:aio test:minilib -Dtarget=wasm32-wasi-none
         elif [[ "$(uname)" == "Darwin" ]]; then
           echo "zig build test"
           zig build test
@@ -49,9 +49,6 @@
       apps.check = env.app [] ''
         zig fmt --check .
       '';
-
-      # nix run .#docs
-      apps.docs = env.app [] "zig build docs -- \"$@\"";
 
       # nix run .#deps
       apps.deps = env.showExternalDeps;

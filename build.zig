@@ -66,7 +66,7 @@ pub fn build(b: *std.Build) void {
     coro.addImport("minilib", minilib);
     coro.addImport("aio", aio);
 
-    const run_all = b.step("run", "Run all examples");
+    const run_all = b.step("example", "Run all examples");
     inline for (.{
         .aio_dynamic,
         .aio_immediate,
@@ -83,7 +83,7 @@ pub fn build(b: *std.Build) void {
         });
         exe.root_module.addImport("aio", aio);
         exe.root_module.addImport("coro", coro);
-        var cmd = makeRunStep(b, target, exe, 3.355e+7, @tagName(example), "Run " ++ @tagName(example) ++ " example");
+        var cmd = makeRunStep(b, target, exe, 3.355e+7, "example:" ++ @tagName(example), "Run " ++ @tagName(example) ++ " example");
         run_all.dependOn(&cmd.step);
     }
 
@@ -105,7 +105,7 @@ pub fn build(b: *std.Build) void {
             .coro => addImportsFrom(tst.root_module, coro),
             else => unreachable,
         }
-        var cmd = makeRunStep(b, target, tst, 3.355e+7, "test-" ++ @tagName(mod), "Run " ++ @tagName(mod) ++ " tests");
+        var cmd = makeRunStep(b, target, tst, 3.355e+7, "test:" ++ @tagName(mod), "Run " ++ @tagName(mod) ++ " tests");
         test_step.dependOn(&cmd.step);
     }
 
@@ -122,7 +122,7 @@ pub fn build(b: *std.Build) void {
         });
         exe.root_module.addImport("aio", aio);
         exe.root_module.addImport("coro", coro);
-        var cmd = makeRunStep(b, target, exe, 3.355e+7, @tagName(bench), "Run " ++ @tagName(bench) ++ " benchmark");
+        var cmd = makeRunStep(b, target, exe, 3.355e+7, "bench:" ++ @tagName(bench), "Run " ++ @tagName(bench) ++ " benchmark");
         run_all.dependOn(&cmd.step);
     }
 }
