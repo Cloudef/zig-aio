@@ -63,9 +63,10 @@ pub fn spawner(tmp: []usize) !void {
     for (0..500) |i| {
         _ = try scheduler.spawn(protection, .{ logger, .{ i, tmp } }, .{});
     }
-    try delay(std.time.ns_per_s * 25); // logging takes 20s + 5s for safety
+    try delay(std.time.ns_per_s * 25); // logging takes ~25s
     for (tmp, 0..) |value, index| {
         logInfo("{}. {}\n", .{ index + 1, value });
+        if (value != 100) @panic("something went bonkers (2)");
     }
     //just test for protection layer
     return error.Unexpected;

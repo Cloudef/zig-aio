@@ -49,10 +49,7 @@ pub fn do(operations: anytype, status: Frame.Status) Error!u16 {
         }
 
         // wait until scheduler actually submits our work
-        const ack = frame.scheduler.io_ack;
-        while (ack == frame.scheduler.io_ack) {
-            Frame.yield(status);
-        }
+        Frame.yield(status);
 
         // check if this was a cancel
         if (whole.num_operations > 0) {

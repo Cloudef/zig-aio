@@ -112,7 +112,7 @@ pub fn build(b: *std.Build) void {
     const bug_step = b.step("bug", "Run regression tests");
     inline for (.{
         .@"22",
-        // .@"31", TODO: fix this
+        .@"31",
     }) |bug| {
         const exe = b.addExecutable(.{
             .name = @tagName(bug),
