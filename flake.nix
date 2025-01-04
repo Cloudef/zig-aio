@@ -26,22 +26,22 @@
       apps.test = with env.pkgs; env.app [gnugrep wasmtime] ''
         zig version
         if [[ "$(uname)" == "Linux" ]]; then
-          echo "zig build test -Dposix=disable -Dsanitize=true"
-          zig build test -Dposix=disable -Dsanitize=true
-          echo "zig build test -Dposix=force -Dsanitize=true"
-          zig build test -Dposix=force -Dsanitize=true
-          echo "zig build test -Dposix=force -Dforce_foreign_timer_queue=true -Dsanitize=true"
-          zig build test -Dposix=force -Dforce_foreign_timer_queue=true -Dsanitize=true
-          echo "zig build -Dtarget=wasm32-wasi-none"
+          echo "zig build test bug -Dposix=disable -Dsanitize=true"
+          zig build test bug -Dposix=disable -Dsanitize=true
+          echo "zig build test bug -Dposix=force -Dsanitize=true"
+          zig build test bug -Dposix=force -Dsanitize=true
+          echo "zig build test bug -Dposix=force -Dforce_foreign_timer_queue=true -Dsanitize=true"
+          zig build test bug -Dposix=force -Dforce_foreign_timer_queue=true -Dsanitize=true
+          echo "zig build test:aio test:minilib -Dtarget=wasm32-wasi-none"
           zig build test:aio test:minilib -Dtarget=wasm32-wasi-none
         elif [[ "$(uname)" == "Darwin" ]]; then
-          echo "zig build test"
-          zig build test
-          echo "zig build test -Dtarget=x86_64-macos"
-          zig build test -Dtarget=x86_64-macos
+          echo "zig build test bug"
+          zig build test bug
+          echo "zig build test bug -Dtarget=x86_64-macos"
+          zig build test bug -Dtarget=x86_64-macos
         else
-          echo "zig build test"
-          zig build test
+          echo "zig build test bug"
+          zig build test bug
         fi
       '';
 
