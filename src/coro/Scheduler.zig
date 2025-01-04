@@ -6,7 +6,6 @@ const options = @import("../coro.zig").options;
 
 allocator: std.mem.Allocator,
 io: aio.Dynamic,
-io_ack: u8 = 0,
 running: Frame.List = .{},
 completed: Frame.List = .{},
 state: enum { init, tear_down } = .init,
@@ -83,7 +82,6 @@ pub fn spawn(self: *@This(), comptime func: anytype, args: anytype, opts: SpawnO
 /// Returns the number of tasks running.
 pub fn tick(self: *@This(), mode: aio.Dynamic.CompletionMode) aio.Error!usize {
     if (self.state == .tear_down) return error.Unexpected;
-    self.io_ack +%= 1;
     if (self.completed.first) |first| {
         var next: ?*Frame.List.Node = first;
         while (next) |node| {
