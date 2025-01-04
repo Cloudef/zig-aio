@@ -64,22 +64,3 @@ pub const io = struct {
 test {
     std.testing.refAllDecls(@This());
 }
-
-fn sleep(ns: u64) void {
-    io.single(aio.Timeout{ .ns = @intCast(ns) }) catch @panic("Unable to sleep");
-}
-
-fn asyncMain(scheduler: *Scheduler) !void {
-    std.debug.print("begin asyncMain\n", .{});
-    defer std.debug.print("end asyncMain\n", .{});
-    var frame = try scheduler.spawn(sleep, .{1 * std.time.ns_per_ms}, .{});
-    std.debug.print("frame.isComplete = {any}\n", .{frame.isComplete()});
-    frame.complete(.wait);
-}
-
-test "frame wait" {
-    var scheduler = try Scheduler.init(std.testing.allocator, .{});
-    defer scheduler.deinit();
-    _ = try scheduler.spawn(asyncMain, .{&scheduler}, .{ .detached = true });
-    try scheduler.run(.wait);
-}

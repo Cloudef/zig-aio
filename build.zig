@@ -109,6 +109,25 @@ pub fn build(b: *std.Build) void {
         test_step.dependOn(&cmd.step);
     }
 
+    const bug_step = b.step("bug", "Run regression tests");
+    inline for (.{
+        .@"22",
+        // .@"31", TODO: fix this
+    }) |bug| {
+        const exe = b.addExecutable(.{
+            .name = @tagName(bug),
+            .root_source_file = b.path("bugs/" ++ @tagName(bug) ++ ".zig"),
+            .target = target,
+            .optimize = optimize,
+            .sanitize_thread = sanitize,
+            .single_threaded = minilib.single_threaded,
+        });
+        exe.root_module.addImport("aio", aio);
+        exe.root_module.addImport("coro", coro);
+        var cmd = makeRunStep(b, target, exe, 3.355e+7, "bug:" ++ @tagName(bug), "Check regression for #" ++ @tagName(bug));
+        bug_step.dependOn(&cmd.step);
+    }
+
     inline for (.{
         .ping_pongs,
     }) |bench| {
