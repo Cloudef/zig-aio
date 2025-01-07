@@ -94,6 +94,13 @@ pub fn queue(self: *@This(), comptime len: u16, uops: []Operation.Union, cb: ?ai
     try self.uringlator.queue(len, uops, cb, *@This(), self, queueCallback);
 }
 
+fn hasField(T: type, comptime name: []const u8) bool {
+    inline for (comptime std.meta.fields(T)) |field| {
+        if (std.mem.eql(u8, field.name, name)) return true;
+    }
+    return false;
+}
+
 pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode, cb: ?aio.Dynamic.CompletionCallback) aio.Error!aio.CompletionResult {
     if (!try self.uringlator.submit(*@This(), self, start, cancel)) return .{};
 
@@ -120,9 +127,23 @@ pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode, cb: ?aio.Dynam
             var iter = self.pending.iterator(.{});
             while (iter.next()) |id| if (pfd.fd == self.readiness[id].fd) {
                 defer self.pending.unset(id);
-                if (pfd.revents & std.posix.POLL.ERR != 0 or pfd.revents & std.posix.POLL.HUP != 0 or pfd.revents & std.posix.POLL.NVAL != 0) {
-                    self.uringlator.finish(@intCast(id), error.Unexpected);
-                    break;
+                if (pfd.revents & std.posix.POLL.ERR != 0 or pfd.revents & std.posix.POLL.NVAL != 0) {
+                    if (pfd.revents & std.posix.POLL.ERR != 0) {
+                        const uop = &self.uringlator.ops.nodes[id].used;
+                        switch (uop.*) {
+                            inline else => |*op| {
+                                if (hasField(@TypeOf(op.*).Error, "BrokenPipe")) {
+                                    self.uringlator.finish(@intCast(id), error.BrokenPipe);
+                                } else {
+                                    self.uringlator.finish(@intCast(id), error.Unexpected);
+                                }
+                                break;
+                            },
+                        }
+                    } else {
+                        self.uringlator.finish(@intCast(id), error.Unexpected);
+                        break;
+                    }
                 }
                 // start it for real this time
                 const uop = &self.uringlator.ops.nodes[id].used;
