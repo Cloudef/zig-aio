@@ -197,9 +197,13 @@ pub fn immediate(comptime len: u16, uops: []Operation.Union) aio.Error!u16 {
 
 fn onThreadExecutor(self: *@This(), id: u16, uop: *Operation.Union, readiness: posix.Readiness) void {
     var failure: Operation.Error = error.Success;
-    Uringlator.uopUnwrapCall(uop, posix.perform, .{readiness}) catch |err| {
-        failure = err;
-    };
+    while (true) {
+        Uringlator.uopUnwrapCall(uop, posix.perform, .{readiness}) catch |err| {
+            if (err == error.WouldBlock) continue;
+            failure = err;
+        };
+        break;
+    }
     self.uringlator.finish(id, failure);
 }
 

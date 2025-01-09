@@ -214,9 +214,13 @@ pub fn immediate(comptime len: u16, work: anytype) aio.Error!u16 {
 fn onThreadPosixExecutor(self: *@This(), id: u16, uop: *Operation.Union) void {
     const posix = @import("posix/posix.zig");
     var failure: Operation.Error = error.Success;
-    Uringlator.uopUnwrapCall(uop, posix.perform, .{undefined}) catch |err| {
-        failure = err;
-    };
+    while (true) {
+        Uringlator.uopUnwrapCall(uop, posix.perform, .{undefined}) catch |err| {
+            if (err == error.WouldBlock) continue;
+            failure = err;
+        };
+        break;
+    }
     self.uringlator.finish(id, failure);
 }
 
