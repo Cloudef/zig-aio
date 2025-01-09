@@ -101,6 +101,14 @@ fn hasField(T: type, comptime name: []const u8) bool {
     return false;
 }
 
+fn readinessToPollEvents(readiness: posix.Readiness) i16 {
+    var events: i16 = 0;
+    if (readiness.events.in) events |= std.posix.POLL.IN;
+    if (readiness.events.out) events |= std.posix.POLL.OUT;
+    if (@hasDecl(std.posix.POLL, "PRI") and readiness.events.pri) events |= std.posix.POLL.PRI;
+    return events;
+}
+
 pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode, cb: ?aio.Dynamic.CompletionCallback) aio.Error!aio.CompletionResult {
     if (!try self.uringlator.submit(*@This(), self, start, cancel)) return .{};
 
@@ -115,60 +123,61 @@ pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode, cb: ?aio.Dynam
     if (n == 0) return .{};
 
     var res: aio.CompletionResult = .{};
-    for (self.pfd.items[0..self.pfd.len], 0..) |*pfd, pid| {
-        if (pfd.revents == 0) continue;
-        if (pfd.fd == self.uringlator.source.fd) {
-            std.debug.assert(pfd.revents & std.posix.POLL.NVAL == 0);
-            std.debug.assert(pfd.revents & std.posix.POLL.ERR == 0);
-            std.debug.assert(pfd.revents & std.posix.POLL.HUP == 0);
-            self.uringlator.source.wait();
-            res = self.uringlator.complete(cb, *@This(), self, completion);
-        } else {
-            var iter = self.pending.iterator(.{});
-            while (iter.next()) |id| {
-                if (pfd.fd != self.readiness[id].fd) continue;
-                var events: i16 = 0;
-                if (self.readiness[id].events.in) events |= std.posix.POLL.IN;
-                if (self.readiness[id].events.out) events |= std.posix.POLL.OUT;
-                if (@hasDecl(std.posix.POLL, "PRI") and self.readiness[id].events.pri) events |= std.posix.POLL.PRI;
-                if (pfd.revents & events == 0) continue;
-                defer {
-                    // do not poll this fd again
-                    self.pfd.swapRemove(@truncate(pid));
-                    const uop = &self.uringlator.ops.nodes[id].used;
-                    Uringlator.uopUnwrapCall(uop, posix.closeReadiness, .{self.readiness[id]});
-                    self.pending.unset(id);
-                    self.readiness[id] = .{};
-                }
-                if (pfd.revents & std.posix.POLL.ERR != 0 or pfd.revents & std.posix.POLL.NVAL != 0) {
-                    if (pfd.revents & std.posix.POLL.ERR != 0) {
+    var off: usize = 0;
+    again: while (off < self.pfd.len) {
+        for (self.pfd.items[off..self.pfd.len], 0..) |*pfd, pid| {
+            off = pid;
+            if (pfd.revents == 0) continue;
+            if (pfd.fd == self.uringlator.source.fd) {
+                std.debug.assert(pfd.revents & std.posix.POLL.NVAL == 0);
+                std.debug.assert(pfd.revents & std.posix.POLL.ERR == 0);
+                std.debug.assert(pfd.revents & std.posix.POLL.HUP == 0);
+                self.uringlator.source.wait();
+                res = self.uringlator.complete(cb, *@This(), self, completion);
+            } else {
+                var iter = self.pending.iterator(.{});
+                while (iter.next()) |id| {
+                    if (pfd.fd != self.readiness[id].fd) continue;
+                    if (pfd.events != readinessToPollEvents(self.readiness[id])) continue;
+                    defer {
+                        // do not poll this fd again
+                        self.pfd.swapRemove(@truncate(pid));
                         const uop = &self.uringlator.ops.nodes[id].used;
-                        switch (uop.*) {
-                            inline else => |*op| {
-                                if (hasField(@TypeOf(op.*).Error, "BrokenPipe")) {
-                                    self.uringlator.finish(@intCast(id), error.BrokenPipe);
-                                } else {
-                                    self.uringlator.finish(@intCast(id), error.Unexpected);
-                                }
-                                break;
-                            },
-                        }
-                    } else {
-                        self.uringlator.finish(@intCast(id), error.Unexpected);
-                        break;
+                        Uringlator.uopUnwrapCall(uop, posix.closeReadiness, .{self.readiness[id]});
+                        self.pending.unset(id);
+                        self.readiness[id] = .{};
                     }
+                    if (pfd.revents & std.posix.POLL.ERR != 0 or pfd.revents & std.posix.POLL.NVAL != 0) {
+                        if (pfd.revents & std.posix.POLL.ERR != 0) {
+                            const uop = &self.uringlator.ops.nodes[id].used;
+                            switch (uop.*) {
+                                inline else => |*op| {
+                                    if (hasField(@TypeOf(op.*).Error, "BrokenPipe")) {
+                                        self.uringlator.finish(@intCast(id), error.BrokenPipe);
+                                    } else {
+                                        self.uringlator.finish(@intCast(id), error.Unexpected);
+                                    }
+                                    break :again;
+                                },
+                            }
+                        } else {
+                            self.uringlator.finish(@intCast(id), error.Unexpected);
+                            break :again;
+                        }
+                    }
+                    // start it for real this time
+                    const uop = &self.uringlator.ops.nodes[id].used;
+                    if (self.uringlator.next[id] != id) {
+                        Uringlator.debug("ready: {}: {} => {}", .{ id, std.meta.activeTag(uop.*), self.uringlator.next[id] });
+                    } else {
+                        Uringlator.debug("ready: {}: {}", .{ id, std.meta.activeTag(uop.*) });
+                    }
+                    try self.start(@intCast(id), uop);
+                    break :again;
                 }
-                // start it for real this time
-                const uop = &self.uringlator.ops.nodes[id].used;
-                if (self.uringlator.next[id] != id) {
-                    Uringlator.debug("ready: {}: {} => {}", .{ id, std.meta.activeTag(uop.*), self.uringlator.next[id] });
-                } else {
-                    Uringlator.debug("ready: {}: {}", .{ id, std.meta.activeTag(uop.*) });
-                }
-                try self.start(@intCast(id), uop);
-                break;
             }
         }
+        break;
     }
 
     return res;
@@ -260,13 +269,9 @@ fn start(self: *@This(), id: u16, uop: *Operation.Union) !void {
             Uringlator.debug("pending: {}: {}", .{ id, std.meta.activeTag(uop.*) });
         }
         std.debug.assert(self.readiness[id].fd != posix.invalid_fd);
-        var events: i16 = 0;
-        if (self.readiness[id].events.in) events |= std.posix.POLL.IN;
-        if (self.readiness[id].events.out) events |= std.posix.POLL.OUT;
-        if (@hasDecl(std.posix.POLL, "PRI") and self.readiness[id].events.pri) events |= std.posix.POLL.PRI;
         self.pfd.add(.{
             .fd = self.readiness[id].fd,
-            .events = events,
+            .events = readinessToPollEvents(self.readiness[id]),
             .revents = 0,
         }) catch unreachable;
         self.pending.set(id);
@@ -296,10 +301,10 @@ fn completion(self: *@This(), id: u16, uop: *Operation.Union, _: Operation.Error
     }
     if (self.pending.isSet(id) and self.readiness[id].fd != posix.invalid_fd) {
         for (self.pfd.items[0..self.pfd.len], 0..) |pfd, idx| {
-            if (pfd.fd == self.readiness[id].fd) {
-                self.pfd.swapRemove(@truncate(idx));
-                break;
-            }
+            if (pfd.fd != self.readiness[id].fd) continue;
+            if (pfd.events != readinessToPollEvents(self.readiness[id])) continue;
+            self.pfd.swapRemove(@truncate(idx));
+            break;
         }
         Uringlator.uopUnwrapCall(uop, posix.closeReadiness, .{self.readiness[id]});
         self.pending.unset(id);
