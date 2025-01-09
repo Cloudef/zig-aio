@@ -115,7 +115,7 @@ pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode, cb: ?aio.Dynam
     if (n == 0) return .{};
 
     var res: aio.CompletionResult = .{};
-    for (self.pfd.items[0..self.pfd.len]) |pfd| {
+    for (self.pfd.items[0..self.pfd.len], 0..) |*pfd, pid| {
         if (pfd.revents == 0) continue;
         if (pfd.fd == self.uringlator.source.fd) {
             std.debug.assert(pfd.revents & std.posix.POLL.NVAL == 0);
@@ -125,8 +125,21 @@ pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode, cb: ?aio.Dynam
             res = self.uringlator.complete(cb, *@This(), self, completion);
         } else {
             var iter = self.pending.iterator(.{});
-            while (iter.next()) |id| if (pfd.fd == self.readiness[id].fd) {
-                defer self.pending.unset(id);
+            while (iter.next()) |id| {
+                if (pfd.fd != self.readiness[id].fd) continue;
+                var events: i16 = 0;
+                if (self.readiness[id].events.in) events |= std.posix.POLL.IN;
+                if (self.readiness[id].events.out) events |= std.posix.POLL.OUT;
+                if (@hasDecl(std.posix.POLL, "PRI") and self.readiness[id].events.pri) events |= std.posix.POLL.PRI;
+                if (pfd.revents & events == 0) continue;
+                defer {
+                    // do not poll this fd again
+                    self.pfd.swapRemove(@truncate(pid));
+                    const uop = &self.uringlator.ops.nodes[id].used;
+                    Uringlator.uopUnwrapCall(uop, posix.closeReadiness, .{self.readiness[id]});
+                    self.pending.unset(id);
+                    self.readiness[id] = .{};
+                }
                 if (pfd.revents & std.posix.POLL.ERR != 0 or pfd.revents & std.posix.POLL.NVAL != 0) {
                     if (pfd.revents & std.posix.POLL.ERR != 0) {
                         const uop = &self.uringlator.ops.nodes[id].used;
@@ -154,7 +167,7 @@ pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode, cb: ?aio.Dynam
                 }
                 try self.start(@intCast(id), uop);
                 break;
-            };
+            }
         }
     }
 
@@ -277,7 +290,7 @@ fn completion(self: *@This(), id: u16, uop: *Operation.Union, _: Operation.Error
         .timeout, .link_timeout => self.tqueue.disarm(.monotonic, id),
         else => {},
     }
-    if (self.readiness[id].fd != posix.invalid_fd) {
+    if (self.pending.isSet(id) and self.readiness[id].fd != posix.invalid_fd) {
         for (self.pfd.items[0..self.pfd.len], 0..) |pfd, idx| {
             if (pfd.fd == self.readiness[id].fd) {
                 self.pfd.swapRemove(@truncate(idx));
