@@ -362,6 +362,7 @@ pub const RecvMsgError = error{
     ConnectionRefused,
     SystemResources,
     SocketNotConnected,
+    WouldBlock,
     Unexpected,
 };
 
@@ -376,7 +377,8 @@ fn recvmsgPosix(sockfd: std.posix.socket_t, msg: *msghdr, flags: u32) RecvMsgErr
                 return switch (linux.errnoFromSyscall(res)) {
                     .SUCCESS => @intCast(res),
                     .INVAL, .BADF, .NOTSOCK => unreachable,
-                    .INTR, .AGAIN => continue,
+                    .AGAIN => error.WouldBlock,
+                    .INTR => continue,
                     .CONNREFUSED => error.ConnectionRefused,
                     .FAULT => error.Unexpected,
                     .NOMEM => error.SystemResources,
@@ -389,7 +391,8 @@ fn recvmsgPosix(sockfd: std.posix.socket_t, msg: *msghdr, flags: u32) RecvMsgErr
                 return switch (std.posix.errno(res)) {
                     .SUCCESS => @intCast(res),
                     .INVAL, .BADF, .NOTSOCK => unreachable,
-                    .INTR, .AGAIN => continue,
+                    .AGAIN => error.WouldBlock,
+                    .INTR => continue,
                     .CONNREFUSED => error.ConnectionRefused,
                     .FAULT => error.Unexpected,
                     .NOMEM => error.SystemResources,
