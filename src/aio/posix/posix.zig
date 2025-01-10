@@ -297,11 +297,6 @@ pub inline fn openReadiness(op: anytype) OpenReadinessError!Readiness {
     };
 }
 
-pub const ArmReadinessError = error{
-    SystemResources,
-    Unexpected,
-};
-
 pub inline fn closeReadiness(op: anytype, readiness: Readiness) void {
     if (readiness.fd == invalid_fd) return;
     switch (comptime Operation.tagFromPayloadType(@TypeOf(op.*))) {
