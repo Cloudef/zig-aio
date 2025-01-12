@@ -93,7 +93,7 @@
       * io_uring AIO backend is very light wrapper, where all the code does is mostly error mapping
       * iocp also maps quite well to the io_uring style API
       * posix backend is for compatibility, it may not be very effecient
-      * WASI may eventually get coro support [Stack Switching Proposal](https://github.com/WebAssembly/stack-switching/blob/main/proposals/continuations/Explainer.md)
+      * WASI may eventually get coro support [Stack Switching Proposal](https://github.com/WebAssembly/stack-switching/blob/main/proposals/stack-switching/Explainer.md)
 
       ## Example
 
