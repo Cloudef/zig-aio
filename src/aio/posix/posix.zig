@@ -227,12 +227,12 @@ pub inline fn perform(op: anytype, readiness: Readiness) Operation.Error!void {
         .connect => _ = try connect(op.socket, op.addr, op.addrlen),
         .recv => op.out_read.* = try recv(op.socket, op.buffer, MSG.DONTWAIT),
         .send => {
-            const written = try send(op.socket, op.buffer, MSG.DONTWAIT);
+            const written = try send(op.socket, op.buffer, MSG.DONTWAIT | MSG.NOSIGNAL);
             if (op.out_written) |w| w.* = written;
         },
         .recv_msg => op.out_read.* = try recvmsg(op.socket, op.out_msg, MSG.DONTWAIT),
         .send_msg => {
-            const written = try sendmsg(op.socket, op.msg, MSG.DONTWAIT);
+            const written = try sendmsg(op.socket, op.msg, MSG.DONTWAIT | MSG.NOSIGNAL);
             if (op.out_written) |w| w.* = written;
         },
         .shutdown => try shutdown(op.socket, op.how),
@@ -330,10 +330,12 @@ pub const MSG = switch (builtin.target.os.tag) {
     .visionos,
     .tvos,
     => struct {
-        pub const DONTWAIT = 0x0080;
+        pub const DONTWAIT = 0x00080;
+        pub const NOSIGNAL = 0x20000;
     },
     .windows, .wasi => struct {
         pub const DONTWAIT = 0x0;
+        pub const NOSIGNAL = 0x0;
     },
     else => std.posix.MSG,
 };
