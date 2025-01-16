@@ -2,9 +2,7 @@ const builtin = @import("builtin");
 const std = @import("std");
 const aio = @import("../aio.zig");
 const Operation = @import("ops.zig").Operation;
-const ItemPool = @import("minilib").ItemPool;
 const DynamicThreadPool = @import("minilib").DynamicThreadPool;
-const DoubleBufferedFixedArrayList = @import("minilib").DoubleBufferedFixedArrayList;
 const TimerQueue = @import("minilib").TimerQueue;
 const Uringlator = @import("Uringlator.zig");
 const Iocp = @import("posix/windows.zig").Iocp;
@@ -27,7 +25,6 @@ comptime {
 const checked = wposix.checked;
 const wtry = wposix.wtry;
 const werr = wposix.werr;
-const GetLastError = win32.foundation.GetLastError;
 const INVALID_HANDLE = std.os.windows.INVALID_HANDLE_VALUE;
 const HANDLE = win32.foundation.HANDLE;
 const CloseHandle = win32.foundation.CloseHandle;
@@ -35,9 +32,7 @@ const INFINITE = win32.system.windows_programming.INFINITE;
 const io = win32.system.io;
 const fs = win32.storage.file_system;
 const win_sock = win32.networking.win_sock;
-const WSAGetLastError = win_sock.WSAGetLastError;
 const INVALID_SOCKET = win_sock.INVALID_SOCKET;
-const threading = win32.system.threading;
 
 const IoContext = struct {
     overlapped: io.OVERLAPPED = std.mem.zeroes(io.OVERLAPPED),
@@ -237,12 +232,6 @@ fn ovlOff(offset: u64) io.OVERLAPPED {
         .hEvent = null,
     };
 }
-
-const AccessInfo = packed struct {
-    read: bool,
-    write: bool,
-    append: bool,
-};
 
 fn getHandleAccessInfo(handle: HANDLE) !fs.FILE_ACCESS_FLAGS {
     var io_status_block: std.os.windows.IO_STATUS_BLOCK = undefined;

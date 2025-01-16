@@ -1,5 +1,4 @@
 const std = @import("std");
-const aio = @import("aio");
 const Fiber = @import("zefi.zig");
 const Scheduler = @import("Scheduler.zig");
 const Link = @import("minilib").Link;

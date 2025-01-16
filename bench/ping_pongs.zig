@@ -99,8 +99,8 @@ fn client(startup: *coro.ResetEvent) !void {
     const end_time = try std.time.Instant.now();
 
     const elapsed = @as(f64, @floatFromInt(end_time.since(start_time)));
-    std.log.info("{d:.2} roundtrips/s", .{@as(f64, @floatFromInt(pongs)) / (elapsed / 1e9)});
-    std.log.info("{d:.2} seconds total", .{elapsed / 1e9});
+    log.info("{d:.2} roundtrips/s", .{@as(f64, @floatFromInt(pongs)) / (elapsed / 1e9)});
+    log.info("{d:.2} seconds total", .{elapsed / 1e9});
 
     try coro.io.multi(.{
         aio.Send{ .socket = socket, .buffer = "", .link = .hard },

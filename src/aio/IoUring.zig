@@ -1,4 +1,3 @@
-const builtin = @import("builtin");
 const std = @import("std");
 const aio = @import("../aio.zig");
 const Operation = @import("ops.zig").Operation;

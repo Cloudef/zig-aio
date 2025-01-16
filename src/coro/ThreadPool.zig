@@ -119,7 +119,7 @@ test "ThreadPool" {
         }
 
         fn task2(pool: *ThreadPool) !u32 {
-            return try pool.yieldForCompletion(blockingCanceled, .{}, .{});
+            return pool.yieldForCompletion(blockingCanceled, .{}, .{});
         }
     };
 
