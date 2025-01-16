@@ -1,6 +1,5 @@
 const std = @import("std");
 const aio = @import("aio");
-const Scheduler = @import("Scheduler.zig");
 const Frame = @import("Frame.zig");
 
 pub const WholeContext = struct {

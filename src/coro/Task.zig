@@ -1,5 +1,4 @@
 const std = @import("std");
-const aio = @import("aio");
 const ReturnType = @import("minilib").ReturnType;
 const Frame = @import("Frame.zig");
 

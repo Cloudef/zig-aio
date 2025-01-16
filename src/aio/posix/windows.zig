@@ -1,7 +1,5 @@
 const std = @import("std");
-const posix = @import("posix.zig");
 const ops = @import("../ops.zig");
-const log = std.log.scoped(.aio_windows);
 const Link = @import("minilib").Link;
 const win32 = @import("win32");
 
@@ -35,7 +33,7 @@ pub fn wtry(ret: anytype) !void {
 }
 
 pub fn werr(ret: anytype) ops.Operation.Error {
-    wtry(ret) catch |err| return err;
+    try wtry(ret);
     return error.Success;
 }
 
