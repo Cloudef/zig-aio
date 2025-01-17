@@ -273,7 +273,7 @@ fn UopUnwrapCallArgsType(func: anytype) type {
     for (&fields, params.ptr + 1, 0..) |*f, p, i| {
         f.* = .{
             .name = std.fmt.comptimePrint("{}", .{i}),
-            .default_value = null,
+            .default_value_ptr = null,
             .type = p.type orelse unreachable,
             .is_comptime = false,
             .alignment = 0,
