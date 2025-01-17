@@ -271,13 +271,24 @@ fn UopUnwrapCallArgsType(func: anytype) type {
     const params = @typeInfo(@TypeOf(func)).@"fn".params;
     comptime var fields: [params.len - 1]std.builtin.Type.StructField = undefined;
     for (&fields, params.ptr + 1, 0..) |*f, p, i| {
-        f.* = .{
-            .name = std.fmt.comptimePrint("{}", .{i}),
-            .default_value = null,
-            .type = p.type orelse unreachable,
-            .is_comptime = false,
-            .alignment = 0,
-        };
+        if (@hasField(std.builtin.Type.StructField, "default_value_ptr")) {
+            f.* = .{
+                .name = std.fmt.comptimePrint("{}", .{i}),
+                .default_value_ptr = null,
+                .type = p.type orelse unreachable,
+                .is_comptime = false,
+                .alignment = 0,
+            };
+        } else {
+            // XXX: support older zig-0.14 dev builds for a while
+            f.* = .{
+                .name = std.fmt.comptimePrint("{}", .{i}),
+                .default_value = null,
+                .type = p.type orelse unreachable,
+                .is_comptime = false,
+                .alignment = 0,
+            };
+        }
     }
     return @Type(.{ .@"struct" = .{
         .layout = .auto,
