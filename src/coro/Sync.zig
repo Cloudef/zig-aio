@@ -232,8 +232,6 @@ test "RwLock" {
         thread.join();
     }
 
-    std.log.debug("\n\n{}\n\n", .{value});
-
     std.debug.assert(value == 1024000);
     std.debug.assert(value2 == 1024000);
 
