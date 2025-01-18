@@ -75,7 +75,6 @@ pub const ResetEvent = struct {
 
 /// Thread-safe read-write lock
 pub const RwLock = struct {
-    waiters: Frame.WaitList = .{},
     mutex: std.Thread.Mutex = .{},
     locked: bool = false,
     counter: usize = 0,
@@ -131,16 +130,6 @@ pub const RwLock = struct {
                 return;
             }
 
-            self.mutex.lock();
-            self.waiters.prepend(&frame.wait_link);
-            self.mutex.unlock();
-
-            defer {
-                self.mutex.lock();
-                self.waiters.remove(&frame.wait_link);
-                self.mutex.unlock();
-            }
-
             while (!frame.canceled) {
                 Frame.yield(.rw_lock);
                 if (self._lock()) {
@@ -158,16 +147,6 @@ pub const RwLock = struct {
 
             if (self._lockShared()) {
                 return;
-            }
-
-            self.mutex.lock();
-            self.waiters.prepend(&frame.wait_link);
-            self.mutex.unlock();
-
-            defer {
-                self.mutex.lock();
-                self.waiters.remove(&frame.wait_link);
-                self.mutex.unlock();
             }
 
             while (!frame.canceled) {
@@ -261,7 +240,6 @@ test "RwLock" {
     // check if it has successfully returned in its initial state.
     std.debug.assert(lock.counter == 0);
     std.debug.assert(lock.locked == false);
-    std.debug.assert(lock.waiters.len() == 0);
 
     // TODO find out a way to test lockShared without causing a "normal" infinite-lock
     // I figured out that if you do the current test but at the same time you have tasks that share lock in while(true) and check if the final value is reached
