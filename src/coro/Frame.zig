@@ -189,7 +189,7 @@ pub fn complete(self: *@This(), mode: CompleteMode, comptime Result: type) Resul
     }
 }
 
-pub fn tryCancel(self: *@This()) bool {
+fn tryCancel(self: *@This()) bool {
     if (self.status != .completed and self.cancelable) {
         self.canceled = true;
         switch (self.status) {
