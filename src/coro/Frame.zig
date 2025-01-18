@@ -15,6 +15,7 @@ pub const Status = enum(u8) {
     completed, // the frame is complete and has to be collected
     waiting_frame, // waiting for another frame to complete
     semaphore, // waiting on a semaphore
+    rw_lock, // waiting on a rw_lock
     reset_event, // waiting on a reset_event
     yield, // yielded by a user code
 
@@ -211,6 +212,10 @@ pub fn tryCancel(self: *@This()) bool {
             },
             .semaphore => |status| {
                 debug("cancel... semaphore: {}", .{self});
+                self.wakeup(status);
+            },
+            .rw_lock => |status| {
+                debug("cancel... rw_lock: {}", .{self});
                 self.wakeup(status);
             },
             .yield => |status| {

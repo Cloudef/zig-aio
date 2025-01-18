@@ -98,6 +98,20 @@ pub fn tick(self: *@This(), mode: aio.Dynamic.CompletionMode) aio.Error!usize {
     } else {
         _ = try self.io.complete(mode);
     }
+    if (self.running.first) |first| {
+        var next: ?*Frame.List.Node = first;
+        while (next) |node| {
+            next = node.next;
+            var frame = node.data.cast();
+            if (frame.status == .rw_lock) {
+                // move the node to last in order to not wakeup always the same
+                self.running.remove(node);
+                self.running.append(node);
+                frame.wakeup(.rw_lock);
+                break;
+            }
+        }
+    }
     return self.running.len;
 }
 
