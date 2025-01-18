@@ -10,25 +10,37 @@ fn wakeupWaiters(list: *Frame.WaitList, status: anytype) void {
 
 pub const Semaphore = struct {
     waiters: Frame.WaitList = .{},
-    counter: u32 = 0,
+    used: bool = false,
 
     pub const Error = error{Canceled};
 
     pub fn lock(self: *@This()) Error!void {
         if (Frame.current()) |frame| {
             if (frame.canceled) return error.Canceled;
-            self.counter += 1;
-            if (self.counter == 1) return;
+
+            if (!self.used) {
+                self.used = true;
+                return;
+            }
+
             self.waiters.prepend(&frame.wait_link);
             defer self.waiters.remove(&frame.wait_link);
-            while (self.counter > 0 and !frame.canceled) Frame.yield(.semaphore);
+
+            while (!frame.canceled) {
+                Frame.yield(.semaphore);
+                if (!self.used) {
+                    self.used = true;
+                    break;
+                }
+            }
+
             if (frame.canceled) return error.Canceled;
         } else unreachable; // can only be used in tasks
     }
 
     pub fn unlock(self: *@This()) void {
-        if (self.counter == 0) return;
-        self.counter -= 1;
+        if (!self.used) return;
+        self.used = false;
         wakeupWaiters(&self.waiters, .semaphore);
     }
 };
