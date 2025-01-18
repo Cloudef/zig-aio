@@ -47,6 +47,7 @@
 
       # nix run .#check
       apps.check = env.app [] ''
+        echo "checking the formatting with zig fmt --check"
         zig fmt --check .
       '';
 
