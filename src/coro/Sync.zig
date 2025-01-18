@@ -17,7 +17,7 @@ pub const Semaphore = struct {
     pub fn lock(self: *@This()) Error!void {
         if (Frame.current()) |frame| {
             if (frame.canceled) return error.Canceled;
-            
+
             if (!self.used) {
                 self.used = true;
                 return;
