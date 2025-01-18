@@ -139,6 +139,7 @@ pub const CompleteMode = enum { wait, cancel };
 pub fn complete(self: *@This(), mode: CompleteMode, comptime Result: type) Result {
     std.debug.assert(!self.canceled);
     debug("complete: {}, {s}", .{ self, @tagName(mode) });
+    self.detached = false;
 
     if (current()) |frame| {
         self.completer = frame;
