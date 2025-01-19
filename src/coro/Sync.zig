@@ -111,6 +111,7 @@ pub const RwLock = struct {
                 const counter = @atomicLoad(usize, &self.counter, .acquire);
                 if (counter > 0) {
                     _ = @atomicRmw(usize, &self.counter, .Add, 1, .acq_rel);
+                    return true;
                 }
             } else {
                 @atomicStore(bool, &self.locked, true, .release);
@@ -204,12 +205,29 @@ test "RwLock" {
             }
         }
 
+        fn checker(lock: *RwLock, value: *usize, value2: *usize) !void {
+            while (true) {
+                // simulates a "workload"
+                std.Thread.sleep(std.time.ms_per_s);
+
+                try lock.lockShared();
+                defer lock.unlock();
+
+                if (value.* == 1024000 and value2.* == 1024000) break;
+            }
+        }
+
         fn test_thread(lock: *RwLock, value: *usize, value2: *usize) !void {
             var scheduler = try Scheduler.init(std.testing.allocator, .{});
             defer scheduler.deinit();
 
             for (0..32) |_| {
                 const task = try scheduler.spawn(incrementer, .{ lock, value, value2 }, .{});
+                task.detach();
+            }
+
+            for (0..4) |_| {
+                const task = try scheduler.spawn(checker, .{ lock, value, value2 }, .{});
                 task.detach();
             }
 
@@ -238,8 +256,4 @@ test "RwLock" {
     // check if it has successfully returned in its initial state.
     std.debug.assert(lock.counter == 0);
     std.debug.assert(lock.locked == false);
-
-    // TODO find out a way to test lockShared without causing a "normal" infinite-lock
-    // I figured out that if you do the current test but at the same time you have tasks that share lock in while(true) and check if the final value is reached
-    // it will never exit the share lock, because there's always a task share locking before the shared lock is completely unlocked
 }
