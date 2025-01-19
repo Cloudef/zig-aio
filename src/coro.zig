@@ -22,9 +22,9 @@ pub const Scheduler = @import("coro/Scheduler.zig");
 pub const ThreadPool = @import("coro/ThreadPool.zig");
 pub const Task = @import("coro/Task.zig");
 
-const Sync = @import("coro/Sync.zig");
-pub const Semaphore = Sync.Semaphore;
-pub const ResetEvent = Sync.ResetEvent;
+const sync = @import("coro/sync.zig");
+pub const Semaphore = sync.Semaphore;
+pub const ResetEvent = sync.ResetEvent;
 
 // Aliases
 pub const current = Task.current;
