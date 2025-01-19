@@ -8,7 +8,15 @@ const DoubleBufferedFixedArrayList = @import("minilib").DoubleBufferedFixedArray
 const log = std.log.scoped(.aio_uringlator);
 
 pub const EventSource = @import("posix/posix.zig").EventSource;
-const Result = struct { failure: Operation.Error, id: u16 };
+
+const Result = struct {
+    failure: Operation.Error,
+    id: u16,
+
+    pub fn lessThan(_: void, a: @This(), b: @This()) bool {
+        return a.id < b.id;
+    }
+};
 
 ops: ItemPool(Operation.Union, u16),
 prev_id: ?u16 = null, // for linking operations
@@ -199,11 +207,22 @@ pub fn complete(
     ctx: Ctx,
     completion_cb: fn (ctx: Ctx, id: u16, uop: *Operation.Union, failure: Operation.Error) void,
 ) aio.CompletionResult {
-    const finished = self.finished.swap();
+    var finished = self.finished.swap();
+    std.mem.sortUnstable(Result, finished[0..], {}, Result.lessThan);
     var num_errors: u16 = 0;
-    for (finished) |res| {
+    completion: for (finished, 0..) |res, idx| {
+        // ignore raced completitions
+        if (idx > 0 and res.id == finished[idx - 1].id) continue;
+
         var failure = res.failure;
         if (self.ops.nodes[res.id].used == .link_timeout and failure != error.Canceled) {
+            for (finished) |res2| {
+                if (res2.id != res.id and self.next[res2.id] == res.id) {
+                    // timeout raced with the linked operation
+                    // the linked operation will finish this timeout instead
+                    continue :completion;
+                }
+            }
             var iter = self.ops.iterator();
             const cres: enum { ok, not_found } = blk: {
                 while (iter.next()) |e| {

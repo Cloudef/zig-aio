@@ -77,7 +77,7 @@ pub fn DoubleBufferedFixedArrayList(T: type, SZ: type) type {
             self.safe.reset();
         }
 
-        pub fn swap(self: *@This()) []const T {
+        pub fn swap(self: *@This()) []T {
             self.mutex.lock();
             defer self.mutex.unlock();
             defer self.safe.reset();
