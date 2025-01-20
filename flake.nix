@@ -63,7 +63,9 @@
       apps.zon2nix = env.app [env.zon2nix] "zon2nix \"$@\"";
 
       # nix develop
-      devShells.default = env.mkShell {};
+      devShells.default = env.mkShell {
+          nativeBuildInputs = with env.pkgs; [wasmtime];
+      };
 
       # nix run .#readme
       apps.readme = env.app [] (builtins.replaceStrings ["`"] ["\\`"] ''
