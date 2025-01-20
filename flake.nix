@@ -32,7 +32,7 @@
           echo "zig build test bug -Dposix=force -Dforce_foreign_timer_queue=true -Dsanitize=true"
           zig build test bug -Dposix=force -Dforce_foreign_timer_queue=true -Dsanitize=true
           echo "zig build test:aio test:minilib -Dtarget=wasm32-wasi-none"
-          zig build test:aio test:minilib -Dtarget=wasm32-wasi-none
+          zig build -Doptimize=ReleaseSafe test:aio test:minilib -Dtarget=wasm32-wasi-none
         elif [[ "$(uname)" == "Darwin" ]]; then
           echo "zig build test bug"
           zig build test bug
