@@ -14,7 +14,6 @@
       env = zig2nix.outputs.zig-env.${system} {
         zig = zig2nix.outputs.packages.${system}.zig.master.bin;
       };
-      system-triple = env.lib.zigTripleFromString system;
     in with builtins; with env.lib; with env.pkgs.lib; {
       # nix run .
       apps.default = env.app [] "zig build example -- \"$@\"";
