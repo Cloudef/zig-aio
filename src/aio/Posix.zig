@@ -110,72 +110,79 @@ fn readinessToPollEvents(readiness: posix.Readiness) i16 {
 pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode, cb: ?aio.Dynamic.CompletionCallback) aio.Error!aio.CompletionResult {
     if (!try self.uringlator.submit(*@This(), self, start, cancel)) return .{};
 
-    // I was thinking if we should use epoll/kqueue if available
-    // The pros is that we don't have to iterate the self.pfd.items
-    // However, the self.pfd.items changes frequently so we have to keep re-registering fds anyways
-    // Poll is pretty much anywhere, so poll it is. This is a posix backend anyways.
-    const n = posix.poll(self.pfd.items[0..self.pfd.len], if (mode == .blocking) -1 else 0) catch |err| return switch (err) {
-        error.NetworkSubsystemFailed => unreachable,
-        else => |e| e,
-    };
-    if (n == 0) return .{};
-
     var res: aio.CompletionResult = .{};
-    var off: usize = 0;
-    again: while (off < self.pfd.len) {
-        for (self.pfd.items[off..self.pfd.len], 0..) |*pfd, pid| {
-            off = pid;
-            if (pfd.revents == 0) continue;
-            if (pfd.fd == self.uringlator.source.fd) {
-                std.debug.assert(pfd.revents & std.posix.POLL.NVAL == 0);
-                std.debug.assert(pfd.revents & std.posix.POLL.ERR == 0);
-                std.debug.assert(pfd.revents & std.posix.POLL.HUP == 0);
-                self.uringlator.source.wait();
-                res = self.uringlator.complete(cb, *@This(), self, completion);
-            } else {
-                var iter = self.pending.iterator(.{});
-                while (iter.next()) |id| {
-                    if (pfd.fd != self.readiness[id].fd) continue;
-                    if (pfd.events != readinessToPollEvents(self.readiness[id])) continue;
-                    defer {
-                        // do not poll this fd again
-                        self.pfd.swapRemove(@truncate(pid));
-                        const uop = &self.uringlator.ops.nodes[id].used;
-                        Uringlator.uopUnwrapCall(uop, posix.closeReadiness, .{self.readiness[id]});
-                        self.pending.unset(id);
-                        self.readiness[id] = .{};
-                    }
-                    if (pfd.revents & std.posix.POLL.ERR != 0 or pfd.revents & std.posix.POLL.NVAL != 0) {
-                        if (pfd.revents & std.posix.POLL.ERR != 0) {
+    while (res.num_completed == 0 and res.num_errors == 0) {
+        // I was thinking if we should use epoll/kqueue if available
+        // The pros is that we don't have to iterate the self.pfd.items
+        // However, the self.pfd.items changes frequently so we have to keep re-registering fds anyways
+        // Poll is pretty much anywhere, so poll it is. This is a posix backend anyways.
+        const n = posix.poll(self.pfd.items[0..self.pfd.len], if (mode == .blocking) -1 else 0) catch |err| return switch (err) {
+            error.NetworkSubsystemFailed => unreachable,
+            else => |e| e,
+        };
+        if (n == 0) {
+            if (mode == .blocking) continue; // should not happen in practice
+            return .{};
+        }
+
+        var off: usize = 0;
+        again: while (off < self.pfd.len) {
+            for (self.pfd.items[off..self.pfd.len], 0..) |*pfd, pid| {
+                off = pid;
+                if (pfd.revents == 0) continue;
+                if (pfd.fd == self.uringlator.source.fd) {
+                    std.debug.assert(pfd.revents & std.posix.POLL.NVAL == 0);
+                    std.debug.assert(pfd.revents & std.posix.POLL.ERR == 0);
+                    std.debug.assert(pfd.revents & std.posix.POLL.HUP == 0);
+                    self.uringlator.source.wait();
+                    res = self.uringlator.complete(cb, *@This(), self, completion);
+                } else {
+                    var iter = self.pending.iterator(.{});
+                    while (iter.next()) |id| {
+                        if (pfd.fd != self.readiness[id].fd) continue;
+                        if (pfd.events != readinessToPollEvents(self.readiness[id])) continue;
+                        defer {
+                            // do not poll this fd again
+                            self.pfd.swapRemove(@truncate(pid));
                             const uop = &self.uringlator.ops.nodes[id].used;
-                            switch (uop.*) {
-                                inline else => |*op| {
-                                    if (hasField(@TypeOf(op.*).Error, "BrokenPipe")) {
-                                        self.uringlator.finish(@intCast(id), error.BrokenPipe);
-                                    } else {
-                                        self.uringlator.finish(@intCast(id), error.Unexpected);
-                                    }
-                                    break :again;
-                                },
-                            }
-                        } else {
-                            self.uringlator.finish(@intCast(id), error.Unexpected);
-                            break :again;
+                            Uringlator.uopUnwrapCall(uop, posix.closeReadiness, .{self.readiness[id]});
+                            self.pending.unset(id);
+                            self.readiness[id] = .{};
                         }
+                        if (pfd.revents & std.posix.POLL.ERR != 0 or pfd.revents & std.posix.POLL.NVAL != 0) {
+                            if (pfd.revents & std.posix.POLL.ERR != 0) {
+                                const uop = &self.uringlator.ops.nodes[id].used;
+                                switch (uop.*) {
+                                    inline else => |*op| {
+                                        if (hasField(@TypeOf(op.*).Error, "BrokenPipe")) {
+                                            self.uringlator.finish(@intCast(id), error.BrokenPipe);
+                                        } else {
+                                            self.uringlator.finish(@intCast(id), error.Unexpected);
+                                        }
+                                        break :again;
+                                    },
+                                }
+                            } else {
+                                self.uringlator.finish(@intCast(id), error.Unexpected);
+                                break :again;
+                            }
+                        }
+                        // start it for real this time
+                        const uop = &self.uringlator.ops.nodes[id].used;
+                        if (self.uringlator.next[id] != id) {
+                            Uringlator.debug("ready: {}: {} => {}", .{ id, std.meta.activeTag(uop.*), self.uringlator.next[id] });
+                        } else {
+                            Uringlator.debug("ready: {}: {}", .{ id, std.meta.activeTag(uop.*) });
+                        }
+                        try self.start(@intCast(id), uop);
+                        break :again;
                     }
-                    // start it for real this time
-                    const uop = &self.uringlator.ops.nodes[id].used;
-                    if (self.uringlator.next[id] != id) {
-                        Uringlator.debug("ready: {}: {} => {}", .{ id, std.meta.activeTag(uop.*), self.uringlator.next[id] });
-                    } else {
-                        Uringlator.debug("ready: {}: {}", .{ id, std.meta.activeTag(uop.*) });
-                    }
-                    try self.start(@intCast(id), uop);
-                    break :again;
                 }
             }
+            break;
         }
-        break;
+
+        if (mode == .nonblocking) break;
     }
 
     return res;
