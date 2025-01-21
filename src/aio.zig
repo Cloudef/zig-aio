@@ -236,7 +236,9 @@ test "shared outputs" {
     var id1: Id = @enumFromInt(69);
     var id2: Id = undefined;
     var id3: Id = undefined;
-    try multi(.{
+    var dynamic = try Dynamic.init(std.testing.allocator, 16);
+    defer dynamic.deinit(std.testing.allocator);
+    try dynamic.queue(.{
         Fsync{ .file = f, .out_id = &id1 },
         Fsync{ .file = f, .out_id = &id2 },
         Fsync{ .file = f, .out_id = &id3 },
@@ -245,6 +247,16 @@ test "shared outputs" {
     try std.testing.expect(id1 != id2);
     try std.testing.expect(id1 != id3);
     try std.testing.expect(id2 != id3);
+    std.debug.print("{}\n", .{id1});
+    std.debug.print("{}\n", .{id2});
+    std.debug.print("{}\n", .{id3});
+    _ = try dynamic.completeAll();
+    std.debug.print("{}\n", .{id1});
+    std.debug.print("{}\n", .{id2});
+    std.debug.print("{}\n", .{id3});
+    try std.testing.expect(id1 == .invalid);
+    try std.testing.expect(id2 == .invalid);
+    try std.testing.expect(id3 == .invalid);
 }
 
 test "Nop" {

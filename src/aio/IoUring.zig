@@ -273,7 +273,10 @@ inline fn uring_queue(io: *std.os.linux.IoUring, op: anytype, user_data: u64) ai
             op.ns = @bitCast(ts);
             break :blk try io.link_timeout(user_data, @ptrCast(&op.ns), 0);
         },
-        .cancel => try io.cancel(user_data, @intFromEnum(op.id), 0),
+        .cancel => blk: {
+            if (op.id == .invalid) @panic("trying to cancel a invalid id (id reuse bug?)");
+            break :blk try io.cancel(user_data, @intFromEnum(op.id), 0);
+        },
         .rename_at => try io.renameat(user_data, op.old_dir.fd, op.old_path, op.new_dir.fd, op.new_path, linux.RENAME_NOREPLACE),
         .unlink_at => try io.unlinkat(user_data, op.dir.fd, op.path, 0),
         .mkdir_at => try io.mkdirat(user_data, op.dir.fd, op.path, op.mode),
@@ -340,6 +343,8 @@ inline fn uring_handle_completion(op: anytype, cqe: *std.os.linux.io_uring_cqe) 
     defer if (comptime @TypeOf(op.*) == aio.ChildExit) {
         if (!Supported.waitid) posix.closeReadiness(op, .{ .fd = op._.fd, .events = .{ .in = true } });
     };
+
+    if (op.out_id) |id| id.* = .invalid;
 
     const err = cqe.err();
     if (err != .SUCCESS) {

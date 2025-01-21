@@ -5,7 +5,7 @@ const posix = @import("posix/posix.zig");
 const windows = @import("posix/windows.zig");
 const win32 = @import("win32");
 
-pub const Id = enum(usize) { _ };
+pub const Id = enum(u17) { invalid = std.math.maxInt(u17), _ };
 
 pub const Link = enum {
     unlinked,

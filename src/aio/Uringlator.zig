@@ -182,6 +182,7 @@ fn start(
     switch (self.ops.nodes[id].used) {
         .nop => self.finish(id, error.Success),
         .cancel => |op| {
+            if (op.id == .invalid) @panic("trying to cancel a invalid id (id reuse bug?)");
             const cid: u16 = @intCast(@intFromEnum(op.id));
             if (self.ops.nodes[cid] != .used) {
                 self.finish(id, error.NotFound);
@@ -264,6 +265,7 @@ pub fn complete(
 }
 
 inline fn completion(op: anytype, self: *@This(), res: Result) void {
+    if (op.out_id) |id| id.* = .invalid;
     if (op.out_error) |err| err.* = @errorCast(res.failure);
     if (op.link != .unlinked and self.next[res.id] != res.id) {
         if (self.ops.nodes[self.next[res.id]].used == .link_timeout) {
