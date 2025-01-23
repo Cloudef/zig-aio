@@ -5,13 +5,14 @@
 
 const std = @import("std");
 const aio = @import("aio");
+const build_options = @import("build_options");
 
 const root = @import("root");
 pub const options: Options = if (@hasDecl(root, "coro_options")) root.coro_options else .{};
 
 pub const Options = struct {
     /// Enable coroutine debug logs and tracing
-    debug: bool = false,
+    debug: bool = build_options.debug,
     /// Default io queue entries
     io_queue_entries: u16 = 4096,
     /// Default stack size for coroutines

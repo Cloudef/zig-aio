@@ -11,7 +11,7 @@ pub const options: Options = if (@hasDecl(root, "aio_options")) root.aio_options
 
 pub const Options = struct {
     /// Enable debug logs and tracing.
-    debug: bool = false,
+    debug: bool = build_options.debug,
     /// Max thread count for a thread pool if a backend requires one.
     /// By default use the cpu core count.
     max_threads: ?u32 = null,

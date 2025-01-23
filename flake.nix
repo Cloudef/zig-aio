@@ -22,15 +22,15 @@
       apps.build = env.app [] "zig build \"$@\"";
 
       # nix run .#test
-      apps.test = with env.pkgs; env.app [gnugrep wasmtime] ''
+      apps.test = with env.pkgs; env.app [wasmtime] ''
         zig version
         if [[ "$(uname)" == "Linux" ]]; then
-          echo "zig build test bug -Dposix=disable -Dsanitize=true"
-          zig build test bug -Dposix=disable -Dsanitize=true
-          echo "zig build test bug -Dposix=force -Dsanitize=true"
-          zig build test bug -Dposix=force -Dsanitize=true
-          echo "zig build test bug -Dposix=force -Dforce_foreign_timer_queue=true -Dsanitize=true"
-          zig build test bug -Dposix=force -Dforce_foreign_timer_queue=true -Dsanitize=true
+          echo "zig build test bug -Daio:posix=disable -Dsanitize=true"
+          zig build test bug -Daio:posix=disable -Dsanitize=true
+          echo "zig build test bug -Daio:posix=force -Dsanitize=true"
+          zig build test bug -Daio:posix=force -Dsanitize=true
+          echo "zig build test bug -Daio:posix=force -Dminilib:force_foreign_timer_queue=true -Dsanitize=true"
+          zig build test bug -Daio:posix=force -Dminilib:force_foreign_timer_queue=true -Dsanitize=true
           echo "zig build test:aio test:minilib -Dtarget=wasm32-wasi-none"
           zig build -Doptimize=ReleaseSafe test:aio test:minilib -Dtarget=wasm32-wasi-none
         elif [[ "$(uname)" == "Darwin" ]]; then

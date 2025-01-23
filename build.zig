@@ -16,16 +16,30 @@ pub fn build(b: *std.Build) void {
     const sanitize = b.option(bool, "sanitize", "use sanitizers when running examples or tests") orelse false;
 
     var aio_opts = b.addOptions();
-    const PosixMode = enum { auto, force, disable };
-    const posix = b.option(PosixMode, "posix", "posix mode [auto, force, disable]") orelse .auto;
-    aio_opts.addOption(PosixMode, "posix", posix);
-    const WasiMode = enum { wasi, wasix };
-    const wasi = b.option(WasiMode, "wasi", "wasi mode [wasi, wasix]") orelse .wasi;
-    aio_opts.addOption(WasiMode, "wasi", wasi);
+    {
+        const debug = b.option(bool, "aio:debug", "enable debug prints") orelse false;
+        aio_opts.addOption(bool, "debug", debug);
+
+        const PosixMode = enum { auto, force, disable };
+        const posix = b.option(PosixMode, "aio:posix", "posix mode [auto, force, disable]") orelse .auto;
+        aio_opts.addOption(PosixMode, "posix", posix);
+
+        const WasiMode = enum { wasi, wasix };
+        const wasi = b.option(WasiMode, "aio:wasi", "wasi mode [wasi, wasix]") orelse .wasi;
+        aio_opts.addOption(WasiMode, "wasi", wasi);
+    }
+
+    var coro_opts = b.addOptions();
+    {
+        const debug = b.option(bool, "coro:debug", "enable debug prints") orelse false;
+        coro_opts.addOption(bool, "debug", debug);
+    }
 
     var minilib_opts = b.addOptions();
-    const force_foreign_timer_queue = b.option(bool, "force_foreign_timer_queue", "force the use of foreign timer queue backend") orelse false;
-    minilib_opts.addOption(bool, "force_foreign_timer_queue", force_foreign_timer_queue);
+    {
+        const force_foreign_timer_queue = b.option(bool, "minilib:force_foreign_timer_queue", "force the use of foreign timer queue backend") orelse false;
+        minilib_opts.addOption(bool, "force_foreign_timer_queue", force_foreign_timer_queue);
+    }
 
     const minilib = b.addModule("minilib", .{
         .root_source_file = b.path("src/minilib.zig"),
@@ -65,6 +79,7 @@ pub fn build(b: *std.Build) void {
     });
     coro.addImport("minilib", minilib);
     coro.addImport("aio", aio);
+    coro.addImport("build_options", coro_opts.createModule());
 
     const run_all = b.step("example", "Run all examples");
     inline for (.{
