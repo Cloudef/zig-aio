@@ -91,10 +91,8 @@ pub fn tick(self: *@This(), mode: aio.Dynamic.CompletionMode) aio.Error!usize {
                 completer.wakeup(.waiting_frame);
             }
         }
-        _ = try self.io.complete(.nonblocking, self);
-    } else {
-        _ = try self.io.complete(mode, self);
     }
+    _ = try self.io.complete(mode, self);
     return self.running.len;
 }
 
