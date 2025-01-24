@@ -245,24 +245,27 @@ pub fn complete(
             }
         }
 
-        if (failure != error.Success) {
+        const failed: bool = blk: {
+            if (self.ops.nodes[res.id].used == .link_timeout and failure == error.Canceled) {
+                break :blk false;
+            } else {
+                break :blk failure != error.Success;
+            }
+        };
+
+        if (failed) {
             debug("complete: {}: {} [FAIL] {}", .{ res.id, std.meta.activeTag(self.ops.nodes[res.id].used), failure });
         } else {
             debug("complete: {}: {} [OK]", .{ res.id, std.meta.activeTag(self.ops.nodes[res.id].used) });
         }
 
-        if (self.ops.nodes[res.id].used == .link_timeout and failure == error.Canceled) {
-            // special case
-        } else {
-            num_errors += @intFromBool(failure != error.Success);
-        }
-
+        num_errors += @intFromBool(failed);
         uopUnwrapCall(&self.ops.nodes[res.id].used, completion, .{ self, .{ .id = res.id, .failure = failure } });
 
         var uop = self.ops.nodes[res.id].used;
         self.removeOp(res.id);
         completion_cb(ctx, res.id, &uop, failure);
-        if (cb) |f| f(uop, @enumFromInt(res.id), failure != error.Success);
+        if (cb) |f| f(uop, @enumFromInt(res.id), failed);
     }
     return .{ .num_completed = @truncate(finished.len), .num_errors = num_errors };
 }
