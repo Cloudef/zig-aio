@@ -105,6 +105,9 @@ fn queueOperation(
     switch (uop) {
         inline else => |*op| {
             debug("queue: {}: {}, {s} ({?})", .{ id, std.meta.activeTag(uop), @tagName(op.link), self.prev_id });
+            if (@TypeOf(op.*) == aio.LinkTimeout and self.prev_id == null) {
+                @panic("aio.LinkTimeout not linked to any operation");
+            }
             if (op.link != .unlinked) self.prev_id = id else self.prev_id = null;
         },
     }
