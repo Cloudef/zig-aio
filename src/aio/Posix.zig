@@ -230,6 +230,16 @@ fn onThreadTimeout(ctx: *anyopaque, user_data: usize) void {
     self.uringlator.finish(@intCast(user_data), error.Success);
 }
 
+fn nonBlockingExecutor(self: *@This(), op: anytype, id: u16, readiness: posix.Readiness) bool {
+    var failure: Operation.Error = error.Success;
+    posix.perform(op, readiness) catch |err| {
+        if (err == error.WouldBlock) return false;
+        failure = err;
+    };
+    self.uringlator.finish(id, failure);
+    return true;
+}
+
 pub fn uringlator_start(self: *@This(), op: anytype, id: u16) !void {
     if (@as(i16, @bitCast(self.readiness[id].events)) == 0 or self.readiness[id].kludge or self.pending.isSet(id)) {
         switch (comptime Operation.tagFromPayloadType(@TypeOf(op.*))) {
@@ -257,6 +267,20 @@ pub fn uringlator_start(self: *@This(), op: anytype, id: u16) !void {
             },
         }
     } else {
+        // try non-blocking send/recv first
+        // TODO: might want to not do this if the buffer is large
+        if (switch (comptime Operation.tagFromPayloadType(@TypeOf(op.*))) {
+            .send,
+            .recv,
+            .send_msg,
+            .recv_msg,
+            => self.nonBlockingExecutor(op, id, self.readiness[id]),
+            else => false,
+        }) {
+            // operation was completed immediately
+            return;
+        }
+
         if (comptime builtin.target.os.tag == .wasi) {
             switch (comptime Operation.tagFromPayloadType(@TypeOf(op.*))) {
                 .read => {
