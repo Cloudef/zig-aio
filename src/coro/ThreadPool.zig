@@ -29,7 +29,7 @@ pub fn deinit(self: *@This()) void {
 }
 
 pub const CancellationToken = struct {
-    canceled: bool = false,
+    canceled: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
 };
 
 fn hasToken(comptime func: anytype) bool {
@@ -61,11 +61,11 @@ pub fn yieldForCompletion(self: *@This(), func: anytype, args: anytype, config: 
     while (!completed.load(.acquire)) {
         const nerr = io.do(.{
             aio.WaitEventSource{ .source = &self.source },
-        }, if (token.canceled) .io_cancel else .io) catch 1;
+        }, if (token.canceled.load(.acquire)) .io_cancel else .io) catch 1;
         if (nerr > 0) {
             if (Frame.current()) |frame| {
                 if (frame.canceled) {
-                    token.canceled = true;
+                    token.canceled.store(true, .release);
                     continue;
                 }
             }
@@ -112,10 +112,10 @@ test "ThreadPool" {
         }
 
         fn blockingCanceled(token: *const CancellationToken) u32 {
-            while (!token.canceled) {
+            while (!token.canceled.load(.acquire)) {
                 std.time.sleep(1 * std.time.ns_per_s);
             }
-            return if (token.canceled) 666 else 69;
+            return if (token.canceled.load(.acquire)) 666 else 69;
         }
 
         fn task2(pool: *ThreadPool) !u32 {
