@@ -161,10 +161,10 @@ fn iocpDrainThread(self: *@This()) void {
                 },
                 .overlapped => self.ovls[id].res = transferred,
             }
-            self.uringlator.finish(id, error.Success);
+            self.uringlator.finish(id, error.Success, .thread_safe);
         } else {
             std.debug.assert(key.type != .shutdown);
-            self.uringlator.finish(id, werr(0));
+            self.uringlator.finish(id, werr(0), .thread_safe);
         }
     }
 }
@@ -178,15 +178,20 @@ fn spawnIocpThreads(self: *@This()) !void {
 pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode, handler: anytype) aio.Error!aio.CompletionResult {
     if (!self.iocp_threads_spawned) try self.spawnIocpThreads(); // iocp threads must be first
     if (!try self.uringlator.submit(self)) return .{};
-
-    const num_finished = self.uringlator.finished.len();
-    if (mode == .blocking and num_finished == 0) {
-        self.uringlator.source.wait();
-    } else if (num_finished == 0) {
-        return .{};
+    var res: aio.CompletionResult = .{};
+    while (res.num_completed == 0 and res.num_errors == 0) {
+        if (!self.uringlator.signaled) {
+            const num_finished = self.uringlator.finished.len();
+            if (mode == .blocking and num_finished == 0) {
+                self.uringlator.source.wait();
+            } else if (num_finished == 0) {
+                return .{};
+            }
+        }
+        res = self.uringlator.complete(self, handler);
+        if (mode == .nonblocking) break;
     }
-
-    return self.uringlator.complete(self, handler);
+    return res;
 }
 
 pub fn immediate(comptime len: u16, work: anytype) aio.Error!u16 {
@@ -208,7 +213,7 @@ pub fn immediate(comptime len: u16, work: anytype) aio.Error!u16 {
     return num_errors;
 }
 
-fn onThreadPosixExecutor(self: *@This(), op: anytype, id: u16) void {
+fn onThreadPosixExecutor(self: *@This(), op: anytype, id: u16, comptime mode: Uringlator.FinishMode) void {
     const posix = @import("posix/posix.zig");
     var failure: Operation.Error = error.Success;
     while (true) {
@@ -218,12 +223,12 @@ fn onThreadPosixExecutor(self: *@This(), op: anytype, id: u16) void {
         };
         break;
     }
-    self.uringlator.finish(id, failure);
+    self.uringlator.finish(id, failure, mode);
 }
 
 fn onThreadTimeout(ctx: *anyopaque, user_data: usize) void {
     var self: *@This() = @ptrCast(@alignCast(ctx));
-    self.uringlator.finish(@intCast(user_data), error.Success);
+    self.uringlator.finish(@intCast(user_data), error.Success, .thread_safe);
 }
 
 fn ovlOff(offset: u64) io.OVERLAPPED {
@@ -253,52 +258,52 @@ pub fn uringlator_start(self: *@This(), op: anytype, id: u16) !void {
         .poll => unreachable,
         .read => {
             const flags = try getHandleAccessInfo(op.file.handle);
-            if (flags.FILE_READ_DATA != 1) return self.uringlator.finish(id, error.NotOpenForReading);
+            if (flags.FILE_READ_DATA != 1) return self.uringlator.finish(id, error.NotOpenForReading, .thread_unsafe);
             const h = fs.ReOpenFile(op.file.handle, flags, .{ .READ = 1, .WRITE = 1 }, fs.FILE_FLAG_OVERLAPPED);
-            wtry(h != null and h.? != INVALID_HANDLE) catch |err| return self.uringlator.finish(id, err);
-            self.iocp.associateHandle(id, h.?) catch |err| return self.uringlator.finish(id, err);
+            wtry(h != null and h.? != INVALID_HANDLE) catch |err| return self.uringlator.finish(id, err, .thread_unsafe);
+            self.iocp.associateHandle(id, h.?) catch |err| return self.uringlator.finish(id, err, .thread_unsafe);
             self.ovls[id] = .{ .overlapped = ovlOff(op.offset), .owned = .{ .handle = h.? } };
-            wtry(fs.ReadFile(h.?, op.buffer.ptr, @intCast(op.buffer.len), &trash, &self.ovls[id].overlapped)) catch |err| return self.uringlator.finish(id, err);
+            wtry(fs.ReadFile(h.?, op.buffer.ptr, @intCast(op.buffer.len), &trash, &self.ovls[id].overlapped)) catch |err| return self.uringlator.finish(id, err, .thread_unsafe);
         },
         .write => {
             const flags = try getHandleAccessInfo(op.file.handle);
-            if (flags.FILE_WRITE_DATA != 1) return self.uringlator.finish(id, error.NotOpenForWriting);
+            if (flags.FILE_WRITE_DATA != 1) return self.uringlator.finish(id, error.NotOpenForWriting, .thread_unsafe);
             const h = fs.ReOpenFile(op.file.handle, flags, .{ .READ = 1, .WRITE = 1 }, fs.FILE_FLAG_OVERLAPPED);
-            wtry(h != null and h.? != INVALID_HANDLE) catch |err| return self.uringlator.finish(id, err);
-            self.iocp.associateHandle(id, h.?) catch |err| return self.uringlator.finish(id, err);
+            wtry(h != null and h.? != INVALID_HANDLE) catch |err| return self.uringlator.finish(id, err, .thread_unsafe);
+            self.iocp.associateHandle(id, h.?) catch |err| return self.uringlator.finish(id, err, .thread_unsafe);
             self.ovls[id] = .{ .overlapped = ovlOff(op.offset), .owned = .{ .handle = h.? } };
-            wtry(fs.WriteFile(h.?, op.buffer.ptr, @intCast(op.buffer.len), &trash, &self.ovls[id].overlapped)) catch |err| return self.uringlator.finish(id, err);
+            wtry(fs.WriteFile(h.?, op.buffer.ptr, @intCast(op.buffer.len), &trash, &self.ovls[id].overlapped)) catch |err| return self.uringlator.finish(id, err, .thread_unsafe);
         },
         .accept => {
-            self.iocp.associateSocket(id, op.socket) catch |err| return self.uringlator.finish(id, err);
-            op.out_socket.* = aio.socket(std.posix.AF.INET, 0, 0) catch |err| return self.uringlator.finish(id, err);
-            wtry(win_sock.AcceptEx(op.socket, op.out_socket.*, &op._, 0, @sizeOf(std.posix.sockaddr) + 16, @sizeOf(std.posix.sockaddr) + 16, &trash, &self.ovls[id].overlapped) == 1) catch |err| return self.uringlator.finish(id, err);
+            self.iocp.associateSocket(id, op.socket) catch |err| return self.uringlator.finish(id, err, .thread_unsafe);
+            op.out_socket.* = aio.socket(std.posix.AF.INET, 0, 0) catch |err| return self.uringlator.finish(id, err, .thread_unsafe);
+            wtry(win_sock.AcceptEx(op.socket, op.out_socket.*, &op._, 0, @sizeOf(std.posix.sockaddr) + 16, @sizeOf(std.posix.sockaddr) + 16, &trash, &self.ovls[id].overlapped) == 1) catch |err| return self.uringlator.finish(id, err, .thread_unsafe);
         },
         .recv => {
-            self.iocp.associateSocket(id, op.socket) catch |err| return self.uringlator.finish(id, err);
-            _ = wposix.recvEx(op.socket, &op._, 0, &self.ovls[id].overlapped) catch |err| return self.uringlator.finish(id, err);
+            self.iocp.associateSocket(id, op.socket) catch |err| return self.uringlator.finish(id, err, .thread_unsafe);
+            _ = wposix.recvEx(op.socket, &op._, 0, &self.ovls[id].overlapped) catch |err| return self.uringlator.finish(id, err, .thread_unsafe);
         },
         .send => {
-            self.iocp.associateSocket(id, op.socket) catch |err| return self.uringlator.finish(id, err);
-            _ = wposix.sendEx(op.socket, &op._, 0, &self.ovls[id].overlapped) catch |err| return self.uringlator.finish(id, err);
+            self.iocp.associateSocket(id, op.socket) catch |err| return self.uringlator.finish(id, err, .thread_unsafe);
+            _ = wposix.sendEx(op.socket, &op._, 0, &self.ovls[id].overlapped) catch |err| return self.uringlator.finish(id, err, .thread_unsafe);
         },
         .send_msg => {
-            self.iocp.associateSocket(id, op.socket) catch |err| return self.uringlator.finish(id, err);
-            _ = wposix.sendmsgEx(op.socket, @constCast(op.msg), 0, &self.ovls[id].overlapped) catch |err| return self.uringlator.finish(id, err);
+            self.iocp.associateSocket(id, op.socket) catch |err| return self.uringlator.finish(id, err, .thread_unsafe);
+            _ = wposix.sendmsgEx(op.socket, @constCast(op.msg), 0, &self.ovls[id].overlapped) catch |err| return self.uringlator.finish(id, err, .thread_unsafe);
         },
         .recv_msg => {
-            self.iocp.associateSocket(id, op.socket) catch |err| return self.uringlator.finish(id, err);
-            _ = wposix.recvmsgEx(op.socket, op.out_msg, 0, &self.ovls[id].overlapped) catch |err| return self.uringlator.finish(id, err);
+            self.iocp.associateSocket(id, op.socket) catch |err| return self.uringlator.finish(id, err, .thread_unsafe);
+            _ = wposix.recvmsgEx(op.socket, op.out_msg, 0, &self.ovls[id].overlapped) catch |err| return self.uringlator.finish(id, err, .thread_unsafe);
         },
         inline .timeout, .link_timeout => {
             const closure: TimerQueue.Closure = .{ .context = self, .callback = onThreadTimeout };
-            self.tqueue.schedule(.monotonic, op.ns, id, .{ .closure = closure }) catch return self.uringlator.finish(id, error.Unexpected);
+            self.tqueue.schedule(.monotonic, op.ns, id, .{ .closure = closure }) catch return self.uringlator.finish(id, error.Unexpected, .thread_unsafe);
         },
         .child_exit => {
             const job = win32.system.job_objects.CreateJobObjectW(null, null);
-            wtry(job != null and job.? != INVALID_HANDLE) catch |err| return self.uringlator.finish(id, err);
+            wtry(job != null and job.? != INVALID_HANDLE) catch |err| return self.uringlator.finish(id, err, .thread_unsafe);
             errdefer checked(CloseHandle(job.?));
-            wtry(win32.system.job_objects.AssignProcessToJobObject(job.?, op.child)) catch return self.uringlator.finish(id, error.Unexpected);
+            wtry(win32.system.job_objects.AssignProcessToJobObject(job.?, op.child)) catch return self.uringlator.finish(id, error.Unexpected, .thread_unsafe);
             const key: Iocp.Key = .{ .type = .child_exit, .id = id };
             var assoc: win32.system.job_objects.JOBOBJECT_ASSOCIATE_COMPLETION_PORT = .{
                 .CompletionKey = @ptrFromInt(@as(usize, @bitCast(key))),
@@ -311,15 +316,15 @@ pub fn uringlator_start(self: *@This(), op: anytype, id: u16) !void {
                 win32.system.job_objects.JobObjectAssociateCompletionPortInformation,
                 @ptrCast(&assoc),
                 @sizeOf(@TypeOf(assoc)),
-            )) catch return self.uringlator.finish(id, error.Unexpected);
+            )) catch return self.uringlator.finish(id, error.Unexpected, .thread_unsafe);
         },
         .wait_event_source => op.source.native.addWaiter(&op._.link),
         // can be performed without a thread
-        .notify_event_source, .close_event_source => self.onThreadPosixExecutor(op, id),
+        .notify_event_source, .close_event_source => self.onThreadPosixExecutor(op, id, .thread_unsafe),
         else => {
             // perform non IOCP supported operation on a thread
             const posix = @import("posix/posix.zig");
-            try self.tpool.spawn(onThreadPosixExecutor, .{ self, op, id }, .{ .stack_size = posix.stack_size });
+            try self.tpool.spawn(onThreadPosixExecutor, .{ self, op, id, .thread_safe }, .{ .stack_size = posix.stack_size });
         },
     }
 }
@@ -335,17 +340,17 @@ pub fn uringlator_cancel(self: *@This(), op: anytype, id: u16) bool {
         .child_exit => {
             self.ovls[id].deinit();
             self.ovls[id] = .{};
-            self.uringlator.finish(id, error.Canceled);
+            self.uringlator.finish(id, error.Canceled, .thread_unsafe);
             return true;
         },
         .timeout, .link_timeout => {
             self.tqueue.disarm(.monotonic, id);
-            self.uringlator.finish(id, error.Canceled);
+            self.uringlator.finish(id, error.Canceled, .thread_unsafe);
             return true;
         },
         .wait_event_source => {
             op.source.native.removeWaiter(&op._.link);
-            self.uringlator.finish(id, error.Canceled);
+            self.uringlator.finish(id, error.Canceled, .thread_unsafe);
             return true;
         },
         else => {},

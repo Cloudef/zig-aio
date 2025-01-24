@@ -112,6 +112,12 @@ pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode, handler: anyty
 
     var res: aio.CompletionResult = .{};
     while (res.num_completed == 0 and res.num_errors == 0) {
+        if (self.uringlator.signaled) {
+            res = self.uringlator.complete(self, handler);
+            if (mode == .blocking) continue;
+            return res;
+        }
+
         // I was thinking if we should use epoll/kqueue if available
         // The pros is that we don't have to iterate the self.pfd.items
         // However, the self.pfd.items changes frequently so we have to keep re-registering fds anyways
@@ -156,15 +162,15 @@ pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode, handler: anyty
                                 switch (uop.*) {
                                     inline else => |*op| {
                                         if (hasField(@TypeOf(op.*).Error, "BrokenPipe")) {
-                                            self.uringlator.finish(@intCast(id), error.BrokenPipe);
+                                            self.uringlator.finish(@intCast(id), error.BrokenPipe, .thread_unsafe);
                                         } else {
-                                            self.uringlator.finish(@intCast(id), error.Unexpected);
+                                            self.uringlator.finish(@intCast(id), error.Unexpected, .thread_unsafe);
                                         }
                                         break :again;
                                     },
                                 }
                             } else {
-                                self.uringlator.finish(@intCast(id), error.Unexpected);
+                                self.uringlator.finish(@intCast(id), error.Unexpected, .thread_unsafe);
                                 break :again;
                             }
                         }
@@ -213,7 +219,7 @@ pub fn immediate(comptime len: u16, uops: []Operation.Union) aio.Error!u16 {
     return num_errors;
 }
 
-fn onThreadExecutor(self: *@This(), op: anytype, id: u16, readiness: posix.Readiness) void {
+fn onThreadExecutor(self: *@This(), op: anytype, id: u16, readiness: posix.Readiness, comptime mode: Uringlator.FinishMode) void {
     var failure: Operation.Error = error.Success;
     while (true) {
         posix.perform(op, readiness) catch |err| {
@@ -222,12 +228,12 @@ fn onThreadExecutor(self: *@This(), op: anytype, id: u16, readiness: posix.Readi
         };
         break;
     }
-    self.uringlator.finish(id, failure);
+    self.uringlator.finish(id, failure, mode);
 }
 
 fn onThreadTimeout(ctx: *anyopaque, user_data: usize) void {
     var self: *@This() = @ptrCast(@alignCast(ctx));
-    self.uringlator.finish(@intCast(user_data), error.Success);
+    self.uringlator.finish(@intCast(user_data), error.Success, .thread_safe);
 }
 
 fn nonBlockingExecutor(self: *@This(), op: anytype, id: u16, readiness: posix.Readiness) bool {
@@ -236,7 +242,7 @@ fn nonBlockingExecutor(self: *@This(), op: anytype, id: u16, readiness: posix.Re
         if (err == error.WouldBlock) return false;
         failure = err;
     };
-    self.uringlator.finish(id, failure);
+    self.uringlator.finish(id, failure, .thread_unsafe);
     return true;
 }
 
@@ -245,7 +251,7 @@ pub fn uringlator_start(self: *@This(), op: anytype, id: u16) !void {
         switch (comptime Operation.tagFromPayloadType(@TypeOf(op.*))) {
             inline .timeout, .link_timeout => {
                 const closure: TimerQueue.Closure = .{ .context = self, .callback = onThreadTimeout };
-                self.tqueue.schedule(.monotonic, op.ns, id, .{ .closure = closure }) catch self.uringlator.finish(id, error.Unexpected);
+                self.tqueue.schedule(.monotonic, op.ns, id, .{ .closure = closure }) catch self.uringlator.finish(id, error.Unexpected, .thread_unsafe);
             },
             // can be performed here, doesn't have to be dispatched to thread
             .child_exit,
@@ -256,13 +262,13 @@ pub fn uringlator_start(self: *@This(), op: anytype, id: u16) !void {
             .recv,
             .send_msg,
             .recv_msg,
-            => self.onThreadExecutor(op, id, self.readiness[id]),
+            => self.onThreadExecutor(op, id, self.readiness[id], .thread_unsafe),
             inline else => {
                 // perform on thread
                 if (!self.readiness[id].kludge) {
-                    try self.tpool.spawn(onThreadExecutor, .{ self, op, id, self.readiness[id] }, .{ .stack_size = posix.stack_size });
+                    try self.tpool.spawn(onThreadExecutor, .{ self, op, id, self.readiness[id], .thread_safe }, .{ .stack_size = posix.stack_size });
                 } else {
-                    try self.kludge_tpool.spawn(onThreadExecutor, .{ self, op, id, self.readiness[id] }, .{ .stack_size = posix.stack_size });
+                    try self.kludge_tpool.spawn(onThreadExecutor, .{ self, op, id, self.readiness[id], .thread_safe }, .{ .stack_size = posix.stack_size });
                 }
             },
         }
@@ -287,14 +293,14 @@ pub fn uringlator_start(self: *@This(), op: anytype, id: u16) !void {
                     var stat: std.os.wasi.fdstat_t = undefined;
                     std.debug.assert(std.os.wasi.fd_fdstat_get(op.file.handle, &stat) == .SUCCESS);
                     if (!stat.fs_rights_base.FD_READ) {
-                        return self.uringlator.finish(id, error.NotOpenForReading);
+                        return self.uringlator.finish(id, error.NotOpenForReading, .thread_unsafe);
                     }
                 },
                 .write => {
                     var stat: std.os.wasi.fdstat_t = undefined;
                     std.debug.assert(std.os.wasi.fd_fdstat_get(op.file.handle, &stat) == .SUCCESS);
                     if (!stat.fs_rights_base.FD_WRITE) {
-                        return self.uringlator.finish(id, error.NotOpenForWriting);
+                        return self.uringlator.finish(id, error.NotOpenForWriting, .thread_unsafe);
                     }
                 },
                 else => {},
@@ -318,13 +324,13 @@ pub fn uringlator_start(self: *@This(), op: anytype, id: u16) !void {
 
 pub fn uringlator_cancel(self: *@This(), op: anytype, id: u16) bool {
     if (self.pending.isSet(id)) {
-        self.uringlator.finish(id, error.Canceled);
+        self.uringlator.finish(id, error.Canceled, .thread_unsafe);
         return true;
     }
     switch (comptime Operation.tagFromPayloadType(@TypeOf(op.*))) {
         .timeout, .link_timeout => {
             self.tqueue.disarm(.monotonic, id);
-            self.uringlator.finish(id, error.Canceled);
+            self.uringlator.finish(id, error.Canceled, .thread_unsafe);
             return true;
         },
         else => {},
