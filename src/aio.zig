@@ -79,6 +79,7 @@ pub const Dynamic = struct {
     /// Queue operations for future completion
     /// The call is atomic, if any of the operations fail to queue, then the given operations are reverted
     pub inline fn queue(self: *@This(), operations: anytype, handler: anytype) Error!void {
+        sanityCheck(operations);
         const ti = @typeInfo(@TypeOf(operations));
         if (comptime (ti == .@"struct" and ti.@"struct".is_tuple) or ti == .array) {
             if (comptime operations.len == 0) @compileError("no work to be done");
@@ -117,10 +118,37 @@ pub const Dynamic = struct {
     }
 };
 
+// Unfortunately we can't do `@compileError` for these :(
+pub inline fn sanityCheck(operations: anytype) void {
+    const ti = @typeInfo(@TypeOf(operations));
+    if (comptime (ti == .@"struct" and ti.@"struct".is_tuple) or ti == .array) {
+        if (comptime operations.len == 0) @compileError("no work to be done");
+        inline for (operations, 0..) |op, idx| {
+            if (@TypeOf(op) == LinkTimeout) {
+                if (idx == 0 or operations[idx - 1].link == .unlinked) {
+                    @panic("aio.LinkTimeout is not linked to any operation");
+                }
+            }
+            if (idx == operations.len - 1 and op.link != .unlinked) {
+                @panic("Last operation is not .unlinked");
+            }
+        }
+    } else {
+        const op = operations;
+        if (@TypeOf(op) == LinkTimeout) {
+            @panic("aio.LinkTimeout is not linked to any operation");
+        }
+        if (op.link != .unlinked) {
+            @panic("Last operation is not .unlinked");
+        }
+    }
+}
+
 /// Completes a list of operations immediately, blocks until complete
 /// For error handling you must check the `out_error` field in the operation
 /// Returns the number of errors occured, 0 if there were no errors
 pub inline fn complete(operations: anytype) Error!u16 {
+    sanityCheck(operations);
     const ti = @typeInfo(@TypeOf(operations));
     if (comptime (ti == .@"struct" and ti.@"struct".is_tuple) or ti == .array) {
         if (comptime operations.len == 0) @compileError("no work to be done");
@@ -304,12 +332,12 @@ test "Poll" {
     {
         var f = try tmp.dir.createFile("test", .{ .read = true });
         defer f.close();
-        try single(Poll{ .fd = f.handle, .events = .{ .out = true }, .link = .soft });
+        try single(Poll{ .fd = f.handle, .events = .{ .out = true } });
     }
     {
         var f = try tmp.dir.createFile("test", .{ .read = true });
         defer f.close();
-        try single(Poll{ .fd = f.handle, .events = .{ .in = true, .out = true }, .link = .soft });
+        try single(Poll{ .fd = f.handle, .events = .{ .in = true, .out = true } });
     }
 }
 
@@ -410,7 +438,7 @@ test "LinkTimeout" {
         const num_errors = try complete(.{
             Timeout{ .ns = 2 * std.time.ns_per_s, .link = .soft },
             LinkTimeout{ .ns = 1 * std.time.ns_per_s, .link = .soft },
-            Timeout{ .ns = 1 * std.time.ns_per_s, .link = .soft },
+            Timeout{ .ns = 1 * std.time.ns_per_s },
         });
         try std.testing.expectEqual(3, num_errors);
     }
@@ -425,7 +453,7 @@ test "LinkTimeout" {
         const num_errors = try complete(.{
             Timeout{ .ns = 1 * std.time.ns_per_s, .link = .soft },
             LinkTimeout{ .ns = 2 * std.time.ns_per_s, .link = .soft },
-            Timeout{ .ns = 1 * std.time.ns_per_s, .link = .soft },
+            Timeout{ .ns = 1 * std.time.ns_per_s },
         });
         try std.testing.expectEqual(1, num_errors);
     }
@@ -433,7 +461,7 @@ test "LinkTimeout" {
         const num_errors = try complete(.{
             Timeout{ .ns = 1 * std.time.ns_per_s, .link = .hard },
             LinkTimeout{ .ns = 2 * std.time.ns_per_s, .link = .soft },
-            Timeout{ .ns = 1 * std.time.ns_per_s, .link = .soft },
+            Timeout{ .ns = 1 * std.time.ns_per_s },
         });
         try std.testing.expectEqual(0, num_errors);
     }

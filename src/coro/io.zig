@@ -17,6 +17,7 @@ pub const OperationContext = struct {
 pub const Error = aio.Error || error{Canceled};
 
 pub fn do(operations: anytype, status: Frame.Status) Error!u16 {
+    aio.sanityCheck(operations);
     // .io_cancel status means the io operation must complete and cannot be canceled
     // that is, the frame is put in `io_cancel` state rather than normal `io` state.
     std.debug.assert(status == .io or status == .io_cancel);
@@ -30,19 +31,16 @@ pub fn do(operations: anytype, status: Frame.Status) Error!u16 {
         if (comptime (ti == .@"struct" and ti.@"struct".is_tuple) or ti == .array) {
             if (comptime operations.len == 0) @compileError("no work to be done");
             var uops: [operations.len]aio.Operation.Union = undefined;
-            inline for (operations, &uops, &ctx_list, 0..) |op, *uop, *ctx, idx| {
+            inline for (operations, &uops, &ctx_list) |op, *uop, *ctx| {
                 ctx.* = .{ .whole = &whole };
                 var cpy = op;
                 cpy.userdata = @intFromPtr(ctx);
-                // coro io operations get merged into one, having .link on last operation is always a mistake
-                if (idx == operations.len - 1) cpy.link = .unlinked;
                 uop.* = aio.Operation.uopFromOp(cpy);
             }
             try frame.scheduler.io.io.queue(operations.len, &uops, frame.scheduler);
         } else {
             var cpy = operations;
             cpy.userdata = @intFromPtr(&ctx_list[0]);
-            cpy.link = .unlinked;
             var uops: [1]aio.Operation.Union = .{aio.Operation.uopFromOp(cpy)};
             try frame.scheduler.io.io.queue(1, &uops, frame.scheduler);
         }
