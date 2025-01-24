@@ -5,14 +5,6 @@ const aio = @import("aio");
 const coro = @import("coro");
 const log = std.log.scoped(.ping_pongs);
 
-pub const aio_options: aio.Options = .{
-    .debug = false, // set to true to enable debug logs
-};
-
-pub const coro_options: coro.Options = .{
-    .debug = false, // set to true to enable debug logs
-};
-
 pub const std_options: std.Options = .{
     .log_level = .debug,
 };
