@@ -27,10 +27,10 @@ try work.queue(.{
     aio.Read{...},
     aio.Write{...},
     aio.Fsync{...},
-});
+}, {});
 
 // Single operation
-try work.queue(aio.Timeout{...});
+try work.queue(aio.Timeout{...}, {});
 ```
 
 ### Completing operations
@@ -52,11 +52,18 @@ To complete all operations within the dynamic instance, use `completeAll`.
 This blocks until all the operations are complete and returns the number of errors, if any.
 
 ```zig
-const num_errors = try work.completeAll();
+const num_errors = try work.completeAll({});
 ```
 
-### Callbacks
+### Handler
 
-It is possible to set callbacks for queued and completed operations by setting the `queue_callback` and `completion_callback` of `aio.Dynamic`
-to a functions with a prototypes `fn (uop: *aio.Dynamic.Uop, id: aio.Id) void` and `fn (uop: *aio.Dynamic.Uop, id: aio.Id, failed: bool) void` respectively.
+It is possible to pass `handler` to some `aio.Dynamic` functions. If done so, the `handler` can implement the following funcitons:
+```zig
+// Called whenever operation is queued in the Dynamic instance
+aio_queue(self: *@This(), op: anytype, id: aio.Id) void
+// Called whenever operation completes
+aio_complete(self: *@This(), op: anytype, id: aio.Id, failed: bool) void
+```
 This is for example used by the `coro.Scheduler` to link IO operations into tasks.
+
+If `handler` is `{}` (aka void), then the callback code is optimized out.
