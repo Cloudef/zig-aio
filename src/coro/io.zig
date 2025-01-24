@@ -29,7 +29,7 @@ pub fn do(operations: anytype, status: Frame.Status) Error!u16 {
         const ti = @typeInfo(@TypeOf(operations));
         if (comptime (ti == .@"struct" and ti.@"struct".is_tuple) or ti == .array) {
             if (comptime operations.len == 0) @compileError("no work to be done");
-            var uops: [operations.len]aio.Dynamic.Uop = undefined;
+            var uops: [operations.len]aio.Operation.Union = undefined;
             inline for (operations, &uops, &ctx_list, 0..) |op, *uop, *ctx, idx| {
                 ctx.* = .{ .whole = &whole };
                 var cpy = op;
@@ -38,13 +38,13 @@ pub fn do(operations: anytype, status: Frame.Status) Error!u16 {
                 if (idx == operations.len - 1) cpy.link = .unlinked;
                 uop.* = aio.Operation.uopFromOp(cpy);
             }
-            try frame.scheduler.io.io.queue(operations.len, &uops, frame.scheduler.io.queue_callback);
+            try frame.scheduler.io.io.queue(operations.len, &uops, frame.scheduler);
         } else {
             var cpy = operations;
             cpy.userdata = @intFromPtr(&ctx_list[0]);
             cpy.link = .unlinked;
-            var uops: [1]aio.Dynamic.Uop = .{aio.Operation.uopFromOp(cpy)};
-            try frame.scheduler.io.io.queue(1, &uops, frame.scheduler.io.queue_callback);
+            var uops: [1]aio.Operation.Union = .{aio.Operation.uopFromOp(cpy)};
+            try frame.scheduler.io.io.queue(1, &uops, frame.scheduler);
         }
 
         // wait until scheduler actually submits our work
@@ -59,7 +59,10 @@ pub fn do(operations: anytype, status: Frame.Status) Error!u16 {
             inline for (&ctx_list) |*ctx| {
                 if (!ctx.completed and ctx.id != null) {
                     // reuse the same ctx, we don't care about completation status anymore
-                    try frame.scheduler.io.queue(aio.Cancel{ .id = ctx.id.?, .userdata = @intFromPtr(ctx) });
+                    try frame.scheduler.io.queue(
+                        aio.Cancel{ .id = ctx.id.?, .userdata = @intFromPtr(ctx) },
+                        frame.scheduler,
+                    );
                     num_cancels += 1;
                 }
             }

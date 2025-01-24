@@ -65,15 +65,7 @@ pub const CompletionResult = struct {
 
 /// Queue operations dynamically and complete them on demand
 pub const Dynamic = struct {
-    pub const Uop = Operation.Union;
-    pub const QueueCallback = *const fn (uop: Uop, id: Id) void;
-    pub const CompletionCallback = *const fn (uop: Uop, id: Id, failed: bool) void;
-
     io: IO,
-
-    /// Used by the coro implementation
-    queue_callback: ?QueueCallback = null,
-    completion_callback: ?CompletionCallback = null,
 
     pub fn init(allocator: std.mem.Allocator, n: u16) Error!@This() {
         return .{ .io = try IO.init(allocator, n) };
@@ -86,16 +78,16 @@ pub const Dynamic = struct {
 
     /// Queue operations for future completion
     /// The call is atomic, if any of the operations fail to queue, then the given operations are reverted
-    pub inline fn queue(self: *@This(), operations: anytype) Error!void {
+    pub inline fn queue(self: *@This(), operations: anytype, handler: anytype) Error!void {
         const ti = @typeInfo(@TypeOf(operations));
         if (comptime (ti == .@"struct" and ti.@"struct".is_tuple) or ti == .array) {
             if (comptime operations.len == 0) @compileError("no work to be done");
             var uops: [operations.len]Operation.Union = undefined;
             inline for (operations, &uops) |op, *uop| uop.* = Operation.uopFromOp(op);
-            return self.io.queue(operations.len, &uops, self.queue_callback);
+            return self.io.queue(operations.len, &uops, handler);
         } else {
             var uops: [1]Operation.Union = .{Operation.uopFromOp(operations)};
-            return self.io.queue(1, &uops, self.queue_callback);
+            return self.io.queue(1, &uops, handler);
         }
     }
 
@@ -108,16 +100,16 @@ pub const Dynamic = struct {
 
     /// Complete operations
     /// Returns the number of completed operations, `0` if no operations were completed
-    pub fn complete(self: *@This(), mode: CompletionMode) Error!CompletionResult {
-        return self.io.complete(mode, self.completion_callback);
+    pub fn complete(self: *@This(), mode: CompletionMode, handler: anytype) Error!CompletionResult {
+        return self.io.complete(mode, handler);
     }
 
     /// Block until all opreations are complete
     /// Returns the number of errors occured, 0 if there were no errors
-    pub fn completeAll(self: *@This()) Error!u16 {
+    pub fn completeAll(self: *@This(), handler: anytype) Error!u16 {
         var num_errors: u16 = 0;
         while (true) {
-            const res = try self.io.complete(.blocking, self.completion_callback);
+            const res = try self.io.complete(.blocking, handler);
             num_errors += res.num_errors;
             if (res.num_completed == 0) break;
         }
@@ -151,9 +143,7 @@ pub inline fn single(operation: anytype) (Error || @TypeOf(operation).Error)!voi
     var op: @TypeOf(operation) = operation;
     var err: @TypeOf(operation).Error = error.Success;
     op.out_error = &err;
-    if (try complete(.{op}) > 0) {
-        return if (err == error.Success) error.Canceled else err;
-    }
+    if (try complete(.{op}) > 0) return err;
 }
 
 /// Checks if the current backend supports the operations
@@ -242,7 +232,7 @@ test "shared outputs" {
         Fsync{ .file = f, .out_id = &id1 },
         Fsync{ .file = f, .out_id = &id2 },
         Fsync{ .file = f, .out_id = &id3 },
-    });
+    }, {});
     try std.testing.expect(id1 != @as(Id, @enumFromInt(69)));
     try std.testing.expect(id1 != id2);
     try std.testing.expect(id1 != id3);
@@ -250,7 +240,7 @@ test "shared outputs" {
     std.debug.print("{}\n", .{id1});
     std.debug.print("{}\n", .{id2});
     std.debug.print("{}\n", .{id3});
-    _ = try dynamic.completeAll();
+    _ = try dynamic.completeAll({});
     std.debug.print("{}\n", .{id1});
     std.debug.print("{}\n", .{id2});
     std.debug.print("{}\n", .{id3});
@@ -262,11 +252,10 @@ test "shared outputs" {
 test "Nop" {
     var dynamic = try Dynamic.init(std.testing.allocator, 16);
     defer dynamic.deinit(std.testing.allocator);
-    try dynamic.queue(Nop{ .ident = 69, .userdata = 42 });
-    const Lel = struct {
-        fn queue(uop: Dynamic.Uop, _: Id) void {
-            switch (uop) {
-                .nop => |*op| {
+    const Handler = struct {
+        pub fn aio_queue(_: @This(), op: anytype, _: Id) void {
+            switch (comptime Operation.tagFromPayloadType(@TypeOf(op.*))) {
+                .nop => {
                     std.debug.assert(69 == op.ident);
                     std.debug.assert(42 == op.userdata);
                 },
@@ -274,9 +263,9 @@ test "Nop" {
             }
         }
 
-        fn completion(uop: Dynamic.Uop, _: Id, failed: bool) void {
-            switch (uop) {
-                .nop => |*op| {
+        pub fn aio_complete(_: @This(), op: anytype, _: Id, failed: bool) void {
+            switch (comptime Operation.tagFromPayloadType(@TypeOf(op.*))) {
+                .nop => {
                     std.debug.assert(!failed);
                     std.debug.assert(69 == op.ident);
                     std.debug.assert(42 == op.userdata);
@@ -285,9 +274,9 @@ test "Nop" {
             }
         }
     };
-    dynamic.queue_callback = Lel.queue;
-    dynamic.completion_callback = Lel.completion;
-    try std.testing.expectEqual(0, dynamic.completeAll());
+    const handler: Handler = .{};
+    try dynamic.queue(Nop{ .ident = 69, .userdata = 42 }, handler);
+    try std.testing.expectEqual(0, dynamic.completeAll(handler));
 }
 
 test "Fsync" {
@@ -456,12 +445,12 @@ test "Cancel" {
     var timer = try std.time.Timer.start();
     var id: Id = undefined;
     var err: Timeout.Error = undefined;
-    try dynamic.queue(Timeout{ .ns = 2 * std.time.ns_per_s, .out_id = &id, .out_error = &err });
-    const tmp = try dynamic.complete(.nonblocking);
+    try dynamic.queue(Timeout{ .ns = 2 * std.time.ns_per_s, .out_id = &id, .out_error = &err }, {});
+    const tmp = try dynamic.complete(.nonblocking, {});
     try std.testing.expectEqual(0, tmp.num_errors);
     try std.testing.expectEqual(0, tmp.num_completed);
-    try dynamic.queue(Cancel{ .id = id });
-    const num_errors = try dynamic.completeAll();
+    try dynamic.queue(Cancel{ .id = id }, {});
+    const num_errors = try dynamic.completeAll({});
     try std.testing.expectEqual(1, num_errors);
     try std.testing.expectEqual(error.Canceled, err);
     try std.testing.expect(timer.lap() < std.time.ns_per_s);

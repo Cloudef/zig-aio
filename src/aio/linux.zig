@@ -55,15 +55,15 @@ const PosixSupport = union(enum) {
         }
     }
 
-    pub fn queue(self: *@This(), comptime len: u16, uops: []Operation.Union, cb: ?aio.Dynamic.QueueCallback) aio.Error!void {
+    pub fn queue(self: *@This(), comptime len: u16, uops: []Operation.Union, handler: anytype) aio.Error!void {
         return switch (self.*) {
-            inline else => |*io| io.queue(len, uops, cb),
+            inline else => |*io| io.queue(len, uops, handler),
         };
     }
 
-    pub fn complete(self: *@This(), work: anytype, cb: ?aio.Dynamic.CompletionCallback) aio.Error!aio.CompletionResult {
+    pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode, handler: anytype) aio.Error!aio.CompletionResult {
         return switch (self.*) {
-            inline else => |*io| io.complete(work, cb),
+            inline else => |*io| io.complete(mode, handler),
         };
     }
 

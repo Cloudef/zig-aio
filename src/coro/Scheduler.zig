@@ -16,10 +16,7 @@ pub const InitOptions = struct {
 };
 
 pub fn init(allocator: std.mem.Allocator, opts: InitOptions) aio.Error!@This() {
-    var work = try aio.Dynamic.init(allocator, opts.io_queue_entries);
-    work.queue_callback = ioQueue;
-    work.completion_callback = ioCompletion;
-    return .{ .allocator = allocator, .io = work };
+    return .{ .allocator = allocator, .io = try aio.Dynamic.init(allocator, opts.io_queue_entries) };
 }
 
 pub fn deinit(self: *@This()) void {
@@ -94,9 +91,9 @@ pub fn tick(self: *@This(), mode: aio.Dynamic.CompletionMode) aio.Error!usize {
                 completer.wakeup(.waiting_frame);
             }
         }
-        _ = try self.io.complete(.nonblocking);
+        _ = try self.io.complete(.nonblocking, self);
     } else {
-        _ = try self.io.complete(mode);
+        _ = try self.io.complete(mode, self);
     }
     return self.running.len;
 }
@@ -118,34 +115,26 @@ pub fn run(self: *@This(), mode: CompleteMode) aio.Error!void {
     }
 }
 
-fn ioQueue(uop: aio.Dynamic.Uop, id: aio.Id) void {
+pub fn aio_queue(_: *@This(), op: anytype, id: aio.Id) void {
     const OperationContext = @import("io.zig").OperationContext;
-    switch (uop) {
-        inline else => |*op| {
-            std.debug.assert(op.userdata != 0);
-            var ctx: *OperationContext = @ptrFromInt(op.userdata);
-            ctx.id = id;
-        },
-    }
+    std.debug.assert(op.userdata != 0);
+    var ctx: *OperationContext = @ptrFromInt(op.userdata);
+    ctx.id = id;
 }
 
-fn ioCompletion(uop: aio.Dynamic.Uop, _: aio.Id, failed: bool) void {
+pub fn aio_complete(_: *@This(), op: anytype, _: aio.Id, failed: bool) void {
     const OperationContext = @import("io.zig").OperationContext;
-    switch (uop) {
-        inline else => |*op| {
-            std.debug.assert(op.userdata != 0);
-            var ctx: *OperationContext = @ptrFromInt(op.userdata);
-            var frame: *Frame = ctx.whole.frame;
-            std.debug.assert(ctx.whole.num_operations > 0);
-            ctx.completed = true;
-            ctx.whole.num_operations -= 1;
-            ctx.whole.num_errors += @intFromBool(failed);
-            if (ctx.whole.num_operations == 0) {
-                switch (frame.status) {
-                    .io, .io_cancel => frame.wakeup(frame.status),
-                    else => unreachable,
-                }
-            }
-        },
+    std.debug.assert(op.userdata != 0);
+    var ctx: *OperationContext = @ptrFromInt(op.userdata);
+    var frame: *Frame = ctx.whole.frame;
+    std.debug.assert(ctx.whole.num_operations > 0);
+    ctx.completed = true;
+    ctx.whole.num_operations -= 1;
+    ctx.whole.num_errors += @intFromBool(failed);
+    if (ctx.whole.num_operations == 0) {
+        switch (frame.status) {
+            .io, .io_cancel => frame.wakeup(frame.status),
+            else => unreachable,
+        }
     }
 }

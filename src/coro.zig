@@ -41,8 +41,7 @@ pub const io = struct {
     /// For error handling you must check the `out_error` field in the operation
     /// Returns the number of errors occured, 0 if there were no errors
     pub inline fn complete(operations: anytype) Error!u16 {
-        const do = @import("coro/io.zig").do;
-        return do(operations, .io);
+        return @import("coro/io.zig").do(operations, .io);
     }
 
     /// Completes a list of operations immediately, blocks until complete

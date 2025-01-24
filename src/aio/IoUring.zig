@@ -41,7 +41,7 @@ cqes: []std.os.linux.io_uring_cqe,
 pub fn isSupported(op_types: []const type) bool {
     var ops: [op_types.len]std.os.linux.IORING_OP = undefined;
     inline for (op_types, &ops) |op_type, *op| {
-        op.* = switch (Operation.tagFromPayloadType(op_type)) {
+        op.* = switch (comptime Operation.tagFromPayloadType(op_type)) {
             .nop => std.os.linux.IORING_OP.NOP, // 5.1
             .fsync => std.os.linux.IORING_OP.FSYNC, // 5.1
             .poll, .child_exit => std.os.linux.IORING_OP.POLL_ADD, // 5.1 (child_exit uses waitid if available 6.5)
@@ -97,20 +97,34 @@ fn queueOperation(self: *@This(), uop: *Operation.Union) aio.Error!u16 {
     return self.ops.add(uop.*) catch unreachable;
 }
 
-pub fn queue(self: *@This(), comptime len: u16, uops: []Operation.Union, cb: ?aio.Dynamic.QueueCallback) aio.Error!void {
+pub fn queue(self: *@This(), comptime len: u16, uops: []Operation.Union, handler: anytype) aio.Error!void {
     if (comptime len == 1) {
         const id = try self.queueOperation(&uops[0]);
-        if (cb) |f| f(self.ops.nodes[id].used, @enumFromInt(id));
+        if (@TypeOf(handler) != void) {
+            switch (self.ops.nodes[id].used) {
+                inline else => |*op| {
+                    handler.aio_queue(op, @enumFromInt(id));
+                },
+            }
+        }
     } else {
         var ids: std.BoundedArray(u16, len) = .{};
         errdefer for (ids.constSlice()) |id| self.ops.remove(id);
         inline for (0..len) |i| ids.append(try self.queueOperation(&uops[i])) catch unreachable;
-        if (cb) |f| for (ids.constSlice()) |id| f(self.ops.nodes[id].used, @enumFromInt(id));
+        if (@TypeOf(handler) != void) {
+            for (ids.constSlice()) |id| {
+                switch (self.ops.nodes[id].used) {
+                    inline else => |*op| {
+                        handler.aio_queue(op, @enumFromInt(id));
+                    },
+                }
+            }
+        }
     }
 }
 
 /// TODO: give options perhaps? More customization?
-pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode, cb: ?aio.Dynamic.CompletionCallback) aio.Error!aio.CompletionResult {
+pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode, handler: anytype) aio.Error!aio.CompletionResult {
     if (self.ops.empty()) return .{};
 
     _ = try uring_submit(&self.io);
@@ -119,14 +133,18 @@ pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode, cb: ?aio.Dynam
     const n = try uring_copy_cqes(&self.io, self.cqes, if (mode == .nonblocking) 0 else 1);
     for (self.cqes[0..n]) |*cqe| {
         const uop = self.ops.get(@intCast(cqe.user_data)).*;
-        var failed: bool = false;
         switch (uop) {
-            inline else => |*op| uring_handle_completion(op, cqe) catch {
-                result.num_errors += 1;
-                failed = true;
+            inline else => |*op| {
+                var failed: bool = false;
+                uring_handle_completion(op, cqe) catch {
+                    result.num_errors += 1;
+                    failed = true;
+                };
+                if (@TypeOf(handler) != void) {
+                    handler.aio_complete(op, @enumFromInt(cqe.user_data), failed);
+                }
             },
         }
-        if (cb) |f| f(uop, @enumFromInt(cqe.user_data), failed);
         self.ops.remove(@intCast(cqe.user_data));
     }
 
