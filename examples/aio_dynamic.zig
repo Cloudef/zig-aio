@@ -28,11 +28,11 @@ pub fn main() !void {
             .buffer = &buf2,
             .out_read = &len2,
         },
-    });
+    }, {});
 
     var num_work: u16 = 2;
     while (num_work > 0) {
-        const ret = try work.complete(.blocking);
+        const ret = try work.complete(.blocking, {});
         num_work -= ret.num_completed;
     }
 
