@@ -120,6 +120,7 @@ pub const Dynamic = struct {
 
 // Unfortunately we can't do `@compileError` for these :(
 pub inline fn sanityCheck(operations: anytype) void {
+    if (builtin.mode != .Debug and builtin.mode != .ReleaseSafe) return;
     const ti = @typeInfo(@TypeOf(operations));
     if (comptime (ti == .@"struct" and ti.@"struct".is_tuple) or ti == .array) {
         if (comptime operations.len == 0) @compileError("no work to be done");
