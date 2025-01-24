@@ -155,7 +155,7 @@ pub fn build(b: *std.Build) void {
             .name = @tagName(bench),
             .root_source_file = b.path("bench/" ++ @tagName(bench) ++ ".zig"),
             .target = target,
-            .optimize = optimize,
+            .optimize = .ReleaseFast,
             .sanitize_thread = sanitize,
             .single_threaded = minilib.single_threaded,
             .strip = false,
