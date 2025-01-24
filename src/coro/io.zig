@@ -21,7 +21,7 @@ pub fn do(operations: anytype, status: Frame.Status) Error!u16 {
     // that is, the frame is put in `io_cancel` state rather than normal `io` state.
     std.debug.assert(status == .io or status == .io_cancel);
     if (Frame.current()) |frame| {
-        if (frame.canceled) return error.Canceled;
+        if (status != .io_cancel and frame.canceled) return error.Canceled;
 
         var whole: WholeContext = .{ .num_operations = operations.len, .frame = frame };
         var ctx_list: [operations.len]OperationContext = undefined;
