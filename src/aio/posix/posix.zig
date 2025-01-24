@@ -298,13 +298,14 @@ pub inline fn openReadiness(op: anytype) OpenReadinessError!Readiness {
 }
 
 pub inline fn closeReadiness(op: anytype, readiness: Readiness) void {
-    if (readiness.fd == invalid_fd) return;
+    @setEvalBranchQuota(1_000_000);
     switch (comptime Operation.tagFromPayloadType(@TypeOf(op.*))) {
         .child_exit => {
+            if (readiness.fd == invalid_fd) unreachable;
             var watcher: ChildWatcher = .{ .id = op.child, .fd = readiness.fd };
             watcher.deinit();
         },
-        else => {},
+        inline else => {},
     }
 }
 
