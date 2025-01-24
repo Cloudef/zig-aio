@@ -341,6 +341,11 @@ fn cancel(self: *@This(), id: u16, uop: *Operation.Union) bool {
             self.uringlator.finish(id, error.Canceled);
             return true;
         },
+        .wait_event_source => {
+            op.source.native.removeWaiter(&op._.link);
+            self.uringlator.finish(id, error.Canceled);
+            return true;
+        },
         else => {},
     }
     return false;
