@@ -95,6 +95,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
             .sanitize_thread = sanitize,
             .single_threaded = minilib.single_threaded,
+            .strip = false,
         });
         exe.root_module.addImport("aio", aio);
         exe.root_module.addImport("coro", coro);
@@ -113,6 +114,7 @@ pub fn build(b: *std.Build) void {
             .link_libc = aio.link_libc,
             .single_threaded = minilib.single_threaded,
             .sanitize_thread = sanitize,
+            .strip = false,
         });
         switch (mod) {
             .minilib => addImportsFrom(tst.root_module, minilib),
@@ -136,6 +138,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
             .sanitize_thread = sanitize,
             .single_threaded = minilib.single_threaded,
+            .strip = false,
         });
         exe.root_module.addImport("aio", aio);
         exe.root_module.addImport("coro", coro);
@@ -154,6 +157,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
             .sanitize_thread = sanitize,
             .single_threaded = minilib.single_threaded,
+            .strip = false,
         });
         exe.root_module.addImport("aio", aio);
         exe.root_module.addImport("coro", coro);
