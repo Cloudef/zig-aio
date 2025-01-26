@@ -58,7 +58,8 @@ const IoContext = struct {
 
 iocp: Iocp,
 tqueue: TimerQueue, // timer queue implementing linux -like timers
-tpool: DynamicThreadPool, // thread pool for performing iocp and non iocp operations
+iocp_pool: DynamicThreadPool, // thread pool for performing iocp operations
+posix_pool: DynamicThreadPool, // thread pool for performing non iocp operations
 iocp_threads_spawned: bool = false, // iocp needs own poll threads
 ovls: []IoContext,
 uringlator: Uringlator,
@@ -74,11 +75,24 @@ pub fn init(allocator: std.mem.Allocator, n: u16) aio.Error!@This() {
     errdefer iocp.deinit();
     var tqueue = try TimerQueue.init(allocator);
     errdefer tqueue.deinit();
-    var tpool = DynamicThreadPool.init(allocator, .{ .max_threads = num_threads, .name = "aio:IOCP" }) catch |err| return switch (err) {
+    var iocp_pool = DynamicThreadPool.init(allocator, .{
+        .max_threads = num_threads / 2,
+        .name = "aio:IOCP",
+        .stack_size = 1024 * 16,
+    }) catch |err| return switch (err) {
         error.TimerUnsupported => error.Unsupported,
         else => |e| e,
     };
-    errdefer tpool.deinit();
+    errdefer iocp_pool.deinit();
+    var posix_pool = DynamicThreadPool.init(allocator, .{
+        .max_threads = num_threads / 2,
+        .name = "aio:POSIX",
+        .stack_size = @import("posix/posix.zig").stack_size,
+    }) catch |err| return switch (err) {
+        error.TimerUnsupported => error.Unsupported,
+        else => |e| e,
+    };
+    errdefer posix_pool.deinit();
     const ovls = try allocator.alloc(IoContext, n);
     errdefer allocator.free(ovls);
     var uringlator = try Uringlator.init(allocator, n);
@@ -86,7 +100,8 @@ pub fn init(allocator: std.mem.Allocator, n: u16) aio.Error!@This() {
     return .{
         .iocp = iocp,
         .tqueue = tqueue,
-        .tpool = tpool,
+        .iocp_pool = iocp_pool,
+        .posix_pool = posix_pool,
         .ovls = ovls,
         .uringlator = uringlator,
     };
@@ -96,7 +111,8 @@ pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
     self.uringlator.shutdown(self);
     self.iocp.deinit();
     self.tqueue.deinit();
-    self.tpool.deinit();
+    self.iocp_pool.deinit();
+    self.posix_pool.deinit();
     allocator.free(self.ovls);
     self.uringlator.deinit(allocator);
     self.* = undefined;
@@ -171,7 +187,7 @@ fn iocpDrainThread(self: *@This()) void {
 
 fn spawnIocpThreads(self: *@This()) !void {
     @branchHint(.cold);
-    for (0..self.iocp.num_threads) |_| try self.tpool.spawn(iocpDrainThread, .{self}, .{ .stack_size = 1024 * 16 });
+    for (0..self.iocp.num_threads) |_| try self.iocp_pool.spawn(iocpDrainThread, .{self});
     self.iocp_threads_spawned = true;
 }
 
@@ -323,8 +339,7 @@ pub fn uringlator_start(self: *@This(), op: anytype, id: u16) !void {
         .notify_event_source, .close_event_source => self.onThreadPosixExecutor(op, id, .thread_unsafe),
         else => {
             // perform non IOCP supported operation on a thread
-            const posix = @import("posix/posix.zig");
-            try self.tpool.spawn(onThreadPosixExecutor, .{ self, op, id, .thread_safe }, .{ .stack_size = posix.stack_size });
+            try self.posix_pool.spawn(onThreadPosixExecutor, .{ self, op, id, .thread_safe });
         },
     }
 }

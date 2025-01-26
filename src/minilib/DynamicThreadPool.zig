@@ -21,6 +21,7 @@ timeout: u64,
 // used to serialize the acquisition order
 serial: std.DynamicBitSetUnmanaged,
 name: ?[]const u8,
+stack_size: usize,
 
 const RunQueue = std.SinglyLinkedList(Runnable);
 const Runnable = struct { runFn: RunProto };
@@ -33,6 +34,8 @@ pub const Options = struct {
     timeout: u64 = 5 * std.time.ns_per_s,
     // Name for the threads
     name: ?[]const u8 = null,
+    // Stack size for the threads
+    stack_size: usize = (std.Thread.SpawnConfig{}).stack_size,
 };
 
 fn getCpuCount() usize {
@@ -66,6 +69,7 @@ pub fn init(allocator: std.mem.Allocator, options: Options) InitError!@This() {
         .serial = serial,
         .threads = threads,
         .name = options.name,
+        .stack_size = options.stack_size,
     };
 }
 
@@ -93,12 +97,7 @@ pub const SpawnError = error{
     Unexpected,
 };
 
-pub const SpawnConfig = struct {
-    allocator: ?std.mem.Allocator = null,
-    stack_size: usize = (std.Thread.SpawnConfig{}).stack_size,
-};
-
-pub fn spawn(self: *@This(), comptime func: anytype, args: anytype, config: SpawnConfig) SpawnError!void {
+pub fn spawn(self: *@This(), comptime func: anytype, args: anytype) SpawnError!void {
     if (builtin.single_threaded) {
         @call(.auto, func, args);
         return;
@@ -134,7 +133,7 @@ pub fn spawn(self: *@This(), comptime func: anytype, args: anytype, config: Spaw
                     self.serial.unset(id);
                     self.active_threads += 1;
                     dthread.thread = try std.Thread.spawn(
-                        .{ .allocator = config.allocator orelse self.allocator, .stack_size = config.stack_size },
+                        .{ .allocator = self.allocator },
                         worker,
                         .{ self, dthread, @as(u32, @intCast(id)), self.timeout },
                     );

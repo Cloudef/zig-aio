@@ -29,8 +29,8 @@ pub const EventSource = posix.EventSource;
 tqueue: TimerQueue, // timer queue implementing linux -like timers
 readiness: []posix.Readiness, // readiness fd that gets polled before we perform the operation
 pfd: FixedArrayList(std.posix.pollfd, u32), // current fds that we must poll for wakeup
-tpool: DynamicThreadPool, // thread pool for performing operations, not all operations will be performed here
-kludge_tpool: DynamicThreadPool, // thread pool for performing operations which can't be polled for readiness
+posix_pool: DynamicThreadPool, // thread pool for performing operations, not all operations will be performed here
+kludge_pool: DynamicThreadPool, // thread pool for performing operations which can't be polled for readiness
 pending: std.DynamicBitSetUnmanaged, // operation is pending on readiness fd (poll)
 uringlator: Uringlator,
 
@@ -45,16 +45,24 @@ pub fn init(allocator: std.mem.Allocator, n: u16) aio.Error!@This() {
     errdefer allocator.free(readiness);
     var pfd = try FixedArrayList(std.posix.pollfd, u32).init(allocator, n + 1);
     errdefer pfd.deinit(allocator);
-    var tpool = DynamicThreadPool.init(allocator, .{ .max_threads = aio.options.max_threads, .name = "aio:POSIX" }) catch |err| return switch (err) {
+    var posix_pool = DynamicThreadPool.init(allocator, .{
+        .max_threads = aio.options.max_threads,
+        .name = "aio:POSIX",
+        .stack_size = posix.stack_size,
+    }) catch |err| return switch (err) {
         error.TimerUnsupported => error.Unsupported,
         else => |e| e,
     };
-    errdefer tpool.deinit();
-    var kludge_tpool = DynamicThreadPool.init(allocator, .{ .max_threads = aio.options.posix_max_kludge_threads }) catch |err| return switch (err) {
+    errdefer posix_pool.deinit();
+    var kludge_pool = DynamicThreadPool.init(allocator, .{
+        .max_threads = aio.options.posix_max_kludge_threads,
+        .name = "aio:KLUDGE",
+        .stack_size = posix.stack_size,
+    }) catch |err| return switch (err) {
         error.TimerUnsupported => error.Unsupported,
         else => |e| e,
     };
-    errdefer kludge_tpool.deinit();
+    errdefer kludge_pool.deinit();
     var pending_set = try std.DynamicBitSetUnmanaged.initEmpty(allocator, n);
     errdefer pending_set.deinit(allocator);
     var uringlator = try Uringlator.init(allocator, n);
@@ -64,8 +72,8 @@ pub fn init(allocator: std.mem.Allocator, n: u16) aio.Error!@This() {
         .tqueue = tqueue,
         .readiness = readiness,
         .pfd = pfd,
-        .tpool = tpool,
-        .kludge_tpool = kludge_tpool,
+        .posix_pool = posix_pool,
+        .kludge_pool = kludge_pool,
         .pending = pending_set,
         .uringlator = uringlator,
     };
@@ -74,8 +82,8 @@ pub fn init(allocator: std.mem.Allocator, n: u16) aio.Error!@This() {
 pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
     self.uringlator.shutdown(self);
     self.tqueue.deinit();
-    self.tpool.deinit();
-    self.kludge_tpool.deinit();
+    self.posix_pool.deinit();
+    self.kludge_pool.deinit();
     allocator.free(self.readiness);
     self.pfd.deinit(allocator);
     self.pending.deinit(allocator);
@@ -266,9 +274,9 @@ pub fn uringlator_start(self: *@This(), op: anytype, id: u16) !void {
             inline else => {
                 // perform on thread
                 if (!self.readiness[id].kludge) {
-                    try self.tpool.spawn(onThreadExecutor, .{ self, op, id, self.readiness[id], .thread_safe }, .{ .stack_size = posix.stack_size });
+                    try self.posix_pool.spawn(onThreadExecutor, .{ self, op, id, self.readiness[id], .thread_safe });
                 } else {
-                    try self.kludge_tpool.spawn(onThreadExecutor, .{ self, op, id, self.readiness[id], .thread_safe }, .{ .stack_size = posix.stack_size });
+                    try self.kludge_pool.spawn(onThreadExecutor, .{ self, op, id, self.readiness[id], .thread_safe });
                 }
             },
         }

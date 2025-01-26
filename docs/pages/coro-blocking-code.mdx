@@ -15,7 +15,7 @@ fn blockingCode() u32 {
 }
 
 fn task(pool: *ThreadPool) !void {
-    const ret = try pool.yieldForCompletion(blockingCode, .{}, .{});
+    const ret = try pool.yieldForCompletion(blockingCode, .{});
     try std.testing.expectEqual(69, ret);
 }
 
@@ -28,7 +28,7 @@ defer pool.deinit(); // pool must always be destroyed before scheduler
 _ = try scheduler.spawn(task, .{&pool}, .{});
 
 // Or alternatively, which does the same as above
-_ = try pool.spawnForCompletion(&scheduler, blockingCode, .{}, .{});
+_ = try pool.spawnForCompletion(&scheduler, blockingCode, .{});
 
 try scheduler.run(.wait);
 ```

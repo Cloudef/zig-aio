@@ -84,10 +84,10 @@ pub fn main() !void {
     var tasks = std.ArrayList(coro.Task.Generic(anyerror![]const u8)).init(allocator);
     defer tasks.deinit();
 
-    try tasks.append(try tpool.spawnForCompletion(&scheduler, getWeather, .{ &completed, allocator, "oulu", "fi" }, .{}));
-    try tasks.append(try tpool.spawnForCompletion(&scheduler, getWeather, .{ &completed, allocator, "tokyo", "ja" }, .{}));
-    try tasks.append(try tpool.spawnForCompletion(&scheduler, getWeather, .{ &completed, allocator, "portland", "en" }, .{}));
-    try tasks.append(try tpool.spawnForCompletion(&scheduler, getLatestZig, .{ &completed, allocator }, .{}));
+    try tasks.append(try tpool.spawnForCompletion(&scheduler, getWeather, .{ &completed, allocator, "oulu", "fi" }));
+    try tasks.append(try tpool.spawnForCompletion(&scheduler, getWeather, .{ &completed, allocator, "tokyo", "ja" }));
+    try tasks.append(try tpool.spawnForCompletion(&scheduler, getWeather, .{ &completed, allocator, "portland", "en" }));
+    try tasks.append(try tpool.spawnForCompletion(&scheduler, getLatestZig, .{ &completed, allocator }));
 
     max = @intCast(tasks.items.len);
     while (completed.load(.acquire) < tasks.items.len) {

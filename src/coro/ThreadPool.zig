@@ -51,13 +51,13 @@ fn entrypoint(self: *@This(), completed: *std.atomic.Value(bool), token: *Cancel
 pub const YieldError = DynamicThreadPool.SpawnError;
 
 /// Yield until `func` finishes on another thread
-pub fn yieldForCompletion(self: *@This(), func: anytype, args: anytype, config: DynamicThreadPool.SpawnConfig) MixErrorUnionWithErrorSet(@TypeOf(@call(.auto, func, if (comptime hasToken(func)) .{&CancellationToken{}} ++ args else args)), YieldError) {
+pub fn yieldForCompletion(self: *@This(), func: anytype, args: anytype) MixErrorUnionWithErrorSet(@TypeOf(@call(.auto, func, if (comptime hasToken(func)) .{&CancellationToken{}} ++ args else args)), YieldError) {
     var completed = std.atomic.Value(bool).init(false);
     _ = self.num_tasks.fetchAdd(1, .monotonic);
     defer _ = self.num_tasks.fetchSub(1, .release);
     var token: CancellationToken = .{};
     var res: @TypeOf(@call(.auto, func, if (comptime hasToken(func)) .{&token} ++ args else args)) = undefined;
-    try self.pool.spawn(entrypoint, .{ self, &completed, &token, func, &res, args }, config);
+    try self.pool.spawn(entrypoint, .{ self, &completed, &token, func, &res, args });
     while (!completed.load(.acquire)) {
         const nerr = io.do(.{
             aio.WaitEventSource{ .source = &self.source },
@@ -79,8 +79,8 @@ pub fn yieldForCompletion(self: *@This(), func: anytype, args: anytype, config: 
 }
 
 /// Spawn a new coroutine which will immediately call `yieldForCompletion` for later collection of the result
-pub fn spawnAnyForCompletion(self: *@This(), scheduler: *Scheduler, Result: type, func: anytype, args: anytype, config: DynamicThreadPool.SpawnConfig) Scheduler.SpawnError!Task {
-    return scheduler.spawnAny(Result, yieldForCompletion, .{ self, func, args, config }, .{ .stack = .{ .managed = 1024 * 24 } });
+pub fn spawnAnyForCompletion(self: *@This(), scheduler: *Scheduler, Result: type, func: anytype, args: anytype) Scheduler.SpawnError!Task {
+    return scheduler.spawnAny(Result, yieldForCompletion, .{ self, func, args }, .{ .stack = .{ .managed = 1024 * 24 } });
 }
 
 /// Helper for getting the Task.Generic when using spawnForCompletion tasks.
@@ -90,10 +90,10 @@ pub fn Generic2(comptime func: anytype) type {
 }
 
 /// Spawn a new coroutine which will immediately call `yieldForCompletion` for later collection of the result
-pub fn spawnForCompletion(self: *@This(), scheduler: *Scheduler, func: anytype, args: anytype, config: DynamicThreadPool.SpawnConfig) Scheduler.SpawnError!Task.Generic(MixErrorUnionWithErrorSet(@TypeOf(@call(.auto, func, if (comptime hasToken(func)) .{&CancellationToken{}} ++ args else args)), YieldError)) {
+pub fn spawnForCompletion(self: *@This(), scheduler: *Scheduler, func: anytype, args: anytype) Scheduler.SpawnError!Task.Generic(MixErrorUnionWithErrorSet(@TypeOf(@call(.auto, func, if (comptime hasToken(func)) .{&CancellationToken{}} ++ args else args)), YieldError)) {
     const RT = @TypeOf(@call(.auto, func, args));
     const Result = MixErrorUnionWithErrorSet(RT, YieldError);
-    const task = try self.spawnAnyForCompletion(scheduler, Result, func, args, config);
+    const task = try self.spawnAnyForCompletion(scheduler, Result, func, args);
     return task.generic(Result);
 }
 
@@ -107,7 +107,7 @@ test "ThreadPool" {
         }
 
         fn task(pool: *ThreadPool) !void {
-            const ret = try pool.yieldForCompletion(blocking, .{}, .{});
+            const ret = try pool.yieldForCompletion(blocking, .{});
             try std.testing.expectEqual(69, ret);
         }
 
@@ -119,7 +119,7 @@ test "ThreadPool" {
         }
 
         fn task2(pool: *ThreadPool) !u32 {
-            return pool.yieldForCompletion(blockingCanceled, .{}, .{});
+            return pool.yieldForCompletion(blockingCanceled, .{});
         }
     };
 
@@ -138,7 +138,7 @@ test "ThreadPool" {
     }
 
     {
-        var task = try pool.spawnForCompletion(&scheduler, Test.blocking, .{}, .{});
+        var task = try pool.spawnForCompletion(&scheduler, Test.blocking, .{});
         const res = task.complete(.wait);
         try std.testing.expectEqual(69, res);
     }

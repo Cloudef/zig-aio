@@ -27,7 +27,7 @@ pub const Options = struct {
     /// One example is macos's /dev/tty which can only be queried for readiness using select/pselect.
     /// <https://lists.apple.com/archives/Darwin-dev/2006/Apr/msg00066.html>
     /// <https://nathancraddock.com/blog/macos-dev-tty-polling/>
-    posix_max_kludge_threads: usize = 1024,
+    posix_max_kludge_threads: usize = 16,
     /// Wasi support
     wasi: enum { wasi, wasix } = @enumFromInt(@intFromEnum(build_options.wasi)),
 };
