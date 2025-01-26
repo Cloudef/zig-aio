@@ -41,7 +41,7 @@ pub fn DoubleBufferedFixedArrayList(T: type, SZ: type) type {
     return struct {
         mutex: std.Thread.Mutex = .{},
         safe: FixedArrayList(T, SZ),
-        copy: []T align(std.atomic.cache_line),
+        copy: [*]T align(std.atomic.cache_line),
 
         pub const Error = error{OutOfMemory};
 
@@ -50,12 +50,12 @@ pub fn DoubleBufferedFixedArrayList(T: type, SZ: type) type {
             errdefer safe.deinit(allocator);
             const copy = try allocator.alloc(T, n);
             errdefer allocator.free(copy);
-            return .{ .safe = safe, .copy = copy };
+            return .{ .safe = safe, .copy = copy.ptr };
         }
 
         pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
+            allocator.free(self.copy[0..self.safe.items.len]);
             self.safe.deinit(allocator);
-            allocator.free(self.copy);
             self.* = undefined;
         }
 
@@ -81,7 +81,7 @@ pub fn DoubleBufferedFixedArrayList(T: type, SZ: type) type {
             self.mutex.lock();
             defer self.mutex.unlock();
             defer self.safe.reset();
-            @memcpy(self.copy[0..self.safe.len], self.safe.items[0..self.safe.len]);
+            std.mem.swap([*]T, &self.copy, &self.safe.items.ptr);
             return self.copy[0..self.safe.len];
         }
     };
