@@ -24,8 +24,6 @@ next: []u16, // linked operation, points to self if none
 link_lock: std.DynamicBitSetUnmanaged, // operation is waiting for linked operation to finish first
 started: std.DynamicBitSetUnmanaged, // operation has started
 finished: DoubleBufferedFixedArrayList(Result, u16), // operations that are finished, double buffered to be thread safe
-source: EventSource, // when operations finish, they signal it using this event source
-signaled: bool = false, // some operations have signaled immediately, optimization to avoid running poll when not required
 
 pub fn init(allocator: std.mem.Allocator, n: u16) aio.Error!@This() {
     var ops = try ItemPool(Operation.Union, u16).init(allocator, n);
@@ -38,20 +36,16 @@ pub fn init(allocator: std.mem.Allocator, n: u16) aio.Error!@This() {
     errdefer started.deinit(allocator);
     var finished = try DoubleBufferedFixedArrayList(Result, u16).init(allocator, n);
     errdefer finished.deinit(allocator);
-    var source = try EventSource.init();
-    errdefer source.deinit();
     return .{
         .ops = ops,
         .next = next,
         .link_lock = link_lock,
         .started = started,
         .finished = finished,
-        .source = source,
     };
 }
 
 pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
-    self.source.deinit();
     self.ops.deinit(allocator);
     allocator.free(self.next);
     self.link_lock.deinit(allocator);
@@ -101,7 +95,7 @@ fn queueOperation(self: *@This(), uop: Operation.Union, backend: anytype) aio.Er
     const id = try self.addOp(uop, self.prev_id);
     switch (self.ops.nodes[id].used) {
         inline else => |*op| {
-            debug("queue: {}: {}, {s} ({?})", .{ id, std.meta.activeTag(uop), @tagName(op.link), self.prev_id });
+            debug("queue: {}: {}, {s} ({?})", .{ id, comptime Operation.tagFromPayloadType(@TypeOf(op.*)), @tagName(op.link), self.prev_id });
             if (op.link != .unlinked) self.prev_id = id else self.prev_id = null;
             try backend.uringlator_queue(op, id);
         },
@@ -127,7 +121,16 @@ pub fn queue(
         }
     } else {
         var ids: std.BoundedArray(u16, len) = .{};
-        errdefer for (ids.constSlice()) |id| self.removeOp(id);
+        errdefer for (ids.constSlice()) |id| {
+            switch (self.ops.nodes[id].used) {
+                inline else => |*op| {
+                    debug("dequeue: {}: {}, {s} ({?})", .{ id, comptime Operation.tagFromPayloadType(@TypeOf(op.*)), @tagName(op.link), self.prev_id });
+                    if (op.link != .unlinked) self.prev_id = id else self.prev_id = null;
+                    backend.uringlator_dequeue(op, id);
+                },
+            }
+            self.removeOp(id);
+        };
         inline for (0..len) |i| ids.append(try self.queueOperation(uops[i], backend)) catch unreachable;
         if (@TypeOf(handler) != void) {
             for (ids.constSlice()) |id| {
@@ -176,25 +179,25 @@ fn start(self: *@This(), id: u16, backend: anytype) aio.Error!void {
         debug("perform: {}: {}", .{ id, std.meta.activeTag(self.ops.nodes[id].used) });
     }
     switch (self.ops.nodes[id].used) {
-        .nop => self.finish(id, error.Success, .thread_unsafe),
+        .nop => self.finish(backend, id, error.Success, .thread_unsafe),
         .cancel => |*op| {
             if (op.id == .invalid) @panic("trying to cancel a invalid id (id reuse bug?)");
             const cid: u16 = @intCast(@intFromEnum(op.id));
             if (self.ops.nodes[cid] != .used) {
-                self.finish(id, error.NotFound, .thread_unsafe);
+                self.finish(backend, id, error.NotFound, .thread_unsafe);
             } else if (self.started.isSet(cid)) {
                 switch (self.ops.nodes[cid].used) {
                     inline else => |*cop| {
                         if (!backend.uringlator_cancel(cop, cid)) {
-                            self.finish(id, error.InProgress, .thread_unsafe);
+                            self.finish(backend, id, error.InProgress, .thread_unsafe);
                         } else {
-                            self.finish(id, error.Success, .thread_unsafe);
+                            self.finish(backend, id, error.Success, .thread_unsafe);
                         }
                     },
                 }
             } else {
-                self.finish(cid, error.Canceled, .thread_unsafe);
-                self.finish(id, error.Success, .thread_unsafe);
+                self.finish(backend, cid, error.Canceled, .thread_unsafe);
+                self.finish(backend, id, error.Success, .thread_unsafe);
             }
         },
         inline else => |*op| try backend.uringlator_start(op, id),
@@ -202,9 +205,9 @@ fn start(self: *@This(), id: u16, backend: anytype) aio.Error!void {
 }
 
 pub fn complete(self: *@This(), backend: anytype, handler: anytype) aio.CompletionResult {
-    self.signaled = false;
     var finished = self.finished.swap();
     std.mem.sortUnstable(Result, finished[0..], {}, Result.lessThan);
+
     var num_errors: u16 = 0;
     completion: for (finished, 0..) |res, idx| {
         // ignore raced completitions
@@ -224,7 +227,7 @@ pub fn complete(self: *@This(), backend: anytype, handler: anytype) aio.Completi
                     const cres: enum { ok, not_found } = blk: {
                         while (iter.next()) |e| {
                             if (e.k != res.id and self.next[e.k] == res.id) {
-                                self.finish(e.k, error.Canceled, .thread_unsafe);
+                                self.finish(backend, e.k, error.Canceled, .thread_unsafe);
                                 self.next[e.k] = e.k;
                                 break :blk .ok;
                             }
@@ -260,11 +263,11 @@ pub fn complete(self: *@This(), backend: anytype, handler: anytype) aio.Completi
                     if (self.ops.nodes[self.next[res.id]].used == .link_timeout) {
                         switch (op.link) {
                             .unlinked => unreachable,
-                            .soft => self.finish(self.next[res.id], error.Canceled, .thread_unsafe),
-                            .hard => self.finish(self.next[res.id], error.Success, .thread_unsafe),
+                            .soft => self.finish(backend, self.next[res.id], error.Canceled, .thread_unsafe),
+                            .hard => self.finish(backend, self.next[res.id], error.Success, .thread_unsafe),
                         }
                     } else if (failure != error.Success and op.link == .soft) {
-                        self.finish(self.next[res.id], error.Canceled, .thread_unsafe);
+                        self.finish(backend, self.next[res.id], error.Canceled, .thread_unsafe);
                     } else {
                         self.link_lock.unset(self.next[res.id]);
                     }
@@ -280,22 +283,19 @@ pub fn complete(self: *@This(), backend: anytype, handler: anytype) aio.Completi
             },
         }
     }
+
     return .{ .num_completed = @truncate(finished.len), .num_errors = num_errors };
 }
 
-pub const FinishMode = enum {
+pub const Safety = enum {
     thread_safe,
     thread_unsafe,
 };
 
-pub fn finish(self: *@This(), id: u16, failure: Operation.Error, comptime mode: FinishMode) void {
+pub fn finish(self: *@This(), backend: anytype, id: u16, failure: Operation.Error, comptime safety: Safety) void {
     debug("finish: {} {}", .{ id, failure });
     self.finished.add(.{ .id = id, .failure = failure }) catch unreachable;
-    if (mode == .thread_safe) {
-        self.source.notify();
-    } else {
-        self.signaled = true;
-    }
+    backend.uringlator_notify(safety);
 }
 
 pub fn debug(comptime fmt: []const u8, args: anytype) void {

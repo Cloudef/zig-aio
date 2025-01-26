@@ -3,6 +3,7 @@ const ops = @import("../ops.zig");
 const Link = @import("minilib").Link;
 const win32 = @import("win32");
 
+const FILE_SKIP_COMPLETION_PORT_ON_SUCCESS = win32.system.windows_programming.FILE_SKIP_COMPLETION_PORT_ON_SUCCESS;
 const INFINITE = win32.system.windows_programming.INFINITE;
 const GetLastError = win32.foundation.GetLastError;
 const CloseHandle = win32.foundation.CloseHandle;
@@ -21,30 +22,29 @@ pub fn unexpectedWSAError(err: win32.networking.win_sock.WSA_ERROR) error{Unexpe
     return std.os.windows.unexpectedWSAError(@enumFromInt(@intFromEnum(err)));
 }
 
-pub fn wtry(ret: anytype) !void {
-    const wbool: win32.foundation.BOOL = if (@TypeOf(ret) == bool)
-        @intFromBool(ret)
-    else
-        ret;
-    if (wbool == 0) return switch (GetLastError()) {
-        .ERROR_IO_PENDING => {}, // not error
-        else => |r| unexpectedError(r),
+pub fn wtry(ret: anytype) !@TypeOf(ret) {
+    const wbool: win32.foundation.BOOL = switch (@TypeOf(ret)) {
+        bool => @intFromBool(ret),
+        else => ret,
     };
-}
-
-pub fn werr(ret: anytype) ops.Operation.Error {
-    try wtry(ret);
-    return error.Success;
+    if (wbool == 0) {
+        switch (GetLastError()) {
+            .ERROR_IO_PENDING => {}, // not error
+            else => |r| return unexpectedError(r),
+        }
+    }
+    return ret;
 }
 
 pub fn checked(ret: anytype) void {
-    wtry(ret) catch unreachable;
+    _ = wtry(ret) catch unreachable;
 }
 
 // Light wrapper, mainly to link EventSources to this
 pub const Iocp = struct {
     pub const Key = packed struct(usize) {
         type: enum(u16) {
+            nop,
             shutdown,
             event_source,
             child_exit,
@@ -66,7 +66,7 @@ pub const Iocp = struct {
 
     pub fn init(num_threads: u32) !@This() {
         const port = io.CreateIoCompletionPort(INVALID_HANDLE, null, 0, num_threads).?;
-        try wtry(port != INVALID_HANDLE);
+        _ = try wtry(port != INVALID_HANDLE);
         errdefer checked(CloseHandle(port));
         return .{ .port = port, .num_threads = num_threads };
     }
@@ -80,18 +80,20 @@ pub const Iocp = struct {
         // docs say that GetQueuedCompletionStatus should return if IOCP port is closed
         // this doesn't seem to happen under wine though (wine bug?)
         // anyhow, wakeup the drain thread by hand
-        for (0..self.num_threads) |_| self.notify(.{ .type = .shutdown, .id = 0 }, null);
+        for (0..self.num_threads) |_| self.notify(.{ .type = .shutdown, .id = undefined }, null);
         checked(CloseHandle(self.port));
         self.* = undefined;
     }
 
     pub fn associateHandle(self: *@This(), _: u16, handle: HANDLE) !void {
+        const fs = win32.storage.file_system;
         const key: Key = .{ .type = .overlapped, .id = undefined };
+        _ = try wtry(fs.SetFileCompletionNotificationModes(handle, FILE_SKIP_COMPLETION_PORT_ON_SUCCESS));
         const res = io.CreateIoCompletionPort(handle, self.port, @bitCast(key), 0);
         if (res == null or res.? == INVALID_HANDLE) {
             // ignore 87 as it may mean that we just re-registered the handle
             if (GetLastError() == .ERROR_INVALID_PARAMETER) return;
-            try wtry(0);
+            _ = try wtry(@as(i32, 0));
         }
     }
 
@@ -119,7 +121,7 @@ pub const EventSource = struct {
 
     pub fn notify(self: *@This()) void {
         if (self.counter.fetchAdd(1, .monotonic) == 0) {
-            wtry(threading.SetEvent(self.fd)) catch @panic("EventSource.notify failed");
+            _ = wtry(threading.SetEvent(self.fd)) catch @panic("EventSource.notify failed");
             self.mutex.lock();
             defer self.mutex.unlock();
             while (self.waiters.popFirst()) |w| w.data.cast().iocp.notify(.{ .type = .event_source, .id = w.data.cast().id }, self);
@@ -128,10 +130,10 @@ pub const EventSource = struct {
 
     pub fn wait(self: *@This()) void {
         while (self.counter.load(.acquire) == 0) {
-            wtry(threading.WaitForSingleObject(self.fd, INFINITE) == 0) catch @panic("EventSource.wait failed");
+            _ = wtry(threading.WaitForSingleObject(self.fd, INFINITE) == 0) catch @panic("EventSource.wait failed");
         }
         if (self.counter.fetchSub(1, .release) == 1) {
-            wtry(threading.ResetEvent(self.fd)) catch @panic("EventSource.wait failed");
+            _ = wtry(threading.ResetEvent(self.fd)) catch @panic("EventSource.wait failed");
         }
     }
 
@@ -187,14 +189,19 @@ pub fn readTty(fd: std.posix.fd_t, buf: []u8, mode: ops.ReadTty.Mode) ops.ReadTt
     };
 }
 
-pub fn sendEx(sockfd: std.posix.socket_t, buf: [*]win_sock.WSABUF, flags: u32, overlapped: ?*io.OVERLAPPED) !usize {
+pub const PendingOrTransmitted = union(enum) {
+    transmitted: usize,
+    pending: void,
+};
+
+pub fn sendEx(sockfd: std.posix.socket_t, buf: [*]win_sock.WSABUF, flags: u32, overlapped: ?*io.OVERLAPPED) !PendingOrTransmitted {
     var written: u32 = 0;
     while (true) {
         const rc = win_sock.WSASend(sockfd, buf, 1, &written, flags, overlapped, null);
         if (rc == win_sock.SOCKET_ERROR) {
             switch (win_sock.WSAGetLastError()) {
                 .EWOULDBLOCK, .EINTR, .EINPROGRESS => continue,
-                ._IO_PENDING => if (overlapped != null) break else unreachable,
+                ._IO_PENDING => if (overlapped != null) return .pending else unreachable,
                 .EACCES => return error.AccessDenied,
                 .EADDRNOTAVAIL => return error.AddressNotAvailable,
                 .ECONNRESET => return error.ConnectionResetByPeer,
@@ -217,10 +224,10 @@ pub fn sendEx(sockfd: std.posix.socket_t, buf: [*]win_sock.WSABUF, flags: u32, o
         }
         break;
     }
-    return @intCast(written);
+    return .{ .transmitted = @intCast(written) };
 }
 
-pub fn recvEx(sockfd: std.posix.socket_t, buf: [*]win_sock.WSABUF, flags: u32, overlapped: ?*io.OVERLAPPED) !usize {
+pub fn recvEx(sockfd: std.posix.socket_t, buf: [*]win_sock.WSABUF, flags: u32, overlapped: ?*io.OVERLAPPED) !PendingOrTransmitted {
     var read: u32 = 0;
     var inout_flags: u32 = flags;
     while (true) {
@@ -228,7 +235,7 @@ pub fn recvEx(sockfd: std.posix.socket_t, buf: [*]win_sock.WSABUF, flags: u32, o
         if (rc == win_sock.SOCKET_ERROR) {
             switch (win_sock.WSAGetLastError()) {
                 .EWOULDBLOCK, .EINTR, .EINPROGRESS => continue,
-                ._IO_PENDING => if (overlapped != null) break else unreachable,
+                ._IO_PENDING => if (overlapped != null) return .pending else unreachable,
                 .EACCES => return error.AccessDenied,
                 .EADDRNOTAVAIL => return error.AddressNotAvailable,
                 .ECONNRESET => return error.ConnectionResetByPeer,
@@ -251,20 +258,20 @@ pub fn recvEx(sockfd: std.posix.socket_t, buf: [*]win_sock.WSABUF, flags: u32, o
         }
         break;
     }
-    return @intCast(read);
+    return .{ .transmitted = @intCast(read) };
 }
 
 pub const msghdr = win_sock.WSAMSG;
 pub const msghdr_const = win_sock.WSAMSG;
 
-pub fn sendmsgEx(sockfd: std.posix.socket_t, msg: *const msghdr_const, flags: u32, overlapped: ?*io.OVERLAPPED) !usize {
+pub fn sendmsgEx(sockfd: std.posix.socket_t, msg: *const msghdr_const, flags: u32, overlapped: ?*io.OVERLAPPED) !PendingOrTransmitted {
     var written: u32 = 0;
     while (true) {
         const rc = win_sock.WSASendMsg(sockfd, @constCast(msg), flags, &written, overlapped, null);
         if (rc == win_sock.SOCKET_ERROR) {
             switch (win_sock.WSAGetLastError()) {
                 .EWOULDBLOCK, .EINTR, .EINPROGRESS => continue,
-                ._IO_PENDING => if (overlapped != null) break else unreachable,
+                ._IO_PENDING => if (overlapped != null) return .pending else unreachable,
                 .EACCES => return error.AccessDenied,
                 .EADDRNOTAVAIL => return error.AddressNotAvailable,
                 .ECONNRESET => return error.ConnectionResetByPeer,
@@ -287,14 +294,14 @@ pub fn sendmsgEx(sockfd: std.posix.socket_t, msg: *const msghdr_const, flags: u3
         }
         break;
     }
-    return @intCast(written);
+    return .{ .transmitted = @intCast(written) };
 }
 
 pub fn sendmsg(sockfd: std.posix.socket_t, msg: *const msghdr_const, flags: u32) !usize {
     return sendmsgEx(sockfd, msg, flags, null);
 }
 
-pub fn recvmsgEx(sockfd: std.posix.socket_t, msg: *msghdr, _: u32, overlapped: ?*io.OVERLAPPED) !usize {
+pub fn recvmsgEx(sockfd: std.posix.socket_t, msg: *msghdr, _: u32, overlapped: ?*io.OVERLAPPED) !PendingOrTransmitted {
     const DumbStuff = struct {
         var once = std.once(do_once);
         var fun: win_sock.LPFN_WSARECVMSG = undefined;
@@ -326,7 +333,7 @@ pub fn recvmsgEx(sockfd: std.posix.socket_t, msg: *msghdr, _: u32, overlapped: ?
         if (rc == win_sock.SOCKET_ERROR) {
             switch (win_sock.WSAGetLastError()) {
                 .EWOULDBLOCK, .EINTR, .EINPROGRESS => continue,
-                ._IO_PENDING => if (overlapped != null) break else unreachable,
+                ._IO_PENDING => if (overlapped != null) return .pending else unreachable,
                 .EACCES => return error.AccessDenied,
                 .EADDRNOTAVAIL => return error.AddressNotAvailable,
                 .ECONNRESET => return error.ConnectionResetByPeer,
@@ -349,7 +356,7 @@ pub fn recvmsgEx(sockfd: std.posix.socket_t, msg: *msghdr, _: u32, overlapped: ?
         }
         break;
     }
-    return @intCast(read);
+    return .{ .transmitted = @intCast(read) };
 }
 
 pub fn recvmsg(sockfd: std.posix.socket_t, msg: *msghdr, flags: u32) !usize {
