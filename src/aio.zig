@@ -18,6 +18,7 @@ pub const Options = struct {
     /// Operations that the main backend must support.
     /// If the operations are not supported by a main backend then a posix backend will be used instead.
     /// This is unused if posix backend is disabled, in that case you should check for a support manually.
+    /// On windows this is never used, check for a support manually.
     required_ops: []const type = @import("aio/ops.zig").Operation.Types,
     /// Choose a posix fallback mode.
     /// Posix backend is never used on windows
