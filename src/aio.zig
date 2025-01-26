@@ -330,7 +330,7 @@ test "Poll" {
         var source = try EventSource.init();
         try multi(.{
             NotifyEventSource{ .source = &source, .link = .soft },
-            Poll{ .fd = source.native.fd, .link = .soft },
+            Poll{ .fd = source.native.fd, .events = .{ .in = true }, .link = .soft },
             CloseEventSource{ .source = &source },
         });
     }
