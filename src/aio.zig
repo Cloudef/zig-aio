@@ -208,6 +208,10 @@ pub const EventSource = struct {
     pub fn wait(self: *@This()) void {
         self.native.wait();
     }
+
+    pub fn waitNonBlocking(self: *@This()) error{WouldBlock}!void {
+        return self.native.waitNonBlocking();
+    }
 };
 
 const IO = switch (builtin.target.os.tag) {

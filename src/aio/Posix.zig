@@ -228,7 +228,7 @@ pub fn immediate(comptime len: u16, uops: []Operation.Union) aio.Error!u16 {
     return num_errors;
 }
 
-fn posixExecutor(self: *@This(), op: anytype, id: u16, readiness: posix.Readiness, comptime safety: Uringlator.Safety) void {
+fn blockingPosixExecutor(self: *@This(), op: anytype, id: u16, readiness: posix.Readiness, comptime safety: Uringlator.Safety) void {
     var failure: Operation.Error = error.Success;
     while (true) {
         posix.perform(op, readiness) catch |err| {
@@ -249,13 +249,39 @@ fn nonBlockingPosixExecutor(self: *@This(), op: anytype, id: u16, readiness: pos
     self.uringlator.finish(self, id, failure, .thread_unsafe);
 }
 
+fn nonBlockingPosixExecutorFcntl(self: *@This(), op: anytype, id: u16, readiness: posix.Readiness) error{WouldBlock}!void {
+    const NONBLOCK = 1 << @bitOffsetOf(std.posix.O, "NONBLOCK");
+    const old: struct { usize, bool } = blk: {
+        if (readiness.fd != posix.invalid_fd) {
+            const flags = std.posix.fcntl(readiness.fd, std.posix.F.GETFL, 0) catch break :blk .{ 0, false };
+            if ((flags & NONBLOCK) == 0) break :blk .{ flags, false };
+            _ = std.posix.fcntl(readiness.fd, std.posix.F.SETFL, flags | NONBLOCK) catch break :blk .{ 0, false };
+            break :blk .{ flags, true };
+        }
+        break :blk .{ 0, false };
+    };
+
+    var failure: Operation.Error = error.Success;
+    posix.perform(op, readiness) catch |err| {
+        if (err == error.WouldBlock) return error.WouldBlock;
+        failure = err;
+    };
+
+    if (old[1]) _ = std.posix.fcntl(readiness.fd, std.posix.F.SETFL, old[0]) catch {};
+    self.uringlator.finish(self, id, failure, .thread_unsafe);
+}
+
 fn onThreadTimeout(ctx: *anyopaque, user_data: usize) void {
     var self: *@This() = @ptrCast(@alignCast(ctx));
     self.uringlator.finish(self, @intCast(user_data), error.Success, .thread_safe);
 }
 
 pub fn uringlator_queue(self: *@This(), op: anytype, id: u16) aio.Error!void {
-    self.readiness[id] = try posix.openReadiness(op);
+    self.readiness[id] = posix.openReadiness(op) catch |err| {
+        self.pending.set(id);
+        self.uringlator.finish(self, id, err, .thread_unsafe);
+        return;
+    };
     if (@as(i16, @bitCast(self.readiness[id].events)) == 0) {
         self.pending.set(id);
     } else {
@@ -271,14 +297,15 @@ pub fn uringlator_dequeue(self: *@This(), op: anytype, id: u16) void {
 pub fn uringlator_start(self: *@This(), op: anytype, id: u16) !void {
     if (self.pending.isSet(id)) {
         switch (comptime Operation.tagFromPayloadType(@TypeOf(op.*))) {
+            .poll => self.uringlator.finish(self, id, error.Success, .thread_unsafe),
             inline .timeout, .link_timeout => {
                 const closure: TimerQueue.Closure = .{ .context = self, .callback = onThreadTimeout };
                 self.tqueue.schedule(.monotonic, op.ns, id, .{ .closure = closure }) catch self.uringlator.finish(self, id, error.Unexpected, .thread_unsafe);
             },
             // can be performed here, doesn't have to be dispatched to thread
             .child_exit,
-            .notify_event_source,
             .wait_event_source,
+            .notify_event_source,
             .close_event_source,
             .send,
             .recv,
@@ -288,13 +315,25 @@ pub fn uringlator_start(self: *@This(), op: anytype, id: u16) !void {
                 // poll lied to us, or somebody else raced us, poll again
                 self.pending.unset(id);
             },
+            .accept,
+            => {
+                if (comptime builtin.target.os.tag == .wasi) {
+                    // perform on thread
+                    try self.posix_pool.spawn(blockingPosixExecutor, .{ self, op, id, self.readiness[id], .thread_safe });
+                } else {
+                    self.nonBlockingPosixExecutorFcntl(op, id, self.readiness[id]) catch {
+                        // poll lied to us, or somebody else raced us, poll again
+                        self.pending.unset(id);
+                    };
+                }
+            },
             inline else => {
                 // perform on thread
                 if (posix.needs_kludge and self.readiness[id].kludge) {
                     @branchHint(.unlikely);
-                    try self.kludge_pool.spawn(posixExecutor, .{ self, op, id, self.readiness[id], .thread_safe });
+                    try self.kludge_pool.spawn(blockingPosixExecutor, .{ self, op, id, self.readiness[id], .thread_safe });
                 } else {
-                    try self.posix_pool.spawn(posixExecutor, .{ self, op, id, self.readiness[id], .thread_safe });
+                    try self.posix_pool.spawn(blockingPosixExecutor, .{ self, op, id, self.readiness[id], .thread_safe });
                 }
             },
         }
@@ -304,6 +343,7 @@ pub fn uringlator_start(self: *@This(), op: anytype, id: u16) !void {
         // try non-blocking send/recv first
         // TODO: might want to not do this if the buffer is large
         if (switch (comptime Operation.tagFromPayloadType(@TypeOf(op.*))) {
+            .wait_event_source,
             .send,
             .recv,
             .send_msg,

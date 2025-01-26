@@ -5,7 +5,7 @@ pub const EventSource = struct {
     fd: std.posix.fd_t,
 
     pub fn init() !@This() {
-        return .{ .fd = try std.posix.eventfd(0, std.os.linux.EFD.CLOEXEC | std.os.linux.EFD.SEMAPHORE) };
+        return .{ .fd = try std.posix.eventfd(0, std.os.linux.EFD.CLOEXEC | std.os.linux.EFD.SEMAPHORE | std.os.linux.EFD.NONBLOCK) };
     }
 
     pub fn deinit(self: *@This()) void {
@@ -17,13 +17,27 @@ pub const EventSource = struct {
         _ = std.posix.write(self.fd, &std.mem.toBytes(@as(u64, 1))) catch @panic("EventSource.notify failed");
     }
 
-    pub fn notifyReadiness(self: *@This()) posix.Readiness {
-        return .{ .fd = self.fd, .events = .{ .out = true } };
+    pub fn notifyReadiness(_: *@This()) posix.Readiness {
+        return .{}; // can write immediately
+    }
+
+    pub fn waitNonBlocking(self: *@This()) error{WouldBlock}!void {
+        var trash: u64 = undefined;
+        _ = std.posix.read(self.fd, std.mem.asBytes(&trash)) catch |err| switch (err) {
+            error.WouldBlock => return error.WouldBlock,
+            else => @panic("EventSource.wait failed"),
+        };
     }
 
     pub fn wait(self: *@This()) void {
-        var trash: u64 = undefined;
-        _ = std.posix.read(self.fd, std.mem.asBytes(&trash)) catch @panic("EventSource.wait failed");
+        while (true) {
+            self.waitNonBlocking() catch {
+                var pfds = [_]std.posix.pollfd{.{ .fd = self.fd, .events = std.posix.POLL.IN, .revents = 0 }};
+                _ = std.posix.poll(&pfds, -1) catch {};
+                continue;
+            };
+            break;
+        }
     }
 
     pub fn waitReadiness(self: *@This()) posix.Readiness {
@@ -35,14 +49,28 @@ pub const ChildWatcher = struct {
     id: std.process.Child.Id,
     fd: std.posix.fd_t,
 
+    const Error = error{
+        NotFound,
+        Unexpected,
+    };
+
     pub fn init(id: std.process.Child.Id) !@This() {
-        return .{ .id = id, .fd = try pidfd_open(id, .{ .NONBLOCK = true }) };
+        return .{ .id = id, .fd = try pidfd_open(id, .{}) };
     }
 
-    pub fn wait(self: *@This()) std.process.Child.Term {
+    pub fn wait(self: *@This()) Error!std.process.Child.Term {
         var siginfo: std.posix.siginfo_t = undefined;
-        _ = std.os.linux.waitid(.PIDFD, self.fd, &siginfo, std.posix.W.EXITED | std.posix.W.NOHANG);
-        return posix.statusToTerm(@intCast(siginfo.fields.common.second.sigchld.status));
+        while (true) {
+            const res = std.os.linux.waitid(.PIDFD, self.fd, &siginfo, std.posix.W.EXITED | std.posix.W.NOHANG);
+            return switch (errnoFromSyscall(res)) {
+                .SUCCESS => posix.statusToTerm(@intCast(siginfo.fields.common.second.sigchld.status)),
+                .INTR => continue,
+                .CHILD => error.NotFound,
+                .INVAL => unreachable,
+                else => |e| std.posix.unexpectedErrno(e),
+            };
+        }
+        unreachable;
     }
 
     pub fn deinit(self: *@This()) void {
@@ -63,22 +91,23 @@ pub const PidfdOpenError = error{
     SystemFdQuotaExceeded,
     NoDevice,
     SystemResources,
+    NotFound,
     Unexpected,
 };
 
 pub fn pidfd_open(id: std.posix.fd_t, flags: std.posix.O) PidfdOpenError!std.posix.fd_t {
     while (true) {
         const res = std.os.linux.pidfd_open(id, @bitCast(flags));
-        const e = errnoFromSyscall(res);
-        return switch (e) {
+        return switch (errnoFromSyscall(res)) {
             .SUCCESS => @intCast(res),
-            .INVAL, .SRCH => unreachable,
+            .INVAL => unreachable,
             .AGAIN, .INTR => continue,
+            .SRCH => error.NotFound,
             .MFILE => error.ProcessFdQuotaExceeded,
             .NFILE => error.SystemFdQuotaExceeded,
             .NODEV => error.NoDevice,
             .NOMEM => error.SystemResources,
-            else => std.posix.unexpectedErrno(e),
+            else => |e| std.posix.unexpectedErrno(e),
         };
     }
     unreachable;

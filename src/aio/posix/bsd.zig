@@ -51,6 +51,12 @@ pub const EventSource = switch (builtin.target.os.tag) {
             return .{};
         }
 
+        pub fn waitNonBlocking(self: *@This()) error{WouldBlock}!void {
+            var ev: [1]std.posix.Kevent = undefined;
+            const res = std.posix.kevent(self.fd, &.{}, &ev, 0) catch @panic("EventSource.wait failed");
+            if (res == 0) return error.WouldBlock;
+        }
+
         pub fn wait(self: *@This()) void {
             var ev: [1]std.posix.Kevent = undefined;
             _ = std.posix.kevent(self.fd, &.{}, &ev, null) catch @panic("EventSource.wait failed");
@@ -85,9 +91,19 @@ pub const ChildWatcher = struct {
         return .{ .id = id, .fd = fd };
     }
 
-    pub fn wait(self: *@This()) std.process.Child.Term {
-        const res = std.posix.waitpid(self.id, std.posix.W.NOHANG);
-        return posix.statusToTerm(res.status);
+    pub fn wait(self: *@This()) error{NotFound}!std.process.Child.Term {
+        var status: if (builtin.link_libc) c_int else u32 = undefined;
+        while (true) {
+            const rc = std.posix.system.waitpid(self.id, &status, std.posix.W.NOHANG);
+            return switch (std.posix.errno(rc)) {
+                .SUCCESS => posix.statusToTerm(status),
+                .INTR => continue,
+                .CHILD => error.NotFound,
+                .INVAL => unreachable, // Invalid flags.
+                else => unreachable,
+            };
+        }
+        unreachable;
     }
 
     pub fn deinit(self: *@This()) void {

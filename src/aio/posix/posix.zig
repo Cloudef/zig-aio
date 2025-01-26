@@ -21,7 +21,7 @@ pub const PipeEventSource = struct {
 
     pub fn init() !@This() {
         const fds = if (@hasField(std.posix.O, "CLOEXEC"))
-            try std.posix.pipe2(.{ .CLOEXEC = true })
+            try std.posix.pipe2(.{ .CLOEXEC = true, .NONBLOCK = true })
         else
             try pipe();
         return .{ .fd = fds[0], .wfd = fds[1] };
@@ -41,9 +41,23 @@ pub const PipeEventSource = struct {
         return .{ .fd = self.wfd, .events = .{ .out = true } };
     }
 
-    pub fn wait(self: *@This()) void {
+    pub fn waitNonBlocking(self: *@This()) error{WouldBlock}!void {
         var trash: [1]u8 = undefined;
-        _ = std.posix.read(self.fd, &trash) catch @panic("EventSource.wait failed");
+        _ = std.posix.read(self.fd, &trash) catch |err| switch (err) {
+            error.WouldBlock => return error.WouldBlock,
+            else => @panic("EventSource.wait failed"),
+        };
+    }
+
+    pub fn wait(self: *@This()) void {
+        while (true) {
+            self.waitNonBlocking() catch {
+                var pfds = [_]std.posix.pollfd{.{ .fd = self.fd, .events = std.posix.POLL.IN, .revents = 0 }};
+                _ = poll(&pfds, -1) catch {};
+                continue;
+            };
+            break;
+        }
     }
 
     pub fn waitReadiness(self: *@This()) Readiness {
@@ -68,7 +82,7 @@ const DummyChildWatcher = struct {
         @panic("platform does not support posix ChildWatcher");
     }
 
-    pub fn wait(_: *@This()) std.process.Child.Term {
+    pub fn wait(_: *@This()) error{NotFound}!std.process.Child.Term {
         @panic("platform does not support posix ChildWatcher");
     }
 
@@ -216,7 +230,6 @@ pub fn symlinkAtUring(target: [*:0]const u8, dir: std.fs.Dir, link_path: [*:0]co
 pub inline fn perform(op: anytype, readiness: Readiness) Operation.Error!void {
     switch (comptime Operation.tagFromPayloadType(@TypeOf(op.*))) {
         .fsync => _ = try fsync(op.file.handle),
-        .poll => {},
         .read_tty => op.out_read.* = try readTty(op.tty.handle, op.buffer, op.mode),
         .read => op.out_read.* = try readUring(op.file.handle, op.buffer, @intCast(op.offset)),
         .write => {
@@ -245,17 +258,17 @@ pub inline fn perform(op: anytype, readiness: Readiness) Operation.Error!void {
         .symlink_at => try symlinkAtUring(op.target, op.dir, op.link_path),
         .child_exit => {
             var watcher: ChildWatcher = .{ .id = op.child, .fd = readiness.fd };
-            const term = watcher.wait();
+            const term = try watcher.wait();
             if (op.out_term) |ot| ot.* = term;
         },
         .socket => op.out_socket.* = try socket(op.domain, op.flags, op.protocol),
         .close_socket => std.posix.close(op.socket),
         // backend can perform these without a thread
         .notify_event_source => op.source.notify(),
-        .wait_event_source => op.source.wait(),
+        .wait_event_source => try op.source.waitNonBlocking(),
         .close_event_source => op.source.deinit(),
         // these must be implemented by the backend
-        .nop, .timeout, .link_timeout, .cancel => unreachable,
+        .nop, .timeout, .link_timeout, .cancel, .poll => unreachable,
     }
 }
 
@@ -269,15 +282,7 @@ pub const Readiness = struct {
     events: ops.Poll.Events = .{},
 };
 
-pub const OpenReadinessError = error{
-    ProcessFdQuotaExceeded,
-    SystemFdQuotaExceeded,
-    NoDevice,
-    SystemResources,
-    Unexpected,
-};
-
-pub inline fn openReadiness(op: anytype) OpenReadinessError!Readiness {
+pub inline fn openReadiness(op: anytype) !Readiness {
     return switch (comptime Operation.tagFromPayloadType(@TypeOf(op.*))) {
         .nop => .{},
         .fsync => .{},

@@ -249,7 +249,7 @@ fn uring_init(n: u16) aio.Error!std.os.linux.IoUring {
     return error.SystemOutdated;
 }
 
-inline fn uring_queue(io: *std.os.linux.IoUring, op: anytype, user_data: u64) aio.Error!void {
+fn uring_queue(io: *std.os.linux.IoUring, op: anytype, user_data: u64) aio.Error!void {
     debug("queue: {}: {}", .{ user_data, comptime Operation.tagFromPayloadType(@TypeOf(op.*)) });
     const Trash = struct {
         var u_64: u64 align(1) = undefined;
@@ -304,7 +304,7 @@ inline fn uring_queue(io: *std.os.linux.IoUring, op: anytype, user_data: u64) ai
                 op._ = .{ .siginfo = undefined };
                 break :blk try io.waitid(user_data, .PID, op.child, @constCast(&op._.siginfo), std.posix.W.EXITED, 0);
             } else {
-                const readiness = try posix.openReadiness(op);
+                const readiness: posix.Readiness = posix.openReadiness(op) catch .{};
                 op._ = .{ .fd = readiness.fd };
                 break :blk try io.poll_add(user_data, readiness.fd, std.posix.POLL.IN);
             }
@@ -357,7 +357,7 @@ inline fn uring_copy_cqes(io: *std.os.linux.IoUring, cqes: []std.os.linux.io_uri
     unreachable;
 }
 
-inline fn uring_handle_completion(op: anytype, cqe: *std.os.linux.io_uring_cqe) !void {
+fn uring_handle_completion(op: anytype, cqe: *std.os.linux.io_uring_cqe) !void {
     defer if (comptime @TypeOf(op.*) == aio.ChildExit) {
         if (!Supported.waitid) posix.closeReadiness(op, .{ .fd = op._.fd, .events = .{ .in = true } });
     };
@@ -658,9 +658,9 @@ inline fn uring_handle_completion(op: anytype, cqe: *std.os.linux.io_uring_cqe) 
                 else => std.posix.unexpectedErrno(err),
             },
             .child_exit => switch (err) {
-                .SUCCESS, .INTR, .AGAIN, .FAULT, .INVAL => unreachable,
+                .SUCCESS, .INTR, .AGAIN, .FAULT => unreachable,
                 .CANCELED => error.Canceled,
-                .CHILD => error.NotFound,
+                .CHILD, .INVAL => error.NotFound, // inval if child_exit is emulated with poll
                 else => std.posix.unexpectedErrno(err),
             },
             .socket => switch (err) {

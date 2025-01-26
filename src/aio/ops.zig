@@ -352,7 +352,7 @@ pub const SymlinkAt = struct {
 
 /// std.process.Child.wait
 pub const ChildExit = struct {
-    pub const Error = error{ NotFound, Unexpected } || SharedError;
+    pub const Error = error{NotFound} || SharedError;
     child: std.process.Child.Id,
     out_term: ?*std.process.Child.Term = null,
     _: switch (builtin.target.os.tag) {

@@ -128,6 +128,18 @@ pub const EventSource = struct {
         }
     }
 
+    pub fn waitNonBlocking(self: *@This()) error{WouldBlock}!void {
+        while (self.counter.load(.acquire) == 0) {
+            const WAIT_TIMEOUT = 0x00000102;
+            const res = threading.WaitForSingleObject(self.fd, 0);
+            if (res == WAIT_TIMEOUT) return error.WouldBlock;
+            _ = wtry(res == 0) catch @panic("EventSource.wait failed");
+        }
+        if (self.counter.fetchSub(1, .release) == 1) {
+            _ = wtry(threading.ResetEvent(self.fd)) catch @panic("EventSource.wait failed");
+        }
+    }
+
     pub fn wait(self: *@This()) void {
         while (self.counter.load(.acquire) == 0) {
             _ = wtry(threading.WaitForSingleObject(self.fd, INFINITE) == 0) catch @panic("EventSource.wait failed");

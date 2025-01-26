@@ -144,7 +144,7 @@ fn poll(self: *@This(), mode: aio.Dynamic.CompletionMode, comptime safety: Uring
             .shutdown => return error.Shutdown,
             .event_source => {
                 const source: *EventSource = @ptrCast(@alignCast(maybe_ovl.?));
-                source.wait();
+                source.waitNonBlocking() catch {};
             },
             .child_exit => {
                 switch (transferred) {
