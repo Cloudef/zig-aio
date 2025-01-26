@@ -277,11 +277,6 @@ pub inline fn perform(op: anytype, readiness: Readiness) Operation.Error!void {
     }
 }
 
-pub const needs_kludge = switch (builtin.target.os.tag) {
-    .macos, .ios, .watchos, .visionos, .tvos => true,
-    else => false,
-};
-
 pub const Readiness = struct {
     fd: std.posix.fd_t = invalid_fd,
     events: ops.Poll.Events = .{},

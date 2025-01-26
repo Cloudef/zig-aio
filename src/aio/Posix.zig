@@ -26,11 +26,16 @@ comptime {
 
 pub const EventSource = posix.EventSource;
 
+const needs_kludge = switch (builtin.target.os.tag) {
+    .macos, .ios, .watchos, .visionos, .tvos => true,
+    else => false,
+};
+
 tqueue: TimerQueue, // timer queue implementing linux -like timers
 readiness: []posix.Readiness, // readiness fd that gets polled before we perform the operation
 pfd: FixedArrayList(std.posix.pollfd, u32), // current fds that we must poll for wakeup
 posix_pool: DynamicThreadPool, // thread pool for performing operations, not all operations will be performed here
-kludge_pool: if (posix.needs_kludge) DynamicThreadPool else void, // thread pool for performing operations which can't be polled for readiness
+kludge_pool: if (needs_kludge) DynamicThreadPool else void, // thread pool for performing operations which can't be polled for readiness
 pending: std.DynamicBitSetUnmanaged, // operation is pending on readiness fd (poll)
 source: EventSource, // when threaded operations finish, they signal it using this event source
 signaled: bool = false, // some operations have signaled immediately, optimization to avoid running poll when not required
@@ -56,7 +61,7 @@ pub fn init(allocator: std.mem.Allocator, n: u16) aio.Error!@This() {
         else => |e| e,
     };
     errdefer posix_pool.deinit();
-    var kludge_pool = switch (posix.needs_kludge) {
+    var kludge_pool = switch (needs_kludge) {
         true => DynamicThreadPool.init(allocator, .{
             .max_threads = aio.options.posix_max_kludge_threads,
             .name = "aio:KLUDGE",
@@ -67,7 +72,7 @@ pub fn init(allocator: std.mem.Allocator, n: u16) aio.Error!@This() {
         },
         false => {},
     };
-    errdefer if (posix.needs_kludge) kludge_pool.deinit();
+    errdefer if (needs_kludge) kludge_pool.deinit();
     var pending_set = try std.DynamicBitSetUnmanaged.initEmpty(allocator, n);
     errdefer pending_set.deinit(allocator);
     var uringlator = try Uringlator.init(allocator, n);
@@ -91,7 +96,7 @@ pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
     self.uringlator.shutdown(self);
     self.tqueue.deinit();
     self.posix_pool.deinit();
-    if (posix.needs_kludge) self.kludge_pool.deinit();
+    if (needs_kludge) self.kludge_pool.deinit();
     allocator.free(self.readiness);
     self.pfd.deinit(allocator);
     self.pending.deinit(allocator);
@@ -321,7 +326,7 @@ pub fn uringlator_start(self: *@This(), op: anytype, id: u16) !void {
                 self.pending.unset(id);
             },
             inline else => |tag| {
-                if (posix.needs_kludge and tag == .read_tty) {
+                if (needs_kludge and tag == .read_tty) {
                     @branchHint(.unlikely);
                     try self.kludge_pool.spawn(blockingPosixExecutor, .{ self, op, id, self.readiness[id], .thread_safe });
                 }
