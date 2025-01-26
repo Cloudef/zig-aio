@@ -153,7 +153,7 @@ pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode, handler: anyty
                     std.debug.assert(pfd.revents & std.posix.POLL.NVAL == 0);
                     std.debug.assert(pfd.revents & std.posix.POLL.ERR == 0);
                     std.debug.assert(pfd.revents & std.posix.POLL.HUP == 0);
-                    self.source.wait();
+                    self.source.waitNonBlocking() catch {};
                     res = self.uringlator.complete(self, handler);
                 } else {
                     var iter = self.pending.iterator(.{});
