@@ -45,7 +45,7 @@ pub fn init(allocator: std.mem.Allocator, n: u16) aio.Error!@This() {
     errdefer allocator.free(readiness);
     var pfd = try FixedArrayList(std.posix.pollfd, u32).init(allocator, n + 1);
     errdefer pfd.deinit(allocator);
-    var tpool = DynamicThreadPool.init(allocator, .{ .max_threads = aio.options.max_threads }) catch |err| return switch (err) {
+    var tpool = DynamicThreadPool.init(allocator, .{ .max_threads = aio.options.max_threads, .name = "aio:POSIX" }) catch |err| return switch (err) {
         error.TimerUnsupported => error.Unsupported,
         else => |e| e,
     };

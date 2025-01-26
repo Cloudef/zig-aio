@@ -74,7 +74,7 @@ pub fn init(allocator: std.mem.Allocator, n: u16) aio.Error!@This() {
     errdefer iocp.deinit();
     var tqueue = try TimerQueue.init(allocator);
     errdefer tqueue.deinit();
-    var tpool = DynamicThreadPool.init(allocator, .{ .max_threads = num_threads }) catch |err| return switch (err) {
+    var tpool = DynamicThreadPool.init(allocator, .{ .max_threads = num_threads, .name = "aio:IOCP" }) catch |err| return switch (err) {
         error.TimerUnsupported => error.Unsupported,
         else => |e| e,
     };

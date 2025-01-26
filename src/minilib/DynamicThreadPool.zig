@@ -20,6 +20,7 @@ active_threads: u32 = 0,
 timeout: u64,
 // used to serialize the acquisition order
 serial: std.DynamicBitSetUnmanaged,
+name: ?[]const u8,
 
 const RunQueue = std.SinglyLinkedList(Runnable);
 const Runnable = struct { runFn: RunProto };
@@ -30,6 +31,8 @@ pub const Options = struct {
     max_threads: ?u32 = null,
     // Inactivity timeout when the thread will be joined
     timeout: u64 = 5 * std.time.ns_per_s,
+    // Name for the threads
+    name: ?[]const u8 = null,
 };
 
 fn getCpuCount() usize {
@@ -62,6 +65,7 @@ pub fn init(allocator: std.mem.Allocator, options: Options) InitError!@This() {
         .timeout = options.timeout,
         .serial = serial,
         .threads = threads,
+        .name = options.name,
     };
 }
 
@@ -166,6 +170,7 @@ fn yield() std.Thread.YieldError!void {
 fn worker(self: *@This(), thread: *DynamicThread, id: u32, timeout: u64) void {
     self.mutex.lock();
     defer self.mutex.unlock();
+    if (self.name) |name| thread.thread.?.setName(name) catch {};
 
     var timer = std.time.Timer.start() catch unreachable;
     main: while (thread.active) {
