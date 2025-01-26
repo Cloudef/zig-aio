@@ -22,8 +22,13 @@ pub const PipeEventSource = struct {
     pub fn init() !@This() {
         const fds = if (@hasField(std.posix.O, "CLOEXEC"))
             try std.posix.pipe2(.{ .CLOEXEC = true, .NONBLOCK = true })
-        else
-            try pipe();
+        else blk: {
+            const fds = try std.posix.pipe();
+            const NONBLOCK = 1 << @bitOffsetOf(std.posix.O, "NONBLOCK");
+            std.posix.fcntl(fds[0], std.posix.F.SETFL, NONBLOCK) catch {};
+            std.posix.fcntl(fds[1], std.posix.F.SETFL, NONBLOCK) catch {};
+            break :blk fds;
+        };
         return .{ .fd = fds[0], .wfd = fds[1] };
     }
 
@@ -34,11 +39,11 @@ pub const PipeEventSource = struct {
     }
 
     pub fn notify(self: *@This()) void {
-        _ = std.posix.write(self.wfd, "1") catch @panic("EventSource.notify failed");
+        _ = std.posix.write(self.wfd, &.{0}) catch @panic("EventSource.notify failed");
     }
 
-    pub fn notifyReadiness(self: *@This()) Readiness {
-        return .{ .fd = self.wfd, .events = .{ .out = true } };
+    pub fn notifyReadiness(_: *@This()) Readiness {
+        return .{};
     }
 
     pub fn waitNonBlocking(self: *@This()) error{WouldBlock}!void {
@@ -53,7 +58,7 @@ pub const PipeEventSource = struct {
         while (true) {
             self.waitNonBlocking() catch {
                 var pfds = [_]std.posix.pollfd{.{ .fd = self.fd, .events = std.posix.POLL.IN, .revents = 0 }};
-                _ = poll(&pfds, -1) catch {};
+                _ = std.posix.poll(&pfds, -1) catch {};
                 continue;
             };
             break;
@@ -502,11 +507,6 @@ pub const shutdown = switch (builtin.target.os.tag) {
 pub const fsync = switch (builtin.target.os.tag) {
     .wasi => wasi.fsync,
     else => std.posix.fsync,
-};
-
-pub const pipe = switch (builtin.target.os.tag) {
-    .wasi => wasi.pipe,
-    else => std.posix.pipe,
 };
 
 pub const poll = switch (builtin.target.os.tag) {
