@@ -249,13 +249,13 @@ fn nonBlockingPosixExecutor(self: *@This(), op: anytype, id: u16, readiness: pos
     self.uringlator.finish(self, id, failure, .thread_unsafe);
 }
 
-fn nonBlockingPosixExecutorFcntl(self: *@This(), op: anytype, id: u16, readiness: posix.Readiness) error{WouldBlock}!void {
+fn nonBlockingPosixExecutorFcntl(self: *@This(), op: anytype, id: u16, readiness: posix.Readiness) error{ WouldBlock, FcntlFailed }!void {
     const NONBLOCK = 1 << @bitOffsetOf(std.posix.O, "NONBLOCK");
     const old: struct { usize, bool } = blk: {
         if (readiness.fd != posix.invalid_fd) {
-            const flags = std.posix.fcntl(readiness.fd, std.posix.F.GETFL, 0) catch break :blk .{ 0, false };
+            const flags = std.posix.fcntl(readiness.fd, std.posix.F.GETFL, 0) catch return error.FcntlFailed;
             if ((flags & NONBLOCK) == 0) break :blk .{ flags, false };
-            _ = std.posix.fcntl(readiness.fd, std.posix.F.SETFL, flags | NONBLOCK) catch break :blk .{ 0, false };
+            _ = std.posix.fcntl(readiness.fd, std.posix.F.SETFL, flags | NONBLOCK) catch return error.FcntlFailed;
             break :blk .{ flags, true };
         }
         break :blk .{ 0, false };
@@ -315,24 +315,23 @@ pub fn uringlator_start(self: *@This(), op: anytype, id: u16) !void {
                 // poll lied to us, or somebody else raced us, poll again
                 self.pending.unset(id);
             },
-            .accept,
-            => {
+            inline else => |tag| {
+                if (posix.needs_kludge and tag == .read_tty) {
+                    @branchHint(.unlikely);
+                    try self.kludge_pool.spawn(blockingPosixExecutor, .{ self, op, id, self.readiness[id], .thread_safe });
+                }
                 if (comptime builtin.target.os.tag == .wasi) {
                     // perform on thread
                     try self.posix_pool.spawn(blockingPosixExecutor, .{ self, op, id, self.readiness[id], .thread_safe });
-                } else {
-                    self.nonBlockingPosixExecutorFcntl(op, id, self.readiness[id]) catch {
+                } else if (self.readiness[id].fd != posix.invalid_fd) {
+                    self.nonBlockingPosixExecutorFcntl(op, id, self.readiness[id]) catch |err| switch (err) {
                         // poll lied to us, or somebody else raced us, poll again
-                        self.pending.unset(id);
+                        error.WouldBlock => self.pending.unset(id),
+                        // perform on thread
+                        error.FcntlFailed => try self.posix_pool.spawn(blockingPosixExecutor, .{ self, op, id, self.readiness[id], .thread_safe }),
                     };
-                }
-            },
-            inline else => {
-                // perform on thread
-                if (posix.needs_kludge and self.readiness[id].kludge) {
-                    @branchHint(.unlikely);
-                    try self.kludge_pool.spawn(blockingPosixExecutor, .{ self, op, id, self.readiness[id], .thread_safe });
                 } else {
+                    // perform on thread
                     try self.posix_pool.spawn(blockingPosixExecutor, .{ self, op, id, self.readiness[id], .thread_safe });
                 }
             },

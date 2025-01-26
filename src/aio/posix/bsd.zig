@@ -53,7 +53,8 @@ pub const EventSource = switch (builtin.target.os.tag) {
 
         pub fn waitNonBlocking(self: *@This()) error{WouldBlock}!void {
             var ev: [1]std.posix.Kevent = undefined;
-            const res = std.posix.kevent(self.fd, &.{}, &ev, 0) catch @panic("EventSource.wait failed");
+            var ts: std.posix.timespec = .{ .sec = 0, .nsec = 0 };
+            const res = std.posix.kevent(self.fd, &.{}, &ev, &ts) catch @panic("EventSource.wait failed");
             if (res == 0) return error.WouldBlock;
         }
 
@@ -96,7 +97,7 @@ pub const ChildWatcher = struct {
         while (true) {
             const rc = std.posix.system.waitpid(self.id, &status, std.posix.W.NOHANG);
             return switch (std.posix.errno(rc)) {
-                .SUCCESS => posix.statusToTerm(status),
+                .SUCCESS => posix.statusToTerm(@bitCast(status)),
                 .INTR => continue,
                 .CHILD => error.NotFound,
                 .INVAL => unreachable, // Invalid flags.
