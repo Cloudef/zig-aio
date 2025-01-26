@@ -1,6 +1,8 @@
 const builtin = @import("builtin");
 const std = @import("std");
 
+const WASM_MEMORY_LIMIT: usize = 1e+9; // 1GiB
+
 pub fn build(b: *std.Build) void {
     var target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
@@ -99,7 +101,7 @@ pub fn build(b: *std.Build) void {
         });
         exe.root_module.addImport("aio", aio);
         exe.root_module.addImport("coro", coro);
-        var cmd = makeRunStep(b, target, exe, 3.355e+7, "example:" ++ @tagName(example), "Run " ++ @tagName(example) ++ " example");
+        var cmd = makeRunStep(b, target, exe, WASM_MEMORY_LIMIT, "example:" ++ @tagName(example), "Run " ++ @tagName(example) ++ " example");
         run_all.dependOn(&cmd.step);
     }
 
@@ -122,7 +124,7 @@ pub fn build(b: *std.Build) void {
             .coro => addImportsFrom(tst.root_module, coro),
             else => unreachable,
         }
-        var cmd = makeRunStep(b, target, tst, 3.355e+7, "test:" ++ @tagName(mod), "Run " ++ @tagName(mod) ++ " tests");
+        var cmd = makeRunStep(b, target, tst, WASM_MEMORY_LIMIT, "test:" ++ @tagName(mod), "Run " ++ @tagName(mod) ++ " tests");
         test_step.dependOn(&cmd.step);
     }
 
@@ -142,7 +144,7 @@ pub fn build(b: *std.Build) void {
         });
         exe.root_module.addImport("aio", aio);
         exe.root_module.addImport("coro", coro);
-        var cmd = makeRunStep(b, target, exe, 3.355e+7, "bug:" ++ @tagName(bug), "Check regression for #" ++ @tagName(bug));
+        var cmd = makeRunStep(b, target, exe, WASM_MEMORY_LIMIT, "bug:" ++ @tagName(bug), "Check regression for #" ++ @tagName(bug));
         bug_step.dependOn(&cmd.step);
     }
 
@@ -162,7 +164,7 @@ pub fn build(b: *std.Build) void {
         });
         exe.root_module.addImport("aio", aio);
         exe.root_module.addImport("coro", coro);
-        var cmd = makeRunStep(b, target, exe, 3.355e+7, "bench:" ++ @tagName(bench), "Run " ++ @tagName(bench) ++ " benchmark");
+        var cmd = makeRunStep(b, target, exe, WASM_MEMORY_LIMIT, "bench:" ++ @tagName(bench), "Run " ++ @tagName(bench) ++ " benchmark");
         bench_step.dependOn(&cmd.step);
     }
 }
