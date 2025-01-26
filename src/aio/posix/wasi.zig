@@ -6,7 +6,52 @@ const log = std.log.scoped(.aio_wasi);
 // wasix has fd_event, but the only runtime that implements wasix (wasmer)
 // does not seem to like zig's WasiThreadImpl for whatever reason
 // so not implementing that until something there changes
-pub const EventSource = posix.PipeEventSource;
+pub const EventSource = struct {
+    fd: std.posix.fd_t,
+    wfd: std.posix.fd_t,
+
+    pub fn init() !@This() {
+        const fds = try pipe();
+        return .{ .fd = fds[0], .wfd = fds[1] };
+    }
+
+    pub fn deinit(self: *@This()) void {
+        std.posix.close(self.fd);
+        std.posix.close(self.wfd);
+        self.* = undefined;
+    }
+
+    pub fn notify(self: *@This()) void {
+        _ = std.posix.write(self.wfd, &.{0}) catch @panic("EventSource.notify failed");
+    }
+
+    pub fn notifyReadiness(_: *@This()) posix.Readiness {
+        return .{};
+    }
+
+    pub fn waitNonBlocking(self: *@This()) error{WouldBlock}!void {
+        var trash: [1]u8 = undefined;
+        _ = std.posix.read(self.fd, &trash) catch |err| switch (err) {
+            error.WouldBlock => return error.WouldBlock,
+            else => @panic("EventSource.wait failed"),
+        };
+    }
+
+    pub fn wait(self: *@This()) void {
+        while (true) {
+            self.waitNonBlocking() catch {
+                var pfds = [_]std.posix.pollfd{.{ .fd = self.fd, .events = std.posix.POLL.IN, .revents = 0 }};
+                _ = poll(&pfds, -1) catch {};
+                continue;
+            };
+            break;
+        }
+    }
+
+    pub fn waitReadiness(self: *@This()) posix.Readiness {
+        return .{ .fd = self.fd, .events = .{ .in = true } };
+    }
+};
 
 pub const BIGGEST_ALIGNMENT = 16;
 
