@@ -259,10 +259,14 @@ pub inline fn perform(op: anytype, readiness: Readiness) Operation.Error!void {
     }
 }
 
+pub const needs_kludge = switch (builtin.target.os.tag) {
+    .macos, .ios, .watchos, .visionos, .tvos => true,
+    else => false,
+};
+
 pub const Readiness = struct {
     fd: std.posix.fd_t = invalid_fd,
     events: ops.Poll.Events = .{},
-    kludge: bool = false,
 };
 
 pub const OpenReadinessError = error{
@@ -280,7 +284,7 @@ pub inline fn openReadiness(op: anytype) OpenReadinessError!Readiness {
         .poll => .{ .fd = op.fd, .events = op.events },
         .write => .{ .fd = op.file.handle, .events = .{ .out = true } },
         .read_tty => switch (builtin.target.os.tag) {
-            .macos, .ios, .watchos, .visionos, .tvos => .{ .kludge = true },
+            .macos, .ios, .watchos, .visionos, .tvos => .{},
             else => .{ .fd = op.tty.handle, .events = .{ .in = true } },
         },
         .read => .{ .fd = op.file.handle, .events = .{ .in = true } },
