@@ -282,10 +282,15 @@ pub fn uringlator_queue(self: *@This(), op: anytype, id: u16) aio.Error!void {
         self.uringlator.finish(self, id, err, .thread_unsafe);
         return;
     };
-    if (@as(i16, @bitCast(self.readiness[id].events)) == 0) {
-        self.pending.set(id);
-    } else {
+
+    if (comptime @TypeOf(op.*) == aio.Poll) {
         self.pending.unset(id);
+    } else {
+        if (@as(i16, @bitCast(self.readiness[id].events)) == 0) {
+            self.pending.set(id);
+        } else {
+            self.pending.unset(id);
+        }
     }
 }
 
