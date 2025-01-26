@@ -163,11 +163,7 @@ pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode, handler: anyty
                         defer {
                             // do not poll this fd again
                             self.pfd.swapRemove(@truncate(pid));
-                            switch (self.uringlator.ops.nodes[id].used) {
-                                inline else => |*op| posix.closeReadiness(op, self.readiness[id]),
-                            }
                             self.pending.unset(id);
-                            self.readiness[id] = .{};
                         }
                         if (pfd.revents & std.posix.POLL.ERR != 0 or pfd.revents & std.posix.POLL.NVAL != 0) {
                             if (pfd.revents & std.posix.POLL.ERR != 0) {
@@ -259,13 +255,17 @@ fn onThreadTimeout(ctx: *anyopaque, user_data: usize) void {
 }
 
 pub fn uringlator_queue(self: *@This(), op: anytype, id: u16) aio.Error!void {
-    self.pending.unset(id);
     self.readiness[id] = try posix.openReadiness(op);
-    if (@as(i16, @bitCast(self.readiness[id].events)) == 0) self.pending.set(id);
+    if (@as(i16, @bitCast(self.readiness[id].events)) == 0) {
+        self.pending.set(id);
+    } else {
+        self.pending.unset(id);
+    }
 }
 
 pub fn uringlator_dequeue(self: *@This(), op: anytype, id: u16) void {
     posix.closeReadiness(op, self.readiness[id]);
+    self.pending.unset(id);
 }
 
 pub fn uringlator_start(self: *@This(), op: anytype, id: u16) !void {
@@ -284,7 +284,10 @@ pub fn uringlator_start(self: *@This(), op: anytype, id: u16) !void {
             .recv,
             .send_msg,
             .recv_msg,
-            => self.nonBlockingPosixExecutor(op, id, self.readiness[id]) catch unreachable,
+            => self.nonBlockingPosixExecutor(op, id, self.readiness[id]) catch {
+                // poll lied to us, or somebody else raced us, poll again
+                self.pending.unset(id);
+            },
             inline else => {
                 // perform on thread
                 if (posix.needs_kludge and self.readiness[id].kludge) {
@@ -295,7 +298,9 @@ pub fn uringlator_start(self: *@This(), op: anytype, id: u16) !void {
                 }
             },
         }
-    } else {
+    }
+
+    if (!self.pending.isSet(id)) {
         // try non-blocking send/recv first
         // TODO: might want to not do this if the buffer is large
         if (switch (comptime Operation.tagFromPayloadType(@TypeOf(op.*))) {
@@ -373,15 +378,17 @@ pub fn uringlator_complete(self: *@This(), op: anytype, id: u16, _: Operation.Er
         .timeout, .link_timeout => self.tqueue.disarm(.monotonic, id),
         else => {},
     }
-    if (self.pending.isSet(id) and self.readiness[id].fd != posix.invalid_fd) {
-        for (self.pfd.items[0..self.pfd.len], 0..) |pfd, idx| {
-            if (pfd.fd != self.readiness[id].fd) continue;
-            if (pfd.events != readinessToPollEvents(self.readiness[id])) continue;
-            self.pfd.swapRemove(@truncate(idx));
-            break;
+    if (self.readiness[id].fd != posix.invalid_fd) {
+        if (self.pending.isSet(id)) {
+            for (self.pfd.items[0..self.pfd.len], 0..) |pfd, idx| {
+                if (pfd.fd != self.readiness[id].fd) continue;
+                if (pfd.events != readinessToPollEvents(self.readiness[id])) continue;
+                self.pfd.swapRemove(@truncate(idx));
+                break;
+            }
+            self.pending.unset(id);
         }
         posix.closeReadiness(op, self.readiness[id]);
-        self.pending.unset(id);
         self.readiness[id] = .{};
     }
 }
