@@ -61,6 +61,7 @@ pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
 }
 
 pub fn shutdown(self: *@This(), backend: anytype) void {
+    debug("shutdown", .{});
     var iter = self.ops.iterator();
     while (iter.next()) |e| {
         switch (e.v.*) {
