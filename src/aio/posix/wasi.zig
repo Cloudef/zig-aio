@@ -178,6 +178,23 @@ pub fn pipe() std.posix.PipeError![2]std.posix.fd_t {
     unreachable;
 }
 
+fn clock(userdata: usize, timeout: i32) std.os.wasi.subscription_t {
+    return .{
+        .userdata = userdata,
+        .u = .{
+            .tag = .CLOCK,
+            .u = .{
+                .clock = .{
+                    .id = .MONOTONIC,
+                    .timeout = @intCast(timeout * std.time.ns_per_ms),
+                    .precision = 0,
+                    .flags = 0,
+                },
+            },
+        },
+    };
+}
+
 pub fn poll(fds: []std.posix.pollfd, timeout: i32) std.posix.PollError!usize {
     // TODO: maybe use thread local arena instead?
     const MAX_POLL_FDS = 4096;
@@ -210,20 +227,7 @@ pub fn poll(fds: []std.posix.pollfd, timeout: i32) std.posix.PollError!usize {
     }
 
     if (timeout >= 0) {
-        subs.append(.{
-            .userdata = 0,
-            .u = .{
-                .tag = .CLOCK,
-                .u = .{
-                    .clock = .{
-                        .id = .MONOTONIC,
-                        .timeout = @intCast(timeout * std.time.ns_per_ms),
-                        .precision = 0,
-                        .flags = 0,
-                    },
-                },
-            },
-        }) catch return error.SystemResources;
+        subs.append(clock(0, timeout)) catch return error.SystemResources;
     }
 
     var n: usize = 0;
