@@ -127,15 +127,19 @@ const UringlatorOperation = struct {
             source: *aio.EventSource,
         },
 
+        fn FieldType(comptime T: type, comptime name: []const u8) type {
+            return @TypeOf(@field(@as(T, undefined), name));
+        }
+
         fn init(comptime op_type: Operation, op: Operation.map.getAssertContains(op_type)) @This() {
-            var v: @FieldType(@This(), @tagName(op_type)) = undefined;
+            var v: FieldType(@This(), @tagName(op_type)) = undefined;
             inline for (std.meta.fields(@TypeOf(v))) |field| @field(v, field.name) = @field(op, field.name);
             return @unionInit(@This(), @tagName(op_type), v);
         }
 
         pub fn toOp(self: @This(), comptime op_type: Operation, result: *Operation.anyresult) Operation.map.getAssertContains(op_type) {
             var op: Operation.map.getAssertContains(op_type) = undefined;
-            inline for (std.meta.fields(@FieldType(@This(), @tagName(op_type)))) |field| {
+            inline for (std.meta.fields(FieldType(@This(), @tagName(op_type)))) |field| {
                 @field(op, field.name) = @field(@field(self, @tagName(op_type)), field.name);
             }
             result.restore(op_type, &op);
@@ -158,7 +162,7 @@ const UringlatorOperation = struct {
 
 pub fn Uringlator(BackendOperation: type) type {
     const CombinedOperation = @Type(.{
-        .@"struct" = .{
+        .Struct = .{
             .layout = .auto,
             .fields = std.meta.fields(UringlatorOperation) ++ std.meta.fields(BackendOperation),
             .decls = &.{},
@@ -295,7 +299,7 @@ pub fn Uringlator(BackendOperation: type) type {
 
                     // start linked timeout immediately as well if there's one
                     const next = self.ops.getOne(.next, id);
-                    if (next != id and self.ops.getOne(.type, next) == .link_timeout) {
+                    if (!std.meta.eql(next, id) and self.ops.getOne(.type, next) == .link_timeout) {
                         self.link_lock.unset(next.slot);
                     }
                     continue :again;
@@ -306,7 +310,7 @@ pub fn Uringlator(BackendOperation: type) type {
         }
 
         fn start(self: *@This(), op_type: Operation, id: aio.Id, backend: anytype) aio.Error!void {
-            if (self.ops.getOne(.next, id) != id) {
+            if (!std.meta.eql(self.ops.getOne(.next, id), id)) {
                 debug("perform: {}: {} => {}", .{ id, op_type, self.ops.getOne(.next, id) });
             } else {
                 debug("perform: {}: {}", .{ id, op_type });
@@ -348,10 +352,10 @@ pub fn Uringlator(BackendOperation: type) type {
                     switch (op_type) {
                         .link_timeout => {
                             const cid = self.ops.getOne(.prev, res.id);
-                            std.debug.assert(cid != res.id);
+                            std.debug.assert(!std.meta.eql(cid, res.id));
 
                             const raced = blk: {
-                                for (finished) |res2| if (cid == res2.id) break :blk true;
+                                for (finished) |res2| if (std.meta.eql(cid, res2.id)) break :blk true;
                                 break :blk false;
                             };
 
@@ -393,11 +397,11 @@ pub fn Uringlator(BackendOperation: type) type {
                 if (self.ops.getOne(.out_error, res.id)) |err| err.* = @errorCast(failure);
 
                 const next = self.ops.getOne(.next, res.id);
-                if (next != res.id) {
+                if (!std.meta.eql(next, res.id)) {
                     const next_type = self.ops.getOne(.type, next);
                     if (next_type == .link_timeout) {
                         const raced = blk: {
-                            for (finished) |res2| if (next == res2.id) break :blk true;
+                            for (finished) |res2| if (std.meta.eql(next, res2.id)) break :blk true;
                             break :blk false;
                         };
                         if (!raced) {

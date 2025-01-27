@@ -119,9 +119,9 @@ pub fn build(b: *std.Build) void {
             .strip = false,
         });
         switch (mod) {
-            .minilib => addImportsFrom(tst.root_module, minilib),
-            .aio => addImportsFrom(tst.root_module, aio),
-            .coro => addImportsFrom(tst.root_module, coro),
+            .minilib => addImportsFrom(&tst.root_module, minilib),
+            .aio => addImportsFrom(&tst.root_module, aio),
+            .coro => addImportsFrom(&tst.root_module, coro),
             else => unreachable,
         }
         var cmd = makeRunStep(b, target, tst, WASM_MEMORY_LIMIT, "test:" ++ @tagName(mod), "Run " ++ @tagName(mod) ++ " tests");

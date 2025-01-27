@@ -4,7 +4,7 @@ const posix = @import("posix.zig");
 
 pub const EVFILT_USER = switch (builtin.target.os.tag) {
     .openbsd => @compileError("openbsd lacks EVFILT_USER"),
-    else => std.posix.system.EVFILT.USER,
+    else => std.posix.system.EVFILT_USER,
 };
 
 pub const msghdr_const = switch (builtin.target.os.tag) {
@@ -40,8 +40,8 @@ pub const EventSource = switch (builtin.target.os.tag) {
             _ = std.posix.kevent(self.fd, &.{.{
                 .ident = self.counter.fetchAdd(1, .monotonic),
                 .filter = EVFILT_USER,
-                .flags = std.posix.system.EV.ADD | std.posix.system.EV.ENABLE | std.posix.system.EV.ONESHOT,
-                .fflags = std.posix.system.NOTE.TRIGGER,
+                .flags = std.posix.system.EV_ADD | std.posix.system.EV_ENABLE | std.posix.system.EV_ONESHOT,
+                .fflags = std.posix.system.NOTE_TRIGGER,
                 .data = 0,
                 .udata = 0,
             }}, &.{}, null) catch @panic("EventSource.notify failed");
@@ -53,7 +53,7 @@ pub const EventSource = switch (builtin.target.os.tag) {
 
         pub fn waitNonBlocking(self: *@This()) error{WouldBlock}!void {
             var ev: [1]std.posix.Kevent = undefined;
-            var ts: std.posix.timespec = .{ .sec = 0, .nsec = 0 };
+            var ts: std.posix.timespec = .{ .tv_sec = 0, .tv_nsec = 0 };
             const res = std.posix.kevent(self.fd, &.{}, &ev, &ts) catch @panic("EventSource.wait failed");
             if (res == 0) return error.WouldBlock;
         }
@@ -77,9 +77,9 @@ pub const ChildWatcher = struct {
         const fd = try std.posix.kqueue();
         _ = std.posix.kevent(fd, &.{.{
             .ident = @intCast(id),
-            .filter = std.posix.system.EVFILT.PROC,
-            .flags = std.posix.system.EV.ADD | std.posix.system.EV.ENABLE | std.posix.system.EV.ONESHOT,
-            .fflags = std.posix.system.NOTE.EXIT,
+            .filter = std.posix.system.EVFILT_PROC,
+            .flags = std.posix.system.EV_ADD | std.posix.system.EV_ENABLE | std.posix.system.EV_ONESHOT,
+            .fflags = std.posix.system.NOTE_EXIT,
             .data = 0,
             .udata = 0,
         }}, &.{}, null) catch |err| return switch (err) {

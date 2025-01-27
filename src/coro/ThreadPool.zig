@@ -33,7 +33,7 @@ pub const CancellationToken = struct {
 };
 
 fn hasToken(comptime func: anytype) bool {
-    const fun_info = @typeInfo(@TypeOf(func)).@"fn";
+    const fun_info = @typeInfo(@TypeOf(func)).Fn;
     return fun_info.params.len > 0 and fun_info.params[0].type.? == *const CancellationToken;
 }
 

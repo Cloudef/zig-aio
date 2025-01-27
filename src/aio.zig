@@ -92,7 +92,7 @@ pub const Dynamic = struct {
     /// The call is atomic, if any of the operations fail to queue, then the given operations are reverted
     pub inline fn queue(self: *@This(), pairs: anytype, handler: anytype) Error!void {
         const ti = @typeInfo(@TypeOf(pairs));
-        if (comptime (ti == .@"struct" and ti.@"struct".is_tuple) or ti == .array) {
+        if (comptime (ti == .Struct and ti.Struct.is_tuple) or ti == .Array) {
             sanityCheck(pairs);
             return self.io.queue(pairs, handler);
         } else {
@@ -129,7 +129,7 @@ pub const Dynamic = struct {
 
 pub inline fn sanityCheck(pairs: anytype) void {
     const ti = @typeInfo(@TypeOf(pairs));
-    if (comptime (ti == .@"struct" and ti.@"struct".is_tuple) or ti == .array) {
+    if (comptime (ti == .Struct and ti.Struct.is_tuple) or ti == .Array) {
         if (comptime pairs.len == 0) @compileError("no work to be done");
         inline for (pairs, 0..) |pair, idx| {
             if (!@hasDecl(@TypeOf(pair), "MAGIC_AIO_OP")) {
@@ -269,10 +269,10 @@ test "shared outputs" {
         op(.fsync, .{ .file = f, .out_id = &id2 }, .unlinked),
         op(.fsync, .{ .file = f, .out_id = &id3 }, .unlinked),
     }, {});
-    try std.testing.expect(id1 != Id{ .slot = 69, .generation = 69 });
-    try std.testing.expect(id1 != id2);
-    try std.testing.expect(id1 != id3);
-    try std.testing.expect(id2 != id3);
+    try std.testing.expect(!std.meta.eql(id1, Id{ .slot = 69, .generation = 69 }));
+    try std.testing.expect(!std.meta.eql(id1, id2));
+    try std.testing.expect(!std.meta.eql(id1, id3));
+    try std.testing.expect(!std.meta.eql(id2, id3));
     std.debug.print("{}\n", .{id1});
     std.debug.print("{}\n", .{id2});
     std.debug.print("{}\n", .{id3});

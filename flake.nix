@@ -12,7 +12,7 @@
       # Check the flake.nix in zig2nix project for more options:
       # <https://github.com/Cloudef/zig2nix/blob/master/flake.nix>
       env = zig2nix.outputs.zig-env.${system} {
-        zig = zig2nix.outputs.packages.${system}.zig.master.bin;
+        zig = zig2nix.outputs.packages.${system}.zig."0.13.0".bin;
       };
     in with builtins; with env.lib; with env.pkgs.lib; {
       # nix run .
@@ -31,8 +31,6 @@
           zig build test bug -Daio:posix=force -Dsanitize=true
           echo "zig build test bug -Daio:posix=force -Dminilib:force_foreign_timer_queue=true -Dsanitize=true"
           zig build test bug -Daio:posix=force -Dminilib:force_foreign_timer_queue=true -Dsanitize=true
-          echo "zig build test:aio test:minilib -Dtarget=wasm32-wasi-none"
-          zig build -Doptimize=ReleaseSafe test:aio test:minilib -Dtarget=wasm32-wasi-none
         elif [[ "$(uname)" == "Darwin" ]]; then
           echo "zig build test bug"
           zig build test bug

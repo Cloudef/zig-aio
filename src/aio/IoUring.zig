@@ -57,8 +57,8 @@ const UringOperation = struct {
                 },
                 .timeout, .link_timeout => .{
                     .timeout = .{
-                        .sec = @intCast(op.ns / std.time.ns_per_s),
-                        .nsec = @intCast(op.ns % std.time.ns_per_s),
+                        .tv_sec = @intCast(op.ns / std.time.ns_per_s),
+                        .tv_nsec = @intCast(op.ns % std.time.ns_per_s),
                     },
                 },
                 else => undefined,

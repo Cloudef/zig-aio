@@ -27,12 +27,12 @@ pub fn Id(IndexBits: type, EntropyBits: type) type {
                         .type = [*]field.type,
                         .name = field.name,
                         .alignment = @alignOf([*]field.type),
-                        .default_value_ptr = null,
+                        .default_value = null,
                         .is_comptime = false,
                     }};
                 }
                 break :blk @Type(.{
-                    .@"struct" = .{
+                    .Struct = .{
                         .layout = .auto,
                         .fields = fields,
                         .decls = &.{},
@@ -50,7 +50,7 @@ pub fn Id(IndexBits: type, EntropyBits: type) type {
                     }};
                 }
                 break :blk @Type(.{
-                    .@"enum" = .{
+                    .Enum = .{
                         .tag_type = std.math.IntFittingRange(0, fields.len),
                         .fields = fields,
                         .decls = &.{},
@@ -135,12 +135,16 @@ pub fn Id(IndexBits: type, EntropyBits: type) type {
                     return v;
                 }
 
-                pub fn getOne(self: *@This(), comptime field: FieldEnum, id: IdType) @FieldType(SoALayout, @tagName(field)) {
+                fn FieldType(comptime T: type, comptime name: []const u8) type {
+                    return @TypeOf(@field(@as(T, undefined), name));
+                }
+
+                pub fn getOne(self: *@This(), comptime field: FieldEnum, id: IdType) FieldType(SoALayout, @tagName(field)) {
                     const idx = self.lookup(id) catch unreachable;
                     return @field(self.soa, @tagName(field))[idx];
                 }
 
-                pub fn getOnePtr(self: *@This(), comptime field: FieldEnum, id: IdType) *@FieldType(SoALayout, @tagName(field)) {
+                pub fn getOnePtr(self: *@This(), comptime field: FieldEnum, id: IdType) *FieldType(SoALayout, @tagName(field)) {
                     const idx = self.lookup(id) catch unreachable;
                     return &@field(self.soa, @tagName(field))[idx];
                 }
@@ -152,7 +156,7 @@ pub fn Id(IndexBits: type, EntropyBits: type) type {
                     }
                 }
 
-                pub fn setOne(self: *@This(), comptime field: FieldEnum, id: IdType, v: @FieldType(SoALayout, @tagName(field))) void {
+                pub fn setOne(self: *@This(), comptime field: FieldEnum, id: IdType, v: FieldType(SoALayout, @tagName(field))) void {
                     const idx = self.lookup(id) catch unreachable;
                     @field(self.soa, @tagName(field))[idx] = v;
                 }

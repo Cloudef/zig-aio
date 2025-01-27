@@ -195,7 +195,7 @@ pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode, handler: anyty
                         }
                     }
                     // start it for real this time
-                    if (self.uringlator.ops.getOne(.next, id) != id) {
+                    if (!std.meta.eql(self.uringlator.ops.getOne(.next, id), id)) {
                         Uringlator.debug("ready: {}: {} => {}", .{ id, op_type, self.uringlator.ops.getOne(.next, id) });
                     } else {
                         Uringlator.debug("ready: {}: {}", .{ id, op_type });
@@ -375,7 +375,6 @@ pub fn uringlator_start(self: *@This(), id: aio.Id, op_type: Operation) !void {
                 const result = self.uringlator.ops.getOne(.out_result, id);
                 const readiness = self.uringlator.ops.getOne(.readiness, id);
                 if (needs_kludge and tag == .read_tty) {
-                    @branchHint(.unlikely);
                     try self.kludge_pool.spawn(blockingPosixExecutor, .{ self, tag, state.toOp(tag, result), id, readiness, .thread_safe });
                 }
                 if (comptime builtin.target.os.tag == .wasi) {
@@ -441,7 +440,7 @@ pub fn uringlator_start(self: *@This(), id: aio.Id, op_type: Operation) !void {
         }
 
         // pending for readiness, perform the operation later
-        if (self.uringlator.ops.getOne(.next, id) != id) {
+        if (!std.meta.eql(self.uringlator.ops.getOne(.next, id), id)) {
             Uringlator.debug("pending: {}: {} => {}", .{ id, op_type, self.uringlator.ops.getOne(.next, id) });
         } else {
             Uringlator.debug("pending: {}: {}", .{ id, op_type });
