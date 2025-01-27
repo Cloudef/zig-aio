@@ -1,6 +1,5 @@
 const std = @import("std");
 const aio = @import("../aio.zig");
-const Operation = @import("ops.zig").Operation;
 const IoUring = @import("IoUring.zig");
 const Posix = @import("Posix.zig");
 const log = std.log.scoped(.aio_linux);
@@ -28,7 +27,7 @@ const PosixSupport = union(enum) {
         if (!io_uring_supported) log.warn("io_uring unsupported, using the posix backend", .{});
     }
 
-    pub fn isSupported(operations: []const type) bool {
+    pub fn isSupported(operations: []const aio.Operation) bool {
         once.call();
         // io_uring currently has to support all operations or we fallback
         // so the io_uring codepath here never really gets executed
@@ -55,9 +54,9 @@ const PosixSupport = union(enum) {
         }
     }
 
-    pub fn queue(self: *@This(), comptime len: u16, uops: []Operation.Union, handler: anytype) aio.Error!void {
+    pub fn queue(self: *@This(), pairs: anytype, handler: anytype) aio.Error!void {
         return switch (self.*) {
-            inline else => |*io| io.queue(len, uops, handler),
+            inline else => |*io| io.queue(pairs, handler),
         };
     }
 
@@ -67,11 +66,11 @@ const PosixSupport = union(enum) {
         };
     }
 
-    pub fn immediate(comptime len: u16, uops: []Operation.Union) aio.Error!u16 {
+    pub fn immediate(pairs: anytype) aio.Error!u16 {
         once.call();
         return if (io_uring_supported)
-            IoUring.immediate(len, uops)
+            IoUring.immediate(pairs)
         else
-            Posix.immediate(len, uops);
+            Posix.immediate(pairs);
     }
 };

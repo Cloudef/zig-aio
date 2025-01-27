@@ -232,8 +232,8 @@ pub fn symlinkAtUring(target: [*:0]const u8, dir: std.fs.Dir, link_path: [*:0]co
     };
 }
 
-pub inline fn perform(op: anytype, readiness: Readiness) Operation.Error!void {
-    switch (comptime Operation.tagFromPayloadType(@TypeOf(op.*))) {
+pub fn perform(comptime op_type: Operation, op: Operation.map.getAssertContains(op_type), readiness: Readiness) Operation.Error!void {
+    switch (op_type) {
         .fsync => _ = try fsync(op.file.handle),
         .read_tty => op.out_read.* = try readTty(op.tty.handle, op.buffer, op.mode),
         .read => op.out_read.* = try readUring(op.file.handle, op.buffer, @intCast(op.offset)),
@@ -281,42 +281,6 @@ pub const Readiness = struct {
     fd: std.posix.fd_t = invalid_fd,
     events: ops.Poll.Events = .{},
 };
-
-pub inline fn openReadiness(op: anytype) !Readiness {
-    return switch (comptime Operation.tagFromPayloadType(@TypeOf(op.*))) {
-        .nop => .{},
-        .fsync => .{},
-        .poll => .{ .fd = op.fd, .events = op.events },
-        .write => .{ .fd = op.file.handle, .events = .{ .out = true } },
-        .read_tty => switch (builtin.target.os.tag) {
-            .macos, .ios, .watchos, .visionos, .tvos => .{},
-            else => .{ .fd = op.tty.handle, .events = .{ .in = true } },
-        },
-        .read => .{ .fd = op.file.handle, .events = .{ .in = true } },
-        .accept, .recv, .recv_msg => .{ .fd = op.socket, .events = .{ .in = true } },
-        .socket, .connect, .shutdown => .{},
-        .send, .send_msg => .{ .fd = op.socket, .events = .{ .out = true } },
-        .open_at, .close_file, .close_dir, .close_socket => .{},
-        .timeout, .link_timeout => .{},
-        .cancel, .rename_at, .unlink_at, .mkdir_at, .symlink_at => .{},
-        .child_exit => .{ .fd = (try ChildWatcher.init(op.child)).fd, .events = .{ .in = true } },
-        .wait_event_source => op.source.native.waitReadiness(),
-        .notify_event_source => op.source.native.notifyReadiness(),
-        .close_event_source => .{},
-    };
-}
-
-pub inline fn closeReadiness(op: anytype, readiness: Readiness) void {
-    @setEvalBranchQuota(1_000_000);
-    switch (comptime Operation.tagFromPayloadType(@TypeOf(op.*))) {
-        .child_exit => {
-            if (readiness.fd == invalid_fd) unreachable;
-            var watcher: ChildWatcher = .{ .id = op.child, .fd = readiness.fd };
-            watcher.deinit();
-        },
-        inline else => {},
-    }
-}
 
 pub const invalid_fd = switch (builtin.target.os.tag) {
     .windows => std.os.windows.INVALID_HANDLE_VALUE,

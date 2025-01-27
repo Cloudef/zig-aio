@@ -1,7 +1,10 @@
 const builtin = @import("builtin");
 const std = @import("std");
-const aio = @import("aio");
 const coro = @import("coro");
+
+pub const std_options: std.Options = .{
+    .log_level = .debug,
+};
 
 // Just for fun, try returning a error from one of these tasks
 
@@ -56,7 +59,7 @@ fn loader(completed: *std.atomic.Value(u32), max: *const u32) !void {
     defer std.debug.print("                                     \r", .{});
     var idx: usize = 0;
     while (true) : (idx +%= 1) {
-        try coro.io.single(aio.Timeout{ .ns = 80 * std.time.ns_per_ms });
+        try coro.io.single(.timeout, .{ .ns = 80 * std.time.ns_per_ms });
         std.debug.print("  {s} {}/{} loading that juicy info\r", .{ frames[idx % frames.len], completed.load(.acquire), max.* });
     }
 }

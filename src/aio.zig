@@ -19,7 +19,7 @@ pub const Options = struct {
     /// If the operations are not supported by a main backend then a posix backend will be used instead.
     /// This is unused if posix backend is disabled, in that case you should check for a support manually.
     /// On windows this is never used, check for a support manually.
-    required_ops: []const type = @import("aio/ops.zig").Operation.Types,
+    required_ops: []const Operation = std.enums.values(Operation),
     /// Choose a posix fallback mode.
     /// Posix backend is never used on windows
     posix: enum { auto, force, disable } = @enumFromInt(@intFromEnum(build_options.posix)),
@@ -41,6 +41,16 @@ pub const posix = @import("aio/posix/posix.zig");
 /// Unfortunately there is no `ReOpenFile` equivalent for sockets.
 pub inline fn socket(domain: u32, socket_type: u32, protocol: u32) std.posix.SocketError!std.posix.socket_t {
     return posix.socket(domain, socket_type, protocol);
+}
+
+/// Initialize a single operation for a IO function
+pub fn op(comptime op_type: Operation, values: Operation.map.getAssertContains(op_type), comptime link: Link) struct {
+    op: @TypeOf(values),
+    comptime tag: Operation = op_type,
+    comptime link: Link = link,
+    pub const MAGIC_AIO_OP = 0xdeadbeef;
+} {
+    return .{ .op = values };
 }
 
 pub const Error = error{
@@ -80,17 +90,14 @@ pub const Dynamic = struct {
 
     /// Queue operations for future completion
     /// The call is atomic, if any of the operations fail to queue, then the given operations are reverted
-    pub inline fn queue(self: *@This(), operations: anytype, handler: anytype) Error!void {
-        sanityCheck(operations);
-        const ti = @typeInfo(@TypeOf(operations));
+    pub inline fn queue(self: *@This(), pairs: anytype, handler: anytype) Error!void {
+        const ti = @typeInfo(@TypeOf(pairs));
         if (comptime (ti == .@"struct" and ti.@"struct".is_tuple) or ti == .array) {
-            if (comptime operations.len == 0) @compileError("no work to be done");
-            var uops: [operations.len]Operation.Union = undefined;
-            inline for (operations, &uops) |op, *uop| uop.* = Operation.uopFromOp(op);
-            return self.io.queue(operations.len, &uops, handler);
+            sanityCheck(pairs);
+            return self.io.queue(pairs, handler);
         } else {
-            var uops: [1]Operation.Union = .{Operation.uopFromOp(operations)};
-            return self.io.queue(1, &uops, handler);
+            sanityCheck(.{pairs});
+            return self.io.queue(.{pairs}, handler);
         }
     }
 
@@ -120,65 +127,58 @@ pub const Dynamic = struct {
     }
 };
 
-// Unfortunately we can't do `@compileError` for these :(
-pub inline fn sanityCheck(operations: anytype) void {
-    if (builtin.mode != .Debug and builtin.mode != .ReleaseSafe) return;
-    const ti = @typeInfo(@TypeOf(operations));
+pub inline fn sanityCheck(pairs: anytype) void {
+    const ti = @typeInfo(@TypeOf(pairs));
     if (comptime (ti == .@"struct" and ti.@"struct".is_tuple) or ti == .array) {
-        if (comptime operations.len == 0) @compileError("no work to be done");
-        inline for (operations, 0..) |op, idx| {
-            if (@TypeOf(op) == LinkTimeout) {
-                if (idx == 0 or operations[idx - 1].link == .unlinked) {
-                    @panic("aio.LinkTimeout is not linked to any operation");
+        if (comptime pairs.len == 0) @compileError("no work to be done");
+        inline for (pairs, 0..) |pair, idx| {
+            if (!@hasDecl(@TypeOf(pair), "MAGIC_AIO_OP")) {
+                @compileError("Pass ops using the aio.op function");
+            }
+            if (comptime @TypeOf(pair.op) == LinkTimeout) {
+                if (comptime idx == 0) {
+                    @compileError("aio.LinkTimeout is not linked to any operation");
+                } else {
+                    inline for (pairs, 0..) |pair2, idx2| {
+                        if (idx2 == idx - 1 and pair2.link == .unlinked) {
+                            @compileError("aio.LinkTimeout is not linked to any operation");
+                        }
+                    }
                 }
             }
-            if (idx == operations.len - 1 and op.link != .unlinked) {
-                @panic("Last operation is not .unlinked");
+            if (comptime idx == pairs.len - 1 and pair.link != .unlinked) {
+                @compileError("Last operation is not .unlinked");
             }
         }
     } else {
-        const op = operations;
-        if (@TypeOf(op) == LinkTimeout) {
-            @panic("aio.LinkTimeout is not linked to any operation");
-        }
-        if (op.link != .unlinked) {
-            @panic("Last operation is not .unlinked");
-        }
+        @compileError("Expected a tuple or array of operations");
     }
 }
 
 /// Completes a list of operations immediately, blocks until complete
 /// For error handling you must check the `out_error` field in the operation
 /// Returns the number of errors occured, 0 if there were no errors
-pub inline fn complete(operations: anytype) Error!u16 {
-    sanityCheck(operations);
-    const ti = @typeInfo(@TypeOf(operations));
-    if (comptime (ti == .@"struct" and ti.@"struct".is_tuple) or ti == .array) {
-        if (comptime operations.len == 0) @compileError("no work to be done");
-        var uops: [operations.len]Operation.Union = undefined;
-        inline for (operations, &uops) |op, *uop| uop.* = Operation.uopFromOp(op);
-        return IO.immediate(operations.len, &uops);
-    } else {
-        @compileError("expected a tuple or array of operations");
-    }
+pub inline fn complete(pairs: anytype) Error!u16 {
+    sanityCheck(pairs);
+    return IO.immediate(pairs);
 }
 
 /// Completes a list of operations immediately, blocks until complete
 /// Returns `error.SomeOperationFailed` if any operation failed
-pub inline fn multi(operations: anytype) (Error || error{SomeOperationFailed})!void {
-    if (try complete(operations) > 0) return error.SomeOperationFailed;
+pub inline fn multi(pairs: anytype) (Error || error{SomeOperationFailed})!void {
+    if (try complete(pairs) > 0) return error.SomeOperationFailed;
 }
 
 /// Completes a single operation immediately, blocks until complete
-pub inline fn single(operation: anytype) (Error || @TypeOf(operation).Error)!void {
-    var op: @TypeOf(operation) = operation;
-    var err: @TypeOf(operation).Error = error.Success;
-    op.out_error = &err;
-    if (try complete(.{op}) > 0) return err;
+pub inline fn single(comptime op_type: Operation, values: Operation.map.getAssertContains(op_type)) (Error || @TypeOf(values).Error)!void {
+    var cpy: @TypeOf(values) = values;
+    var err: @TypeOf(values).Error = error.Success;
+    cpy.out_error = &err;
+    if (try complete(.{op(op_type, cpy, .unlinked)}) > 0) return err;
 }
 
 /// Checks if the current backend supports the operations
-pub fn isSupported(operations: []const type) bool {
+pub fn isSupported(operations: []const Operation) bool {
     return IO.isSupported(operations);
 }
 
@@ -223,6 +223,7 @@ const IO = switch (builtin.target.os.tag) {
 const ops = @import("aio/ops.zig");
 pub const Operation = ops.Operation;
 pub const Id = ops.Id;
+pub const Link = ops.Link;
 pub const Nop = ops.Nop;
 pub const Fsync = ops.Fsync;
 pub const Poll = ops.Poll;
@@ -258,17 +259,17 @@ test "shared outputs" {
     defer tmp.cleanup();
     var f = try tmp.dir.createFile("test", .{});
     defer f.close();
-    var id1: Id = @enumFromInt(69);
+    var id1: Id = .{ .slot = 69, .generation = 69 };
     var id2: Id = undefined;
     var id3: Id = undefined;
     var dynamic = try Dynamic.init(std.testing.allocator, 16);
     defer dynamic.deinit(std.testing.allocator);
     try dynamic.queue(.{
-        Fsync{ .file = f, .out_id = &id1 },
-        Fsync{ .file = f, .out_id = &id2 },
-        Fsync{ .file = f, .out_id = &id3 },
+        op(.fsync, .{ .file = f, .out_id = &id1 }, .unlinked),
+        op(.fsync, .{ .file = f, .out_id = &id2 }, .unlinked),
+        op(.fsync, .{ .file = f, .out_id = &id3 }, .unlinked),
     }, {});
-    try std.testing.expect(id1 != @as(Id, @enumFromInt(69)));
+    try std.testing.expect(id1 != Id{ .slot = 69, .generation = 69 });
     try std.testing.expect(id1 != id2);
     try std.testing.expect(id1 != id3);
     try std.testing.expect(id2 != id3);
@@ -279,38 +280,23 @@ test "shared outputs" {
     std.debug.print("{}\n", .{id1});
     std.debug.print("{}\n", .{id2});
     std.debug.print("{}\n", .{id3});
-    try std.testing.expect(id1 == .invalid);
-    try std.testing.expect(id2 == .invalid);
-    try std.testing.expect(id3 == .invalid);
 }
 
 test "Nop" {
     var dynamic = try Dynamic.init(std.testing.allocator, 16);
     defer dynamic.deinit(std.testing.allocator);
     const Handler = struct {
-        pub fn aio_queue(_: @This(), op: anytype, _: Id) void {
-            switch (comptime Operation.tagFromPayloadType(@TypeOf(op.*))) {
-                .nop => {
-                    std.debug.assert(69 == op.ident);
-                    std.debug.assert(42 == op.userdata);
-                },
-                else => @panic("nope"),
-            }
+        pub fn aio_queue(_: @This(), _: Id, userdata: usize) void {
+            std.debug.assert(42 == userdata);
         }
 
-        pub fn aio_complete(_: @This(), op: anytype, _: Id, failed: bool) void {
-            switch (comptime Operation.tagFromPayloadType(@TypeOf(op.*))) {
-                .nop => {
-                    std.debug.assert(!failed);
-                    std.debug.assert(69 == op.ident);
-                    std.debug.assert(42 == op.userdata);
-                },
-                else => @panic("nope"),
-            }
+        pub fn aio_complete(_: @This(), _: Id, userdata: usize, failed: bool) void {
+            std.debug.assert(42 == userdata);
+            std.debug.assert(!failed);
         }
     };
     const handler: Handler = .{};
-    try dynamic.queue(Nop{ .ident = 69, .userdata = 42 }, handler);
+    try dynamic.queue(op(.nop, .{ .ident = 69, .userdata = 42 }, .unlinked), handler);
     try std.testing.expectEqual(0, dynamic.completeAll(handler));
 }
 
@@ -319,7 +305,7 @@ test "Fsync" {
     defer tmp.cleanup();
     var f = try tmp.dir.createFile("test", .{});
     defer f.close();
-    try single(Fsync{ .file = f });
+    try single(.fsync, .{ .file = f });
 }
 
 test "Poll" {
@@ -329,9 +315,9 @@ test "Poll" {
     {
         var source = try EventSource.init();
         try multi(.{
-            NotifyEventSource{ .source = &source, .link = .soft },
-            Poll{ .fd = source.native.fd, .events = .{ .in = true }, .link = .soft },
-            CloseEventSource{ .source = &source },
+            op(.notify_event_source, .{ .source = &source }, .soft),
+            op(.poll, .{ .fd = source.native.fd, .events = .{ .in = true } }, .soft),
+            op(.close_event_source, .{ .source = &source }, .unlinked),
         });
     }
     var tmp = std.testing.tmpDir(.{});
@@ -339,12 +325,12 @@ test "Poll" {
     {
         var f = try tmp.dir.createFile("test", .{ .read = true });
         defer f.close();
-        try single(Poll{ .fd = f.handle, .events = .{ .out = true } });
+        try single(.poll, .{ .fd = f.handle, .events = .{ .out = true } });
     }
     {
         var f = try tmp.dir.createFile("test", .{ .read = true });
         defer f.close();
-        try single(Poll{ .fd = f.handle, .events = .{ .in = true, .out = true } });
+        try single(.poll, .{ .fd = f.handle, .events = .{ .in = true, .out = true } });
     }
 }
 
@@ -357,7 +343,7 @@ test "Read" {
         var f = try tmp.dir.createFile("test", .{ .read = true });
         defer f.close();
         try f.writeAll("foobar");
-        try single(Read{ .file = f, .buffer = &buf, .out_read = &len });
+        try single(.read, .{ .file = f, .buffer = &buf, .out_read = &len });
         try std.testing.expectEqual("foobar".len, len);
         try std.testing.expectEqualSlices(u8, "foobar", buf[0..len]);
     }
@@ -366,7 +352,7 @@ test "Read" {
         defer f.close();
         try std.testing.expectError(
             error.NotOpenForReading,
-            single(Read{ .file = f, .buffer = &buf, .out_read = &len }),
+            single(.read, .{ .file = f, .buffer = &buf, .out_read = &len }),
         );
     }
 }
@@ -379,7 +365,7 @@ test "Write" {
     {
         var f = try tmp.dir.createFile("test", .{ .read = true });
         defer f.close();
-        try single(Write{ .file = f, .buffer = "foobar", .out_written = &len });
+        try single(.write, .{ .file = f, .buffer = "foobar", .out_written = &len });
         try std.testing.expectEqual("foobar".len, len);
         try f.seekTo(0); // required for windows
         const read = try f.readAll(&buf);
@@ -390,7 +376,7 @@ test "Write" {
         defer f.close();
         try std.testing.expectError(
             error.NotOpenForWriting,
-            single(Write{ .file = f, .buffer = "foobar", .out_written = &len }),
+            single(.write, .{ .file = f, .buffer = "foobar", .out_written = &len }),
         );
     }
 }
@@ -401,11 +387,11 @@ test "OpenAt" {
     var f: std.fs.File = undefined;
     try std.testing.expectError(
         error.FileNotFound,
-        single(OpenAt{ .dir = tmp.dir, .path = "test", .out_file = &f }),
+        single(.open_at, .{ .dir = tmp.dir, .path = "test", .out_file = &f }),
     );
     var f2 = try tmp.dir.createFile("test", .{});
     f2.close();
-    try single(OpenAt{ .dir = tmp.dir, .path = "test", .out_file = &f });
+    try single(.open_at, .{ .dir = tmp.dir, .path = "test", .out_file = &f });
     f.close();
 }
 
@@ -413,19 +399,19 @@ test "CloseFile" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     const f = try tmp.dir.createFile("test", .{});
-    try single(CloseFile{ .file = f });
+    try single(.close_file, .{ .file = f });
 }
 
 test "CloseDir" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     const d = try tmp.dir.makeOpenPath("test", .{});
-    try single(CloseDir{ .dir = d });
+    try single(.close_dir, .{ .dir = d });
 }
 
 test "Timeout" {
     var timer = try std.time.Timer.start();
-    try single(Timeout{ .ns = 2 * std.time.ns_per_s });
+    try single(.timeout, .{ .ns = 2 * std.time.ns_per_s });
     try std.testing.expect(timer.lap() > std.time.ns_per_s);
 }
 
@@ -434,8 +420,8 @@ test "LinkTimeout" {
         var err: Timeout.Error = undefined;
         var err2: LinkTimeout.Error = undefined;
         const num_errors = try complete(.{
-            Timeout{ .ns = 2 * std.time.ns_per_s, .out_error = &err, .link = .soft },
-            LinkTimeout{ .ns = 1 * std.time.ns_per_s, .out_error = &err2 },
+            op(.timeout, .{ .ns = 2 * std.time.ns_per_s, .out_error = &err }, .soft),
+            op(.link_timeout, .{ .ns = 1 * std.time.ns_per_s, .out_error = &err2 }, .unlinked),
         });
         try std.testing.expectEqual(2, num_errors);
         try std.testing.expectEqual(error.Canceled, err);
@@ -443,32 +429,32 @@ test "LinkTimeout" {
     }
     {
         const num_errors = try complete(.{
-            Timeout{ .ns = 2 * std.time.ns_per_s, .link = .soft },
-            LinkTimeout{ .ns = 1 * std.time.ns_per_s, .link = .soft },
-            Timeout{ .ns = 1 * std.time.ns_per_s },
+            op(.timeout, .{ .ns = 2 * std.time.ns_per_s }, .soft),
+            op(.link_timeout, .{ .ns = 1 * std.time.ns_per_s }, .soft),
+            op(.timeout, .{ .ns = 1 * std.time.ns_per_s }, .unlinked),
         });
         try std.testing.expectEqual(3, num_errors);
     }
     {
         const num_errors = try complete(.{
-            Timeout{ .ns = 1 * std.time.ns_per_s, .link = .soft },
-            LinkTimeout{ .ns = 2 * std.time.ns_per_s },
+            op(.timeout, .{ .ns = 1 * std.time.ns_per_s }, .soft),
+            op(.link_timeout, .{ .ns = 2 * std.time.ns_per_s }, .unlinked),
         });
         try std.testing.expectEqual(0, num_errors);
     }
     {
         const num_errors = try complete(.{
-            Timeout{ .ns = 1 * std.time.ns_per_s, .link = .soft },
-            LinkTimeout{ .ns = 2 * std.time.ns_per_s, .link = .soft },
-            Timeout{ .ns = 1 * std.time.ns_per_s },
+            op(.timeout, .{ .ns = 1 * std.time.ns_per_s }, .soft),
+            op(.link_timeout, .{ .ns = 2 * std.time.ns_per_s }, .soft),
+            op(.timeout, .{ .ns = 1 * std.time.ns_per_s }, .unlinked),
         });
         try std.testing.expectEqual(1, num_errors);
     }
     {
         const num_errors = try complete(.{
-            Timeout{ .ns = 1 * std.time.ns_per_s, .link = .hard },
-            LinkTimeout{ .ns = 2 * std.time.ns_per_s, .link = .soft },
-            Timeout{ .ns = 1 * std.time.ns_per_s },
+            op(.timeout, .{ .ns = 1 * std.time.ns_per_s }, .hard),
+            op(.link_timeout, .{ .ns = 2 * std.time.ns_per_s }, .soft),
+            op(.timeout, .{ .ns = 1 * std.time.ns_per_s }, .unlinked),
         });
         try std.testing.expectEqual(0, num_errors);
     }
@@ -480,15 +466,30 @@ test "Cancel" {
     var timer = try std.time.Timer.start();
     var id: Id = undefined;
     var err: Timeout.Error = undefined;
-    try dynamic.queue(Timeout{ .ns = 2 * std.time.ns_per_s, .out_id = &id, .out_error = &err }, {});
+    try dynamic.queue(op(.timeout, .{
+        .ns = 2 * std.time.ns_per_s,
+        .out_id = &id,
+        .out_error = &err,
+    }, .unlinked), {});
     const tmp = try dynamic.complete(.nonblocking, {});
     try std.testing.expectEqual(0, tmp.num_errors);
     try std.testing.expectEqual(0, tmp.num_completed);
-    try dynamic.queue(Cancel{ .id = id }, {});
-    const num_errors = try dynamic.completeAll({});
-    try std.testing.expectEqual(1, num_errors);
-    try std.testing.expectEqual(error.Canceled, err);
-    try std.testing.expect(timer.lap() < std.time.ns_per_s);
+
+    {
+        try dynamic.queue(op(.cancel, .{ .id = id }, .unlinked), {});
+        const num_errors = try dynamic.completeAll({});
+        try std.testing.expectEqual(1, num_errors);
+        try std.testing.expectEqual(error.Canceled, err);
+        try std.testing.expect(timer.lap() < std.time.ns_per_s);
+    }
+
+    {
+        var cancel_err: Cancel.Error = undefined;
+        try dynamic.queue(op(.cancel, .{ .id = id, .out_error = &cancel_err }, .unlinked), {});
+        const num_errors = try dynamic.completeAll({});
+        try std.testing.expectEqual(1, num_errors);
+        try std.testing.expectEqual(error.NotFound, cancel_err);
+    }
 }
 
 test "RenameAt" {
@@ -496,11 +497,11 @@ test "RenameAt" {
     defer tmp.cleanup();
     try std.testing.expectError(
         error.FileNotFound,
-        single(RenameAt{ .old_dir = tmp.dir, .old_path = "test", .new_dir = tmp.dir, .new_path = "new_test" }),
+        single(.rename_at, .{ .old_dir = tmp.dir, .old_path = "test", .new_dir = tmp.dir, .new_path = "new_test" }),
     );
     var f1 = try tmp.dir.createFile("test", .{});
     f1.close();
-    try single(RenameAt{ .old_dir = tmp.dir, .old_path = "test", .new_dir = tmp.dir, .new_path = "new_test" });
+    try single(.rename_at, .{ .old_dir = tmp.dir, .old_path = "test", .new_dir = tmp.dir, .new_path = "new_test" });
     if (builtin.target.os.tag == .windows) {
         // TODO: wtf? (using openFile instead causes deadlock)
     } else {
@@ -509,7 +510,7 @@ test "RenameAt" {
     try std.testing.expectError(error.FileNotFound, tmp.dir.access("test", .{}));
     var f2 = try tmp.dir.createFile("test", .{});
     f2.close();
-    try std.testing.expectError(error.PathAlreadyExists, single(RenameAt{ .old_dir = tmp.dir, .old_path = "test", .new_dir = tmp.dir, .new_path = "new_test" }));
+    try std.testing.expectError(error.PathAlreadyExists, single(.rename_at, .{ .old_dir = tmp.dir, .old_path = "test", .new_dir = tmp.dir, .new_path = "new_test" }));
 }
 
 test "UnlinkAt" {
@@ -517,35 +518,35 @@ test "UnlinkAt" {
     defer tmp.cleanup();
     try std.testing.expectError(
         error.FileNotFound,
-        single(UnlinkAt{ .dir = tmp.dir, .path = "test" }),
+        single(.unlink_at, .{ .dir = tmp.dir, .path = "test" }),
     );
     var f = try tmp.dir.createFile("test", .{});
     f.close();
-    try single(UnlinkAt{ .dir = tmp.dir, .path = "test" });
+    try single(.unlink_at, .{ .dir = tmp.dir, .path = "test" });
     try std.testing.expectError(error.FileNotFound, tmp.dir.access("test", .{}));
 }
 
 test "MkDirAt" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    try single(MkDirAt{ .dir = tmp.dir, .path = "test" });
+    try single(.mkdir_at, .{ .dir = tmp.dir, .path = "test" });
     if (builtin.target.os.tag == .windows) {
         // TODO: need to update the directory handle on windows? weird shit
     } else {
         try tmp.dir.access("test", .{});
     }
-    try std.testing.expectError(error.PathAlreadyExists, single(MkDirAt{ .dir = tmp.dir, .path = "test" }));
+    try std.testing.expectError(error.PathAlreadyExists, single(.mkdir_at, .{ .dir = tmp.dir, .path = "test" }));
 }
 
 test "SymlinkAt" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     if (builtin.target.os.tag == .windows) {
-        const res = single(SymlinkAt{ .dir = tmp.dir, .target = "target", .link_path = "test" });
+        const res = single(.symlink_at, .{ .dir = tmp.dir, .target = "target", .link_path = "test" });
         // likely NTSTATUS=0xc00000bb (UNSUPPORTED)
         if (res == error.Unexpected) return error.SkipZigTest;
     } else {
-        try single(SymlinkAt{ .dir = tmp.dir, .target = "target", .link_path = "test" });
+        try single(.symlink_at, .{ .dir = tmp.dir, .target = "target", .link_path = "test" });
     }
     try std.testing.expectError(
         error.FileNotFound,
@@ -554,7 +555,7 @@ test "SymlinkAt" {
     var f = try tmp.dir.createFile("target", .{});
     f.close();
     try tmp.dir.access("test", .{});
-    try std.testing.expectError(error.PathAlreadyExists, single(SymlinkAt{ .dir = tmp.dir, .target = "target", .link_path = "test" }));
+    try std.testing.expectError(error.PathAlreadyExists, single(.symlink_at, .{ .dir = tmp.dir, .target = "target", .link_path = "test" }));
 }
 
 test "ChildExit" {
@@ -575,7 +576,7 @@ test "ChildExit" {
         else => return error.SkipZigTest,
     };
     var term: std.process.Child.Term = undefined;
-    try single(ChildExit{ .child = pid, .out_term = &term });
+    try single(.child_exit, .{ .child = pid, .out_term = &term });
     if (term == .Signal) {
         try std.testing.expectEqual(69, term.Signal);
     } else if (term == .Exited) {
@@ -591,21 +592,21 @@ test "Socket" {
     }
 
     var sock: std.posix.socket_t = undefined;
-    try single(Socket{
+    try single(.socket, .{
         .domain = std.posix.AF.INET,
         .flags = std.posix.SOCK.STREAM | std.posix.SOCK.CLOEXEC,
         .protocol = std.posix.IPPROTO.TCP,
         .out_socket = &sock,
     });
-    try single(CloseSocket{ .socket = sock });
+    try single(.close_socket, .{ .socket = sock });
 }
 
 test "EventSource" {
     var source = try EventSource.init();
     try multi(.{
-        NotifyEventSource{ .source = &source },
-        WaitEventSource{ .source = &source, .link = .hard },
-        CloseEventSource{ .source = &source },
+        op(.notify_event_source, .{ .source = &source }, .unlinked),
+        op(.wait_event_source, .{ .source = &source }, .hard),
+        op(.close_event_source, .{ .source = &source }, .unlinked),
     });
 }
 

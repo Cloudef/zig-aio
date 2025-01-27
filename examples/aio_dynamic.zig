@@ -18,16 +18,16 @@ pub fn main() !void {
     defer work.deinit(allocator);
 
     try work.queue(.{
-        aio.Read{
+        aio.op(.read, .{
             .file = f,
             .buffer = &buf,
             .out_read = &len,
-        },
-        aio.Read{
+        }, .unlinked),
+        aio.op(.read, .{
             .file = f2,
             .buffer = &buf2,
             .out_read = &len2,
-        },
+        }, .unlinked),
     }, {});
 
     var num_work: u16 = 2;

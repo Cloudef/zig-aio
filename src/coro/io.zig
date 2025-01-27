@@ -16,34 +16,25 @@ pub const OperationContext = struct {
 
 pub const Error = aio.Error || error{Canceled};
 
-pub fn do(operations: anytype, status: Frame.Status) Error!u16 {
-    aio.sanityCheck(operations);
+pub inline fn do(pairs: anytype, status: Frame.Status) Error!u16 {
+    aio.sanityCheck(pairs);
+
     // .io_cancel status means the io operation must complete and cannot be canceled
     // that is, the frame is put in `io_cancel` state rather than normal `io` state.
     std.debug.assert(status == .io or status == .io_cancel);
     if (Frame.current()) |frame| {
         if (status != .io_cancel and frame.canceled) return error.Canceled;
 
-        var whole: WholeContext = .{ .num_operations = operations.len, .frame = frame };
-        var ctx_list: [operations.len]OperationContext = undefined;
+        var whole: WholeContext = .{ .num_operations = pairs.len, .frame = frame };
+        var ctx_list: [pairs.len]OperationContext = undefined;
 
-        const ti = @typeInfo(@TypeOf(operations));
-        if (comptime (ti == .@"struct" and ti.@"struct".is_tuple) or ti == .array) {
-            if (comptime operations.len == 0) @compileError("no work to be done");
-            var uops: [operations.len]aio.Operation.Union = undefined;
-            inline for (operations, &uops, &ctx_list) |op, *uop, *ctx| {
-                ctx.* = .{ .whole = &whole };
-                var cpy = op;
-                cpy.userdata = @intFromPtr(ctx);
-                uop.* = aio.Operation.uopFromOp(cpy);
-            }
-            try frame.scheduler.io.io.queue(operations.len, &uops, frame.scheduler);
-        } else {
-            var cpy = operations;
-            cpy.userdata = @intFromPtr(&ctx_list[0]);
-            var uops: [1]aio.Operation.Union = .{aio.Operation.uopFromOp(cpy)};
-            try frame.scheduler.io.io.queue(1, &uops, frame.scheduler);
+        var cpy_pairs: @TypeOf(pairs) = undefined;
+        inline for (pairs, &cpy_pairs, &ctx_list) |pair, *cpy, *ctx| {
+            ctx.* = .{ .whole = &whole };
+            cpy.* = pair;
+            cpy.op.userdata = @intFromPtr(ctx);
         }
+        try frame.scheduler.io.queue(cpy_pairs, frame.scheduler);
 
         // wait until scheduler actually submits our work
         Frame.yield(status);
@@ -57,10 +48,10 @@ pub fn do(operations: anytype, status: Frame.Status) Error!u16 {
             inline for (&ctx_list) |*ctx| {
                 if (!ctx.completed and ctx.id != null) {
                     // reuse the same ctx, we don't care about completation status anymore
-                    try frame.scheduler.io.queue(
-                        aio.Cancel{ .id = ctx.id.?, .userdata = @intFromPtr(ctx) },
+                    frame.scheduler.io.queue(
+                        aio.op(.cancel, .{ .id = ctx.id.?, .userdata = @intFromPtr(ctx) }, .unlinked),
                         frame.scheduler,
-                    );
+                    ) catch @panic("coro: could not safely cancel io");
                     num_cancels += 1;
                 }
             }
@@ -76,6 +67,6 @@ pub fn do(operations: anytype, status: Frame.Status) Error!u16 {
 
         return whole.num_errors;
     } else {
-        return aio.complete(operations);
+        return aio.complete(pairs);
     }
 }

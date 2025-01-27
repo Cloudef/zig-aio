@@ -13,7 +13,7 @@ const PING_PONG_COUNT = 500_000;
 
 fn server(startup: *coro.ResetEvent) !void {
     var socket: std.posix.socket_t = undefined;
-    try coro.io.single(aio.Socket{
+    try coro.io.single(.socket, .{
         .domain = std.posix.AF.INET,
         .flags = std.posix.SOCK.STREAM | std.posix.SOCK.CLOEXEC,
         .protocol = std.posix.IPPROTO.TCP,
@@ -31,25 +31,25 @@ fn server(startup: *coro.ResetEvent) !void {
     startup.set();
 
     var client_sock: std.posix.socket_t = undefined;
-    try coro.io.single(aio.Accept{ .socket = socket, .out_socket = &client_sock });
+    try coro.io.single(.accept, .{ .socket = socket, .out_socket = &client_sock });
 
     var buf: [1024]u8 = undefined;
     var len: usize = 0;
     while (true) {
-        try coro.io.single(aio.Recv{ .socket = client_sock, .buffer = &buf, .out_read = &len });
+        try coro.io.single(.recv, .{ .socket = client_sock, .buffer = &buf, .out_read = &len });
         if (len == 0) break;
-        try coro.io.single(aio.Send{ .socket = client_sock, .buffer = buf[0..len] });
+        try coro.io.single(.send, .{ .socket = client_sock, .buffer = buf[0..len] });
     }
 
     try coro.io.multi(.{
-        aio.CloseSocket{ .socket = client_sock, .link = .hard },
-        aio.CloseSocket{ .socket = socket },
+        aio.op(.close_socket, .{ .socket = client_sock }, .hard),
+        aio.op(.close_socket, .{ .socket = socket }, .unlinked),
     });
 }
 
 fn client(startup: *coro.ResetEvent) !void {
     var socket: std.posix.socket_t = undefined;
-    try coro.io.single(aio.Socket{
+    try coro.io.single(.socket, .{
         .domain = std.posix.AF.INET,
         .flags = std.posix.SOCK.STREAM | std.posix.SOCK.CLOEXEC,
         .protocol = std.posix.IPPROTO.TCP,
@@ -59,7 +59,7 @@ fn client(startup: *coro.ResetEvent) !void {
     try startup.wait();
 
     const address = std.net.Address.initIp4(.{ 127, 0, 0, 1 }, 3131);
-    try coro.io.single(aio.Connect{
+    try coro.io.single(.connect, .{
         .socket = socket,
         .addr = &address.any,
         .addrlen = address.getOsSockLen(),
@@ -74,8 +74,8 @@ fn client(startup: *coro.ResetEvent) !void {
         var buf: [1024]u8 = undefined;
         var len: usize = 0;
         try coro.io.multi(.{
-            aio.Send{ .socket = socket, .buffer = "PING", .link = .hard },
-            aio.Recv{ .socket = socket, .buffer = &buf, .out_read = &len },
+            aio.op(.send, .{ .socket = socket, .buffer = "PING" }, .soft),
+            aio.op(.recv, .{ .socket = socket, .buffer = &buf, .out_read = &len }, .unlinked),
         });
 
         state += len;
@@ -95,8 +95,8 @@ fn client(startup: *coro.ResetEvent) !void {
     log.info("{d:.2} seconds total", .{elapsed / 1e9});
 
     try coro.io.multi(.{
-        aio.Send{ .socket = socket, .buffer = "", .link = .hard },
-        aio.CloseSocket{ .socket = socket },
+        aio.op(.send, .{ .socket = socket, .buffer = "" }, .hard),
+        aio.op(.close_socket, .{ .socket = socket }, .unlinked),
     });
 }
 

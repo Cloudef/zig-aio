@@ -31,7 +31,7 @@ pub fn logErr(comptime format: []const u8, args: anytype) void {
 }
 
 pub fn delay(ns: u128) !void {
-    try coro.io.single(aio.Timeout{ .ns = ns });
+    try coro.io.single(.timeout, .{ .ns = ns });
 }
 
 pub fn main() !void {

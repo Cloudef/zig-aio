@@ -43,7 +43,7 @@ pub fn checked(ret: anytype) void {
 // Light wrapper, mainly to link EventSources to this
 pub const Iocp = struct {
     pub const Key = packed struct(usize) {
-        type: enum(u16) {
+        type: enum(u8) {
             nop,
             shutdown,
             event_source,
@@ -57,8 +57,8 @@ pub const Iocp = struct {
         // > the file handle specified in the FileHandle parameter at the time of association with an I/O completion port.
         // > This completion key should be unique for each file handle, and it accompanies the file handle throughout the
         // > internal completion queuing process.
-        id: u16,
-        _: @Type(.{ .int = .{ .bits = @bitSizeOf(usize) - @bitSizeOf(u16) * 2, .signedness = .unsigned } }) = undefined,
+        id: ops.Id,
+        _: std.meta.Int(.unsigned, @bitSizeOf(usize) - @bitSizeOf(u8) - @bitSizeOf(ops.Id)) = undefined,
     };
 
     port: HANDLE,
@@ -85,7 +85,7 @@ pub const Iocp = struct {
         self.* = undefined;
     }
 
-    pub fn associateHandle(self: *@This(), _: u16, handle: HANDLE) !void {
+    pub fn associateHandle(self: *@This(), _: ops.Id, handle: HANDLE) !void {
         const fs = win32.storage.file_system;
         const key: Key = .{ .type = .overlapped, .id = undefined };
         _ = try wtry(fs.SetFileCompletionNotificationModes(handle, FILE_SKIP_COMPLETION_PORT_ON_SUCCESS));
@@ -97,13 +97,20 @@ pub const Iocp = struct {
         }
     }
 
-    pub fn associateSocket(self: *@This(), id: u16, sock: std.posix.socket_t) !void {
+    pub fn associateSocket(self: *@This(), id: ops.Id, sock: std.posix.socket_t) !void {
         return self.associateHandle(id, @ptrCast(sock));
     }
 };
 
 pub const EventSource = struct {
-    pub const WaitList = std.SinglyLinkedList(Link(ops.WaitEventSource.WindowsContext, "link", .single));
+    pub const OperationContext = struct {
+        id: ops.Id,
+        iocp: *Iocp,
+        link: WaitList.Node = .{ .data = .{} },
+    };
+
+    pub const WaitList = std.SinglyLinkedList(Link(OperationContext, "link", .single));
+
     fd: HANDLE,
     counter: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
     waiters: WaitList = .{},

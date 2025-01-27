@@ -24,13 +24,13 @@ The call to queue is atomic, if the call fails, none of the operations will be a
 ```zig
 // Multiple operations
 try work.queue(.{
-    aio.Read{...},
-    aio.Write{...},
-    aio.Fsync{...},
+    aio.op(.read, .{...}, .soft),
+    aio.op(.write, .{...}, .soft),
+    aio.op(.fsync, .{...}, .unlinked),
 }, {});
 
 // Single operation
-try work.queue(aio.Timeout{...}, {});
+try work.queue(aio.op(.timeout, .{...}, .unlinked), {});
 ```
 
 ### Completing operations
@@ -60,9 +60,9 @@ const num_errors = try work.completeAll({});
 It is possible to pass `handler` to some `aio.Dynamic` functions. If done so, the `handler` can implement the following funcitons:
 ```zig
 // Called whenever operation is queued in the Dynamic instance
-aio_queue(self: *@This(), op: anytype, id: aio.Id) void
+aio_queue(self: *@This(), id: aio.Id, userdata: usize) void
 // Called whenever operation completes
-aio_complete(self: *@This(), op: anytype, id: aio.Id, failed: bool) void
+aio_complete(self: *@This(), id: aio.Id, userdata: usize, failed: bool) void
 ```
 This is for example used by the `coro.Scheduler` to link IO operations into tasks.
 

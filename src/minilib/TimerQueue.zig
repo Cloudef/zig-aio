@@ -99,14 +99,15 @@ fn Queue(comptime name: []const u8, Impl: type) type {
             if (self.thread == null) try self.start();
         }
 
-        pub fn disarm(self: *@This(), user_data: usize) void {
+        pub fn disarm(self: *@This(), user_data: usize) error{NotFound}!void {
             self.mutex.lock();
             defer self.mutex.unlock();
             for (self.queue.items, 0..) |*to, idx| {
                 if (to.user_data != user_data) continue;
                 _ = self.queue.removeIndex(idx);
-                break;
+                return;
             }
+            return error.NotFound;
         }
 
         fn start(self: *@This()) !void {
@@ -341,12 +342,12 @@ const ForeignTimerQueue = struct {
         };
     }
 
-    pub fn disarm(self: *@This(), clock: Clock, user_data: usize) void {
-        switch (clock) {
+    pub fn disarm(self: *@This(), clock: Clock, user_data: usize) error{NotFound}!void {
+        return switch (clock) {
             .monotonic => self.mq.disarm(user_data),
             .boottime => self.bq.disarm(user_data),
             .realtime => self.rq.disarm(user_data),
-        }
+        };
     }
 };
 
@@ -439,18 +440,20 @@ const LinuxTimerQueue = struct {
         if (self.thread == null) try self.start();
     }
 
-    fn disarmInternal(self: *@This(), _: Clock, user_data: usize, lock: bool) void {
+    fn disarmInternal(self: *@This(), _: Clock, user_data: usize, lock: bool) error{NotFound}!void {
         if (lock) self.mutex.lock();
         defer if (lock) self.mutex.unlock();
         if (self.fds.fetchRemove(user_data)) |e| {
             var ev: std.os.linux.epoll_event = .{ .data = .{ .ptr = user_data }, .events = std.os.linux.EPOLL.IN };
             std.posix.epoll_ctl(self.epoll, std.os.linux.EPOLL.CTL_DEL, e.value.fd, &ev) catch unreachable;
             std.posix.close(e.value.fd);
+        } else {
+            return error.NotFound;
         }
     }
 
-    pub fn disarm(self: *@This(), _: Clock, user_data: usize) void {
-        self.disarmInternal(undefined, user_data, true);
+    pub fn disarm(self: *@This(), _: Clock, user_data: usize) error{NotFound}!void {
+        return self.disarmInternal(undefined, user_data, true);
     }
 
     fn start(self: *@This()) !void {
@@ -475,7 +478,7 @@ const LinuxTimerQueue = struct {
                     const expired: LinuxTimeout = blk: {
                         const expired = v.*;
                         if (v.expirations == 1) {
-                            self.disarmInternal(undefined, ev.data.ptr, false);
+                            self.disarmInternal(undefined, ev.data.ptr, false) catch unreachable;
                         } else {
                             v.expirations -|= 1;
                             var trash: usize = undefined;
@@ -528,6 +531,6 @@ pub fn schedule(self: *@This(), clock: Clock, ns: u128, user_data: usize, opts: 
     return self.impl.schedule(clock, ns, user_data, opts);
 }
 
-pub fn disarm(self: *@This(), clock: Clock, user_data: usize) void {
+pub fn disarm(self: *@This(), clock: Clock, user_data: usize) error{NotFound}!void {
     return self.impl.disarm(clock, user_data);
 }

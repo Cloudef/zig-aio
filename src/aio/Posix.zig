@@ -6,7 +6,7 @@ const Operation = @import("ops.zig").Operation;
 const FixedArrayList = @import("minilib").FixedArrayList;
 const TimerQueue = @import("minilib").TimerQueue;
 const DynamicThreadPool = @import("minilib").DynamicThreadPool;
-const Uringlator = @import("Uringlator.zig");
+const Uringlator = @import("uringlator.zig").Uringlator(PosixOperation);
 
 // This tries to emulate io_uring functionality.
 // If something does not match how it works on io_uring on linux, it should be change to match.
@@ -26,14 +26,18 @@ comptime {
 
 pub const EventSource = posix.EventSource;
 
+const PosixOperation = struct {
+    readiness: posix.Readiness,
+};
+
 const needs_kludge = switch (builtin.target.os.tag) {
     .macos, .ios, .watchos, .visionos, .tvos => true,
     else => false,
 };
 
 tqueue: TimerQueue, // timer queue implementing linux -like timers
-readiness: []posix.Readiness, // readiness fd that gets polled before we perform the operation
 pfd: FixedArrayList(std.posix.pollfd, u32), // current fds that we must poll for wakeup
+pid: FixedArrayList(aio.Id, u16), // maps pfd to id
 posix_pool: DynamicThreadPool, // thread pool for performing operations, not all operations will be performed here
 kludge_pool: if (needs_kludge) DynamicThreadPool else void, // thread pool for performing operations which can't be polled for readiness
 pending: std.DynamicBitSetUnmanaged, // operation is pending on readiness fd (poll)
@@ -41,17 +45,17 @@ source: EventSource, // when threaded operations finish, they signal it using th
 signaled: bool = false, // some operations have signaled immediately, optimization to avoid running poll when not required
 uringlator: Uringlator,
 
-pub fn isSupported(_: []const type) bool {
+pub fn isSupported(_: []const Operation) bool {
     return true; // very optimistic :D
 }
 
 pub fn init(allocator: std.mem.Allocator, n: u16) aio.Error!@This() {
     var tqueue = try TimerQueue.init(allocator);
     errdefer tqueue.deinit();
-    const readiness = try allocator.alloc(posix.Readiness, n);
-    errdefer allocator.free(readiness);
     var pfd = try FixedArrayList(std.posix.pollfd, u32).init(allocator, n + 1);
     errdefer pfd.deinit(allocator);
+    var pid = try FixedArrayList(aio.Id, u16).init(allocator, n);
+    errdefer pid.deinit(allocator);
     var posix_pool = DynamicThreadPool.init(allocator, .{
         .max_threads = aio.options.max_threads,
         .name = "aio:POSIX",
@@ -82,8 +86,8 @@ pub fn init(allocator: std.mem.Allocator, n: u16) aio.Error!@This() {
     pfd.add(.{ .fd = source.fd, .events = std.posix.POLL.IN, .revents = 0 }) catch unreachable;
     return .{
         .tqueue = tqueue,
-        .readiness = readiness,
         .pfd = pfd,
+        .pid = pid,
         .posix_pool = posix_pool,
         .kludge_pool = kludge_pool,
         .pending = pending_set,
@@ -97,16 +101,16 @@ pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
     self.tqueue.deinit();
     self.posix_pool.deinit();
     if (needs_kludge) self.kludge_pool.deinit();
-    allocator.free(self.readiness);
     self.pfd.deinit(allocator);
+    self.pid.deinit(allocator);
     self.pending.deinit(allocator);
     self.source.deinit();
     self.uringlator.deinit(allocator);
     self.* = undefined;
 }
 
-pub fn queue(self: *@This(), comptime len: u16, uops: []Operation.Union, handler: anytype) aio.Error!void {
-    try self.uringlator.queue(len, uops, self, handler);
+pub fn queue(self: *@This(), pairs: anytype, handler: anytype) aio.Error!void {
+    try self.uringlator.queue(pairs, self, handler);
 }
 
 fn hasField(T: type, comptime name: []const u8) bool {
@@ -140,7 +144,7 @@ pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode, handler: anyty
         // The pros is that we don't have to iterate the self.pfd.items
         // However, the self.pfd.items changes frequently so we have to keep re-registering fds anyways
         // Poll is pretty much anywhere, so poll it is. This is a posix backend anyways.
-        const n = posix.poll(self.pfd.items[0..self.pfd.len], if (mode == .blocking) -1 else 0) catch |err| return switch (err) {
+        const n = posix.poll(self.pfd.slice(), if (mode == .blocking) -1 else 0) catch |err| return switch (err) {
             error.NetworkSubsystemFailed => unreachable,
             else => |e| e,
         };
@@ -151,7 +155,7 @@ pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode, handler: anyty
 
         var off: usize = 0;
         again: while (off < self.pfd.len) {
-            for (self.pfd.items[off..self.pfd.len], 0..) |*pfd, pid| {
+            for (self.pfd.constSlice(), 0..) |*pfd, pid| {
                 off = pid;
                 if (pfd.revents == 0) continue;
                 if (pfd.fd == self.source.fd) {
@@ -161,46 +165,43 @@ pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode, handler: anyty
                     self.source.waitNonBlocking() catch {};
                     res = self.uringlator.complete(self, handler);
                 } else {
-                    var iter = self.pending.iterator(.{});
-                    while (iter.next()) |id| {
-                        if (pfd.fd != self.readiness[id].fd) continue;
-                        if (pfd.events != readinessToPollEvents(self.readiness[id])) continue;
-                        defer {
-                            // do not poll this fd again
-                            self.pfd.swapRemove(@truncate(pid));
-                            self.pending.unset(id);
-                        }
-                        if (pfd.revents & std.posix.POLL.ERR != 0 or pfd.revents & std.posix.POLL.NVAL != 0) {
-                            if (pfd.revents & std.posix.POLL.ERR != 0) {
-                                const uop = &self.uringlator.ops.nodes[id].used;
-                                switch (uop.*) {
-                                    inline else => |*op| {
-                                        if (hasField(@TypeOf(op.*).Error, "BrokenPipe")) {
-                                            self.uringlator.finish(self, @intCast(id), error.BrokenPipe, .thread_unsafe);
-                                        } else {
-                                            self.uringlator.finish(self, @intCast(id), error.Unexpected, .thread_unsafe);
-                                        }
-                                        break :again;
-                                    },
-                                }
-                            } else {
-                                self.uringlator.finish(self, @intCast(id), error.Unexpected, .thread_unsafe);
-                                break :again;
-                            }
-                        }
-                        // start it for real this time
-                        switch (self.uringlator.ops.nodes[id].used) {
-                            inline else => |*op| {
-                                if (self.uringlator.next[id] != id) {
-                                    Uringlator.debug("ready: {}: {} => {}", .{ id, comptime Operation.tagFromPayloadType(@TypeOf(op.*)), self.uringlator.next[id] });
-                                } else {
-                                    Uringlator.debug("ready: {}: {}", .{ id, comptime Operation.tagFromPayloadType(@TypeOf(op.*)) });
-                                }
-                                try self.uringlator_start(op, @intCast(id));
-                            },
-                        }
-                        break :again;
+                    std.debug.assert(pid > 0);
+                    const id = self.pid.constSlice()[pid - 1];
+                    const readiness = self.uringlator.ops.getOne(.readiness, id);
+                    if (pfd.fd != readiness.fd) continue;
+                    if (pfd.events != readinessToPollEvents(readiness)) continue;
+                    defer {
+                        // do not poll this fd again
+                        self.pfd.swapRemove(@truncate(pid));
+                        self.pid.swapRemove(@truncate(pid - 1));
+                        self.pending.unset(id.slot);
                     }
+                    const op_type = self.uringlator.ops.getOne(.type, id);
+                    if (pfd.revents & std.posix.POLL.ERR != 0 or pfd.revents & std.posix.POLL.NVAL != 0) {
+                        if (pfd.revents & std.posix.POLL.ERR != 0) {
+                            switch (op_type) {
+                                inline else => |tag| {
+                                    if (hasField(Operation.map.getAssertContains(tag).Error, "BrokenPipe")) {
+                                        self.uringlator.finish(self, id, error.BrokenPipe, .thread_unsafe);
+                                    } else {
+                                        self.uringlator.finish(self, id, error.Unexpected, .thread_unsafe);
+                                    }
+                                    break :again;
+                                },
+                            }
+                        } else {
+                            self.uringlator.finish(self, id, error.Unexpected, .thread_unsafe);
+                            break :again;
+                        }
+                    }
+                    // start it for real this time
+                    if (self.uringlator.ops.getOne(.next, id) != id) {
+                        Uringlator.debug("ready: {}: {} => {}", .{ id, op_type, self.uringlator.ops.getOne(.next, id) });
+                    } else {
+                        Uringlator.debug("ready: {}: {}", .{ id, op_type });
+                    }
+                    try self.uringlator_start(id, op_type);
+                    break :again;
                 }
             }
             break;
@@ -212,7 +213,7 @@ pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode, handler: anyty
     return res;
 }
 
-pub fn immediate(comptime len: u16, uops: []Operation.Union) aio.Error!u16 {
+pub fn immediate(pairs: anytype) aio.Error!u16 {
     const Static = struct {
         threadlocal var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     };
@@ -220,10 +221,10 @@ pub fn immediate(comptime len: u16, uops: []Operation.Union) aio.Error!u16 {
     defer if (builtin.target.os.tag != .wasi) {
         _ = Static.arena.reset(.retain_capacity);
     };
-    var wrk = try init(allocator, len);
+    var wrk = try init(allocator, pairs.len);
     defer wrk.deinit(allocator);
-    try wrk.queue(len, uops, {});
-    var n: u16 = len;
+    try wrk.queue(pairs, {});
+    var n: u16 = pairs.len;
     var num_errors: u16 = 0;
     while (n > 0) {
         const res = try wrk.complete(.blocking, {});
@@ -233,10 +234,10 @@ pub fn immediate(comptime len: u16, uops: []Operation.Union) aio.Error!u16 {
     return num_errors;
 }
 
-fn blockingPosixExecutor(self: *@This(), op: anytype, id: u16, readiness: posix.Readiness, comptime safety: Uringlator.Safety) void {
+fn blockingPosixExecutor(self: *@This(), comptime op_type: Operation, op: Operation.map.getAssertContains(op_type), id: aio.Id, readiness: posix.Readiness, comptime safety: Uringlator.Safety) void {
     var failure: Operation.Error = error.Success;
     while (true) {
-        posix.perform(op, readiness) catch |err| {
+        posix.perform(op_type, op, readiness) catch |err| {
             if (err == error.WouldBlock) continue;
             failure = err;
         };
@@ -245,16 +246,16 @@ fn blockingPosixExecutor(self: *@This(), op: anytype, id: u16, readiness: posix.
     self.uringlator.finish(self, id, failure, safety);
 }
 
-fn nonBlockingPosixExecutor(self: *@This(), op: anytype, id: u16, readiness: posix.Readiness) error{WouldBlock}!void {
+fn nonBlockingPosixExecutor(self: *@This(), comptime op_type: Operation, op: Operation.map.getAssertContains(op_type), id: aio.Id, readiness: posix.Readiness) error{WouldBlock}!void {
     var failure: Operation.Error = error.Success;
-    posix.perform(op, readiness) catch |err| {
+    posix.perform(op_type, op, readiness) catch |err| {
         if (err == error.WouldBlock) return error.WouldBlock;
         failure = err;
     };
     self.uringlator.finish(self, id, failure, .thread_unsafe);
 }
 
-fn nonBlockingPosixExecutorFcntl(self: *@This(), op: anytype, id: u16, readiness: posix.Readiness) error{ WouldBlock, FcntlFailed }!void {
+fn nonBlockingPosixExecutorFcntl(self: *@This(), comptime op_type: Operation, op: Operation.map.getAssertContains(op_type), id: aio.Id, readiness: posix.Readiness) error{ WouldBlock, FcntlFailed }!void {
     const NONBLOCK = 1 << @bitOffsetOf(std.posix.O, "NONBLOCK");
     const old: struct { usize, bool } = blk: {
         if (readiness.fd != posix.invalid_fd) {
@@ -267,7 +268,7 @@ fn nonBlockingPosixExecutorFcntl(self: *@This(), op: anytype, id: u16, readiness
     };
 
     var failure: Operation.Error = error.Success;
-    posix.perform(op, readiness) catch |err| {
+    posix.perform(op_type, op, readiness) catch |err| {
         if (err == error.WouldBlock) return error.WouldBlock;
         failure = err;
     };
@@ -278,42 +279,81 @@ fn nonBlockingPosixExecutorFcntl(self: *@This(), op: anytype, id: u16, readiness
 
 fn onThreadTimeout(ctx: *anyopaque, user_data: usize) void {
     var self: *@This() = @ptrCast(@alignCast(ctx));
-    self.uringlator.finish(self, @intCast(user_data), error.Success, .thread_safe);
+    self.uringlator.finish(self, aio.Id.init(user_data), error.Success, .thread_safe);
 }
 
-pub fn uringlator_queue(self: *@This(), op: anytype, id: u16) aio.Error!void {
-    self.readiness[id] = posix.openReadiness(op) catch |err| {
-        self.pending.set(id);
+fn openReadiness(comptime op_type: Operation, op: Operation.map.getAssertContains(op_type)) !posix.Readiness {
+    return switch (op_type) {
+        .nop => .{},
+        .fsync => .{},
+        .poll => .{ .fd = op.fd, .events = op.events },
+        .write => .{ .fd = op.file.handle, .events = .{ .out = true } },
+        .read_tty => switch (builtin.target.os.tag) {
+            .macos, .ios, .watchos, .visionos, .tvos => .{},
+            else => .{ .fd = op.tty.handle, .events = .{ .in = true } },
+        },
+        .read => .{ .fd = op.file.handle, .events = .{ .in = true } },
+        .accept, .recv, .recv_msg => .{ .fd = op.socket, .events = .{ .in = true } },
+        .socket, .connect, .shutdown => .{},
+        .send, .send_msg => .{ .fd = op.socket, .events = .{ .out = true } },
+        .open_at, .close_file, .close_dir, .close_socket => .{},
+        .timeout, .link_timeout => .{},
+        .cancel, .rename_at, .unlink_at, .mkdir_at, .symlink_at => .{},
+        .child_exit => .{ .fd = (try posix.ChildWatcher.init(op.child)).fd, .events = .{ .in = true } },
+        .wait_event_source => op.source.native.waitReadiness(),
+        .notify_event_source => op.source.native.notifyReadiness(),
+        .close_event_source => .{},
+    };
+}
+
+pub fn uringlator_queue(self: *@This(), id: aio.Id, comptime op_type: Operation, op: Operation.map.getAssertContains(op_type)) aio.Error!PosixOperation {
+    const readiness = openReadiness(op_type, op) catch |err| {
+        self.pending.set(id.slot);
         self.uringlator.finish(self, id, err, .thread_unsafe);
-        return;
+        return .{ .readiness = .{} };
     };
 
-    if (comptime @TypeOf(op.*) == aio.Poll) {
-        self.pending.unset(id);
+    if (op_type == .poll) {
+        self.pending.unset(id.slot);
     } else {
-        if (@as(i16, @bitCast(self.readiness[id].events)) == 0) {
-            self.pending.set(id);
+        if (@as(i16, @bitCast(readiness.events)) == 0) {
+            self.pending.set(id.slot);
         } else {
-            self.pending.unset(id);
+            self.pending.unset(id.slot);
         }
     }
+
+    return .{ .readiness = readiness };
 }
 
-pub fn uringlator_dequeue(self: *@This(), op: anytype, id: u16) void {
-    posix.closeReadiness(op, self.readiness[id]);
-    self.pending.unset(id);
+pub fn uringlator_dequeue(self: *@This(), id: aio.Id, comptime op_type: Operation, op: Operation.map.getAssertContains(op_type)) void {
+    switch (op_type) {
+        .child_exit => {
+            const readiness = self.uringlator.ops.getOne(.readiness, id);
+            var watcher: posix.ChildWatcher = .{ .id = op.child, .fd = readiness.fd };
+            watcher.deinit();
+        },
+        else => {},
+    }
+    self.pending.unset(id.slot);
 }
 
-pub fn uringlator_start(self: *@This(), op: anytype, id: u16) !void {
-    if (self.pending.isSet(id)) {
-        switch (comptime Operation.tagFromPayloadType(@TypeOf(op.*))) {
+pub fn uringlator_start(self: *@This(), id: aio.Id, op_type: Operation) !void {
+    if (self.pending.isSet(id.slot)) {
+        switch (op_type) {
             .poll => self.uringlator.finish(self, id, error.Success, .thread_unsafe),
-            inline .timeout, .link_timeout => {
+            .timeout => {
+                const state = self.uringlator.ops.getOnePtr(.state, id);
                 const closure: TimerQueue.Closure = .{ .context = self, .callback = onThreadTimeout };
-                self.tqueue.schedule(.monotonic, op.ns, id, .{ .closure = closure }) catch self.uringlator.finish(self, id, error.Unexpected, .thread_unsafe);
+                self.tqueue.schedule(.monotonic, state.timeout.ns, id.cast(usize), .{ .closure = closure }) catch self.uringlator.finish(self, id, error.Unexpected, .thread_unsafe);
+            },
+            .link_timeout => {
+                const state = self.uringlator.ops.getOnePtr(.state, id);
+                const closure: TimerQueue.Closure = .{ .context = self, .callback = onThreadTimeout };
+                self.tqueue.schedule(.monotonic, state.link_timeout.ns, id.cast(usize), .{ .closure = closure }) catch self.uringlator.finish(self, id, error.Unexpected, .thread_unsafe);
             },
             // can be performed here, doesn't have to be dispatched to thread
-            .child_exit,
+            inline .child_exit,
             .wait_event_source,
             .notify_event_source,
             .close_event_source,
@@ -321,44 +361,55 @@ pub fn uringlator_start(self: *@This(), op: anytype, id: u16) !void {
             .recv,
             .send_msg,
             .recv_msg,
-            => self.nonBlockingPosixExecutor(op, id, self.readiness[id]) catch {
-                // poll lied to us, or somebody else raced us, poll again
-                self.pending.unset(id);
+            => |tag| {
+                const state = self.uringlator.ops.getOnePtr(.state, id);
+                const result = self.uringlator.ops.getOne(.out_result, id);
+                const readiness = self.uringlator.ops.getOne(.readiness, id);
+                self.nonBlockingPosixExecutor(tag, state.toOp(tag, result), id, readiness) catch {
+                    // poll lied to us, or somebody else raced us, poll again
+                    self.pending.unset(id.slot);
+                };
             },
             inline else => |tag| {
+                const state = self.uringlator.ops.getOnePtr(.state, id);
+                const result = self.uringlator.ops.getOne(.out_result, id);
+                const readiness = self.uringlator.ops.getOne(.readiness, id);
                 if (needs_kludge and tag == .read_tty) {
                     @branchHint(.unlikely);
-                    try self.kludge_pool.spawn(blockingPosixExecutor, .{ self, op, id, self.readiness[id], .thread_safe });
+                    try self.kludge_pool.spawn(blockingPosixExecutor, .{ self, tag, state.toOp(tag, result), id, readiness, .thread_safe });
                 }
                 if (comptime builtin.target.os.tag == .wasi) {
                     // perform on thread
-                    try self.posix_pool.spawn(blockingPosixExecutor, .{ self, op, id, self.readiness[id], .thread_safe });
-                } else if (self.readiness[id].fd != posix.invalid_fd) {
-                    self.nonBlockingPosixExecutorFcntl(op, id, self.readiness[id]) catch |err| switch (err) {
+                    try self.posix_pool.spawn(blockingPosixExecutor, .{ self, tag, state.toOp(tag, result), id, readiness, .thread_safe });
+                } else if (readiness.fd != posix.invalid_fd) {
+                    self.nonBlockingPosixExecutorFcntl(tag, state.toOp(tag, result), id, readiness) catch |err| switch (err) {
                         // poll lied to us, or somebody else raced us, poll again
-                        error.WouldBlock => self.pending.unset(id),
+                        error.WouldBlock => self.pending.unset(id.slot),
                         // perform on thread
-                        error.FcntlFailed => try self.posix_pool.spawn(blockingPosixExecutor, .{ self, op, id, self.readiness[id], .thread_safe }),
+                        error.FcntlFailed => try self.posix_pool.spawn(blockingPosixExecutor, .{ self, tag, state.toOp(tag, result), id, readiness, .thread_safe }),
                     };
                 } else {
                     // perform on thread
-                    try self.posix_pool.spawn(blockingPosixExecutor, .{ self, op, id, self.readiness[id], .thread_safe });
+                    try self.posix_pool.spawn(blockingPosixExecutor, .{ self, tag, state.toOp(tag, result), id, readiness, .thread_safe });
                 }
             },
         }
     }
 
-    if (!self.pending.isSet(id)) {
+    if (!self.pending.isSet(id.slot)) {
         // try non-blocking send/recv first
         // TODO: might want to not do this if the buffer is large
-        if (switch (comptime Operation.tagFromPayloadType(@TypeOf(op.*))) {
-            .wait_event_source,
+        if (switch (op_type) {
+            inline .wait_event_source,
             .send,
             .recv,
             .send_msg,
             .recv_msg,
-            => blk: {
-                self.nonBlockingPosixExecutor(op, id, self.readiness[id]) catch break :blk false;
+            => |tag| blk: {
+                const state = self.uringlator.ops.getOnePtr(.state, id);
+                const result = self.uringlator.ops.getOne(.out_result, id);
+                const readiness = self.uringlator.ops.getOne(.readiness, id);
+                self.nonBlockingPosixExecutor(tag, state.toOp(tag, result), id, readiness) catch break :blk false;
                 break :blk true;
             },
             else => false,
@@ -368,17 +419,19 @@ pub fn uringlator_start(self: *@This(), op: anytype, id: u16) !void {
         }
 
         if (comptime builtin.target.os.tag == .wasi) {
-            switch (comptime Operation.tagFromPayloadType(@TypeOf(op.*))) {
+            switch (op_type) {
                 .read => {
                     var stat: std.os.wasi.fdstat_t = undefined;
-                    std.debug.assert(std.os.wasi.fd_fdstat_get(op.file.handle, &stat) == .SUCCESS);
+                    const state = self.uringlator.ops.getOnePtr(.state, id);
+                    std.debug.assert(std.os.wasi.fd_fdstat_get(state.read.file.handle, &stat) == .SUCCESS);
                     if (!stat.fs_rights_base.FD_READ) {
                         return self.uringlator.finish(self, id, error.NotOpenForReading, .thread_unsafe);
                     }
                 },
                 .write => {
                     var stat: std.os.wasi.fdstat_t = undefined;
-                    std.debug.assert(std.os.wasi.fd_fdstat_get(op.file.handle, &stat) == .SUCCESS);
+                    const state = self.uringlator.ops.getOnePtr(.state, id);
+                    std.debug.assert(std.os.wasi.fd_fdstat_get(state.write.file.handle, &stat) == .SUCCESS);
                     if (!stat.fs_rights_base.FD_WRITE) {
                         return self.uringlator.finish(self, id, error.NotOpenForWriting, .thread_unsafe);
                     }
@@ -388,57 +441,64 @@ pub fn uringlator_start(self: *@This(), op: anytype, id: u16) !void {
         }
 
         // pending for readiness, perform the operation later
-        if (self.uringlator.next[id] != id) {
-            Uringlator.debug("pending: {}: {} => {}", .{ id, comptime Operation.tagFromPayloadType(@TypeOf(op.*)), self.uringlator.next[id] });
+        if (self.uringlator.ops.getOne(.next, id) != id) {
+            Uringlator.debug("pending: {}: {} => {}", .{ id, op_type, self.uringlator.ops.getOne(.next, id) });
         } else {
-            Uringlator.debug("pending: {}: {}", .{ id, comptime Operation.tagFromPayloadType(@TypeOf(op.*)) });
+            Uringlator.debug("pending: {}: {}", .{ id, op_type });
         }
 
-        std.debug.assert(self.readiness[id].fd != posix.invalid_fd);
+        const readiness = self.uringlator.ops.getOne(.readiness, id);
+        std.debug.assert(readiness.fd != posix.invalid_fd);
 
         self.pfd.add(.{
-            .fd = self.readiness[id].fd,
-            .events = readinessToPollEvents(self.readiness[id]),
+            .fd = readiness.fd,
+            .events = readinessToPollEvents(readiness),
             .revents = 0,
         }) catch unreachable;
+        self.pid.add(id) catch unreachable;
 
-        self.pending.set(id);
+        self.pending.set(id.slot);
     }
 }
 
-pub fn uringlator_cancel(self: *@This(), op: anytype, id: u16) bool {
-    if (self.pending.isSet(id)) {
-        self.uringlator.finish(self, id, error.Canceled, .thread_unsafe);
-        return true;
-    }
-    switch (comptime Operation.tagFromPayloadType(@TypeOf(op.*))) {
+pub fn uringlator_cancel(self: *@This(), id: aio.Id, op_type: Operation, err: Operation.Error) bool {
+    switch (op_type) {
         .timeout, .link_timeout => {
-            self.tqueue.disarm(.monotonic, id);
-            self.uringlator.finish(self, id, error.Canceled, .thread_unsafe);
+            self.tqueue.disarm(.monotonic, id.cast(usize)) catch return false; // raced
+            self.uringlator.finish(self, id, err, .thread_unsafe);
             return true;
         },
-        else => {},
+        else => if (self.pending.isSet(id.slot)) {
+            self.uringlator.finish(self, id, err, .thread_unsafe);
+            return true;
+        },
     }
     return false;
 }
 
-pub fn uringlator_complete(self: *@This(), op: anytype, id: u16, _: Operation.Error) void {
-    switch (comptime Operation.tagFromPayloadType(@TypeOf(op.*))) {
-        .timeout, .link_timeout => self.tqueue.disarm(.monotonic, id),
-        else => {},
-    }
-    if (self.readiness[id].fd != posix.invalid_fd) {
-        if (self.pending.isSet(id)) {
+pub fn uringlator_complete(self: *@This(), id: aio.Id, op_type: Operation, _: Operation.Error) void {
+    const readiness = self.uringlator.ops.getOnePtr(.readiness, id);
+    if (readiness.fd != posix.invalid_fd) {
+        if (self.pending.isSet(id.slot)) {
             for (self.pfd.items[0..self.pfd.len], 0..) |pfd, idx| {
-                if (pfd.fd != self.readiness[id].fd) continue;
-                if (pfd.events != readinessToPollEvents(self.readiness[id])) continue;
+                if (pfd.fd != readiness.fd) continue;
+                if (pfd.events != readinessToPollEvents(readiness.*)) continue;
+                std.debug.assert(idx > 0);
                 self.pfd.swapRemove(@truncate(idx));
+                self.pid.swapRemove(@truncate(idx - 1));
                 break;
             }
-            self.pending.unset(id);
+            self.pending.unset(id.slot);
         }
-        posix.closeReadiness(op, self.readiness[id]);
-        self.readiness[id] = .{};
+        switch (op_type) {
+            .child_exit => {
+                const state = self.uringlator.ops.getOnePtr(.state, id);
+                var watcher: posix.ChildWatcher = .{ .id = state.child_exit.child, .fd = readiness.fd };
+                watcher.deinit();
+            },
+            else => {},
+        }
+        readiness.* = .{};
     }
 }
 
