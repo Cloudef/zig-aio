@@ -11,7 +11,7 @@ Returns error of the operation if the operation failed.
 Returns `void` if there was no error.
 
 ```zig
-try aio.single(aio.Write{.file = f, .buffer = "contents"});
+try aio.single(.write, .{ .file = f, .buffer = "contents" });
 ```
 
 ### Perform multiple operations
@@ -29,8 +29,8 @@ var my_buffer: [1024]u8 = undefined;
 var my_len: usize = undefined;
 
 try aio.multi(.{
-    aio.Write{.file = f, .buffer = "contents", .link = .soft},
-    aio.Read{.file = f, .buffer = &my_buffer, .out_read = &my_len},
+    aio.op(.write, .{ .file = f, .buffer = "contents" }, .soft),
+    aio.op(.read, .{ .file = f, .buffer = &my_buffer, .out_read = &my_len }, .unlinked),
 });
 ```
 
@@ -50,12 +50,12 @@ defined ways, such as running out of system resources.
 ```zig
 var my_buffer: [1024]u8 = undefined;
 var my_len: usize = undefined;
-var write_error: std.posix.WriteError = undefined;
-var read_error: std.posix.ReadError = undefined;
+var write_error: aio.Write.Error = undefined;
+var read_error: aio.Read.Error = undefined;
 
 const res = try aio.complete(.{
-    aio.Write{.file = f, .buffer = "contents", .out_error = &write_error, .link = .soft},
-    aio.Read{.file = f, .buffer = &my_buffer, .out_error = &read_error, .out_read = &my_len},
+    aio.op(.write, .{ .file = f, .buffer = "contents", .out_error = &write_error }, .soft),
+    aio.op(.read, .{ .file = f, .buffer = &my_buffer, .out_read = &my_len, .out_error = &read_error }, .unlinked),
 });
 
 if (res.num_errors > 0) {

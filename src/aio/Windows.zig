@@ -4,23 +4,10 @@ const aio = @import("../aio.zig");
 const Operation = @import("ops.zig").Operation;
 const DynamicThreadPool = @import("minilib").DynamicThreadPool;
 const TimerQueue = @import("minilib").TimerQueue;
-const Uringlator = @import("Uringlator.zig");
+const Uringlator = @import("uringlator.zig").Uringlator(WindowsOperation);
 const Iocp = @import("posix/windows.zig").Iocp;
 const wposix = @import("posix/windows.zig");
 const win32 = @import("win32");
-
-// Optimized for Windows and uses IOCP operations whenever possible.
-// <https://int64.org/2009/05/14/io-completion-ports-made-easy/>
-
-pub const EventSource = Uringlator.EventSource;
-
-comptime {
-    if (builtin.single_threaded) {
-        @compileError(
-            \\Windows backend requires building with threads as otherwise it may block the whole program.
-        );
-    }
-}
 
 const checked = wposix.checked;
 const wtry = wposix.wtry;
@@ -32,6 +19,19 @@ const io = win32.system.io;
 const fs = win32.storage.file_system;
 const win_sock = win32.networking.win_sock;
 const INVALID_SOCKET = win_sock.INVALID_SOCKET;
+
+// Optimized for Windows and uses IOCP operations whenever possible.
+// <https://int64.org/2009/05/14/io-completion-ports-made-easy/>
+
+comptime {
+    if (builtin.single_threaded) {
+        @compileError(
+            \\Windows backend requires building with threads as otherwise it may block the whole program.
+        );
+    }
+}
+
+pub const EventSource = wposix.EventSource;
 
 const IoContext = struct {
     overlapped: io.OVERLAPPED = std.mem.zeroes(io.OVERLAPPED),
@@ -55,29 +55,36 @@ const IoContext = struct {
     }
 };
 
+const WindowsOperation = struct {
+    const State = union {
+        event_source: EventSource.OperationContext, // links event sources to iocp completions
+        wsabuf: [1]win_sock.WSABUF, // wsabuf for send/recv
+        accept: [@sizeOf(std.posix.sockaddr) * 2 + 16 * 2]u8,
+    };
+    ovl: IoContext, // overlapped struct
+    win_state: State, // windows specific state
+};
+
 iocp: Iocp,
-ovls: []IoContext, // iocp overlapped structs
 posix_pool: DynamicThreadPool, // thread pool for performing non iocp operations
 tqueue: TimerQueue, // timer queue implementing linux -like timers
 signaled: bool = false, // some operations have signaled immediately, optimization to polling iocp when not required
 uringlator: Uringlator,
 
-pub fn isSupported(ops: []const type) bool {
+pub fn isSupported(ops: []const Operation) bool {
     for (ops) |op| {
-        if (op == aio.Poll) return false;
+        if (op == .poll) return false;
     }
     return true;
 }
 
 pub fn init(allocator: std.mem.Allocator, n: u16) aio.Error!@This() {
-    // need at least 2 threads, 1 iocp thread and 1 non-iocp blocking task thread
-    const num_threads: u32 = @max(2, aio.options.max_threads orelse @as(u32, @intCast(std.Thread.getCpuCount() catch 1)));
     var iocp = try Iocp.init(1);
     errdefer iocp.deinit();
     var tqueue = try TimerQueue.init(allocator);
     errdefer tqueue.deinit();
     var posix_pool = DynamicThreadPool.init(allocator, .{
-        .max_threads = num_threads / 2,
+        .max_threads = aio.options.max_threads,
         .name = "aio:POSIX",
         .stack_size = @import("posix/posix.zig").stack_size,
     }) catch |err| return switch (err) {
@@ -85,31 +92,27 @@ pub fn init(allocator: std.mem.Allocator, n: u16) aio.Error!@This() {
         else => |e| e,
     };
     errdefer posix_pool.deinit();
-    const ovls = try allocator.alloc(IoContext, n);
-    errdefer allocator.free(ovls);
     var uringlator = try Uringlator.init(allocator, n);
     errdefer uringlator.deinit(allocator);
     return .{
         .iocp = iocp,
         .tqueue = tqueue,
         .posix_pool = posix_pool,
-        .ovls = ovls,
         .uringlator = uringlator,
     };
 }
 
 pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
     self.uringlator.shutdown(self);
-    self.iocp.deinit();
     self.tqueue.deinit();
     self.posix_pool.deinit();
-    allocator.free(self.ovls);
+    self.iocp.deinit();
     self.uringlator.deinit(allocator);
     self.* = undefined;
 }
 
-pub fn queue(self: *@This(), comptime len: u16, work: anytype, handler: anytype) aio.Error!void {
-    try self.uringlator.queue(len, work, self, handler);
+pub fn queue(self: *@This(), pairs: anytype, handler: anytype) aio.Error!void {
+    try self.uringlator.queue(pairs, self, handler);
 }
 
 fn werr() Operation.Error {
@@ -127,12 +130,12 @@ fn poll(self: *@This(), mode: aio.Dynamic.CompletionMode, comptime safety: Uring
     });
     if (res != 1 and maybe_ovl == null) return;
 
-    const id: u16 = switch (key.type) {
+    const id: aio.Id = switch (key.type) {
         .nop => return, // non iocp operation finished
         .shutdown, .event_source, .child_exit => key.id,
         .overlapped => blk: {
             const parent: *IoContext = @fieldParentPtr("overlapped", maybe_ovl.?);
-            break :blk @intCast((@intFromPtr(parent) - @intFromPtr(self.ovls.ptr)) / @sizeOf(IoContext));
+            break :blk self.uringlator.ops.unsafeIdFromSlot(@intCast((@intFromPtr(parent) - @intFromPtr(self.uringlator.ops.soa.ovl)) / @sizeOf(IoContext)));
         },
     };
 
@@ -151,17 +154,21 @@ fn poll(self: *@This(), mode: aio.Dynamic.CompletionMode, comptime safety: Uring
                     win32.system.system_services.JOB_OBJECT_MSG_EXIT_PROCESS, win32.system.system_services.JOB_OBJECT_MSG_ABNORMAL_EXIT_PROCESS => {},
                     else => return, // not the event we care about
                 }
-                const op = &self.uringlator.ops.nodes[id].used.child_exit;
-                if (op.out_term) |term| {
+                const state = self.uringlator.ops.getOnePtr(.state, id);
+                const out_term = self.uringlator.ops.getOne(.out_result, id).cast(?*std.process.Child.Term);
+                if (out_term) |term| {
                     var code: u32 = undefined;
-                    if (win32.system.threading.GetExitCodeProcess(op.child, &code) == 0) {
+                    if (win32.system.threading.GetExitCodeProcess(state.child_exit.child, &code) == 0) {
                         term.* = .{ .Unknown = 0 };
                     } else {
                         term.* = .{ .Exited = @truncate(code) };
                     }
                 }
             },
-            .overlapped => self.ovls[id].res = transferred,
+            .overlapped => {
+                const parent: *IoContext = @fieldParentPtr("overlapped", maybe_ovl.?);
+                parent.res = transferred;
+            },
         }
         self.uringlator.finish(self, id, error.Success, safety);
     } else {
@@ -182,16 +189,16 @@ pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode, handler: anyty
     return res;
 }
 
-pub fn immediate(comptime len: u16, work: anytype) aio.Error!u16 {
+pub fn immediate(pairs: anytype) aio.Error!u16 {
     const Static = struct {
         threadlocal var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     };
     const allocator = Static.arena.allocator();
     defer _ = Static.arena.reset(.retain_capacity);
-    var wrk = try init(allocator, len);
+    var wrk = try init(allocator, pairs.len);
     defer wrk.deinit(allocator);
-    try wrk.queue(len, work, {});
-    var n: u16 = len;
+    try wrk.queue(pairs, {});
+    var n: u16 = pairs.len;
     var num_errors: u16 = 0;
     while (n > 0) {
         const res = try wrk.complete(.blocking, {});
@@ -201,11 +208,11 @@ pub fn immediate(comptime len: u16, work: anytype) aio.Error!u16 {
     return num_errors;
 }
 
-fn onThreadPosixExecutor(self: *@This(), op: anytype, id: u16, comptime safety: Uringlator.Safety) void {
+fn blockingPosixExecutor(self: *@This(), comptime op_type: Operation, op: Operation.map.getAssertContains(op_type), id: aio.Id, comptime safety: Uringlator.Safety) void {
     const posix = @import("posix/posix.zig");
     var failure: Operation.Error = error.Success;
     while (true) {
-        posix.perform(op, undefined) catch |err| {
+        posix.perform(op_type, op, undefined) catch |err| {
             if (err == error.WouldBlock) continue;
             failure = err;
         };
@@ -216,7 +223,7 @@ fn onThreadPosixExecutor(self: *@This(), op: anytype, id: u16, comptime safety: 
 
 fn onThreadTimeout(ctx: *anyopaque, user_data: usize) void {
     var self: *@This() = @ptrCast(@alignCast(ctx));
-    self.uringlator.finish(self, @intCast(user_data), error.Success, .thread_safe);
+    self.uringlator.finish(self, aio.Id.init(user_data), error.Success, .thread_safe);
 }
 
 fn ovlOff(offset: u64) io.OVERLAPPED {
@@ -240,114 +247,146 @@ fn getHandleAccessInfo(handle: HANDLE) !fs.FILE_ACCESS_FLAGS {
     return @bitCast(access.AccessFlags);
 }
 
-pub fn uringlator_queue(self: *@This(), op: anytype, id: u16) aio.Error!void {
-    self.ovls[id] = .{};
-    switch (comptime Operation.tagFromPayloadType(@TypeOf(op.*))) {
+pub fn uringlator_queue(self: *@This(), id: aio.Id, comptime op_type: Operation, op: Operation.map.getAssertContains(op_type)) aio.Error!WindowsOperation {
+    switch (op_type) {
         .poll => return aio.Error.Unsupported,
-        .wait_event_source => op._ = .{ .id = id, .iocp = &self.iocp },
         .accept => op.out_socket.* = INVALID_SOCKET,
-        inline .recv, .send => op._ = .{.{ .buf = @constCast(@ptrCast(op.buffer.ptr)), .len = @intCast(op.buffer.len) }},
         else => {},
     }
+    return .{
+        .ovl = .{},
+        .win_state = switch (op_type) {
+            .wait_event_source => .{ .event_source = .{ .id = id, .iocp = &self.iocp } },
+            inline .recv, .send => .{ .wsabuf = .{.{ .buf = @constCast(@ptrCast(op.buffer.ptr)), .len = @intCast(op.buffer.len) }} },
+            .accept => .{ .accept = undefined },
+            else => undefined,
+        },
+    };
 }
 
-pub fn uringlator_dequeue(_: *@This(), _: anytype, _: u16) void {}
+pub fn uringlator_dequeue(_: *@This(), _: aio.Id, comptime op_type: Operation, _: Operation.map.getAssertContains(op_type)) void {}
 
-pub fn uringlator_start(self: *@This(), op: anytype, id: u16) !void {
-    switch (comptime Operation.tagFromPayloadType(@TypeOf(op.*))) {
+pub fn uringlator_start(self: *@This(), id: aio.Id, op_type: Operation) !void {
+    switch (op_type) {
         .poll => unreachable,
         .read => {
-            const flags = try getHandleAccessInfo(op.file.handle);
+            const state = self.uringlator.ops.getOnePtr(.state, id);
+            const ovl = self.uringlator.ops.getOnePtr(.ovl, id);
+            const flags = try getHandleAccessInfo(state.read.file.handle);
             if (flags.FILE_READ_DATA != 1) return self.uringlator.finish(self, id, error.NotOpenForReading, .thread_unsafe);
-            const h = fs.ReOpenFile(op.file.handle, flags, .{ .READ = 1, .WRITE = 1 }, fs.FILE_FLAG_OVERLAPPED);
+            const h = fs.ReOpenFile(state.read.file.handle, flags, .{ .READ = 1, .WRITE = 1 }, fs.FILE_FLAG_OVERLAPPED);
             _ = wtry(h != null and h.? != INVALID_HANDLE) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe);
             self.iocp.associateHandle(id, h.?) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe);
-            self.ovls[id] = .{ .overlapped = ovlOff(op.offset), .owned = .{ .handle = h.? } };
+            ovl.* = .{ .overlapped = ovlOff(state.read.offset), .owned = .{ .handle = h.? } };
             var read: u32 = undefined;
-            const ret = wtry(fs.ReadFile(h.?, op.buffer.ptr, @intCast(op.buffer.len), &read, &self.ovls[id].overlapped)) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe);
+            const ret = wtry(fs.ReadFile(h.?, state.read.buffer.ptr, @intCast(state.read.buffer.len), &read, &ovl.overlapped)) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe);
             if (ret != 0) {
-                self.ovls[id].res = read;
+                ovl.res = read;
                 self.uringlator.finish(self, id, error.Success, .thread_unsafe);
             }
         },
         .write => {
-            const flags = try getHandleAccessInfo(op.file.handle);
+            const state = self.uringlator.ops.getOnePtr(.state, id);
+            const ovl = self.uringlator.ops.getOnePtr(.ovl, id);
+            const flags = try getHandleAccessInfo(state.write.file.handle);
             if (flags.FILE_WRITE_DATA != 1) return self.uringlator.finish(self, id, error.NotOpenForWriting, .thread_unsafe);
-            const h = fs.ReOpenFile(op.file.handle, flags, .{ .READ = 1, .WRITE = 1 }, fs.FILE_FLAG_OVERLAPPED);
+            const h = fs.ReOpenFile(state.write.file.handle, flags, .{ .READ = 1, .WRITE = 1 }, fs.FILE_FLAG_OVERLAPPED);
             _ = wtry(h != null and h.? != INVALID_HANDLE) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe);
             self.iocp.associateHandle(id, h.?) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe);
-            self.ovls[id] = .{ .overlapped = ovlOff(op.offset), .owned = .{ .handle = h.? } };
+            ovl.* = .{ .overlapped = ovlOff(state.write.offset), .owned = .{ .handle = h.? } };
             var written: u32 = undefined;
-            const ret = wtry(fs.WriteFile(h.?, op.buffer.ptr, @intCast(op.buffer.len), &written, &self.ovls[id].overlapped)) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe);
+            const ret = wtry(fs.WriteFile(h.?, state.write.buffer.ptr, @intCast(state.write.buffer.len), &written, &ovl.overlapped)) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe);
             if (ret != 0) {
-                self.ovls[id].res = written;
+                ovl.res = written;
                 self.uringlator.finish(self, id, error.Success, .thread_unsafe);
             }
         },
         .accept => {
-            self.iocp.associateSocket(id, op.socket) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe);
-            op.out_socket.* = aio.socket(std.posix.AF.INET, 0, 0) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe);
+            const out_socket = self.uringlator.ops.getOne(.out_result, id).cast(*std.posix.socket_t);
+            const win_state = self.uringlator.ops.getOnePtr(.win_state, id);
+            const state = self.uringlator.ops.getOnePtr(.state, id);
+            const ovl = self.uringlator.ops.getOnePtr(.ovl, id);
+            self.iocp.associateSocket(id, state.accept.socket) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe);
+            out_socket.* = aio.socket(std.posix.AF.INET, 0, 0) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe);
             var read: u32 = undefined;
-            if (wtry(win_sock.AcceptEx(op.socket, op.out_socket.*, &op._, 0, @sizeOf(std.posix.sockaddr) + 16, @sizeOf(std.posix.sockaddr) + 16, &read, &self.ovls[id].overlapped) == 1) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe)) {
-                self.ovls[id].res = read;
+            if (wtry(win_sock.AcceptEx(state.accept.socket, out_socket.*, &win_state.accept, 0, @sizeOf(std.posix.sockaddr) + 16, @sizeOf(std.posix.sockaddr) + 16, &read, &ovl.overlapped) == 1) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe)) {
+                ovl.res = read;
                 self.uringlator.finish(self, id, error.Success, .thread_unsafe);
             }
         },
         .recv => {
-            self.iocp.associateSocket(id, op.socket) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe);
-            switch (wposix.recvEx(op.socket, &op._, 0, &self.ovls[id].overlapped) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe)) {
+            const win_state = self.uringlator.ops.getOnePtr(.win_state, id);
+            const state = self.uringlator.ops.getOnePtr(.state, id);
+            const ovl = self.uringlator.ops.getOnePtr(.ovl, id);
+            self.iocp.associateSocket(id, state.recv.socket) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe);
+            switch (wposix.recvEx(state.recv.socket, &win_state.wsabuf, 0, &ovl.overlapped) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe)) {
                 .pending => {},
                 .transmitted => |bytes| {
-                    self.ovls[id].res = bytes;
+                    ovl.res = bytes;
                     self.uringlator.finish(self, id, error.Success, .thread_unsafe);
                 },
             }
         },
         .send => {
-            self.iocp.associateSocket(id, op.socket) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe);
-            switch (wposix.sendEx(op.socket, &op._, 0, &self.ovls[id].overlapped) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe)) {
+            const win_state = self.uringlator.ops.getOnePtr(.win_state, id);
+            const state = self.uringlator.ops.getOnePtr(.state, id);
+            const ovl = self.uringlator.ops.getOnePtr(.ovl, id);
+            self.iocp.associateSocket(id, state.send.socket) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe);
+            switch (wposix.sendEx(state.send.socket, &win_state.wsabuf, 0, &ovl.overlapped) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe)) {
                 .pending => {},
                 .transmitted => |bytes| {
-                    self.ovls[id].res = bytes;
+                    ovl.res = bytes;
                     self.uringlator.finish(self, id, error.Success, .thread_unsafe);
                 },
             }
         },
         .recv_msg => {
-            self.iocp.associateSocket(id, op.socket) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe);
-            switch (wposix.recvmsgEx(op.socket, op.out_msg, 0, &self.ovls[id].overlapped) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe)) {
+            const state = self.uringlator.ops.getOnePtr(.state, id);
+            const ovl = self.uringlator.ops.getOnePtr(.ovl, id);
+            self.iocp.associateSocket(id, state.recv_msg.socket) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe);
+            switch (wposix.recvmsgEx(state.recv_msg.socket, state.recv_msg.out_msg, 0, &ovl.overlapped) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe)) {
                 .pending => {},
                 .transmitted => |bytes| {
-                    self.ovls[id].res = bytes;
+                    ovl.res = bytes;
                     self.uringlator.finish(self, id, error.Success, .thread_unsafe);
                 },
             }
         },
         .send_msg => {
-            self.iocp.associateSocket(id, op.socket) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe);
-            switch (wposix.sendmsgEx(op.socket, @constCast(op.msg), 0, &self.ovls[id].overlapped) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe)) {
+            const state = self.uringlator.ops.getOnePtr(.state, id);
+            const ovl = self.uringlator.ops.getOnePtr(.ovl, id);
+            self.iocp.associateSocket(id, state.send_msg.socket) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe);
+            switch (wposix.sendmsgEx(state.send_msg.socket, @constCast(state.send_msg.msg), 0, &ovl.overlapped) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe)) {
                 .pending => {},
                 .transmitted => |bytes| {
-                    self.ovls[id].res = bytes;
+                    ovl.res = bytes;
                     self.uringlator.finish(self, id, error.Success, .thread_unsafe);
                 },
             }
         },
-        inline .timeout, .link_timeout => {
+        .timeout => {
+            const state = self.uringlator.ops.getOnePtr(.state, id);
             const closure: TimerQueue.Closure = .{ .context = self, .callback = onThreadTimeout };
-            self.tqueue.schedule(.monotonic, op.ns, id, .{ .closure = closure }) catch return self.uringlator.finish(self, id, error.Unexpected, .thread_unsafe);
+            self.tqueue.schedule(.monotonic, state.timeout.ns, id.cast(usize), .{ .closure = closure }) catch return self.uringlator.finish(self, id, error.Unexpected, .thread_unsafe);
+        },
+        .link_timeout => {
+            const state = self.uringlator.ops.getOnePtr(.state, id);
+            const closure: TimerQueue.Closure = .{ .context = self, .callback = onThreadTimeout };
+            self.tqueue.schedule(.monotonic, state.link_timeout.ns, id.cast(usize), .{ .closure = closure }) catch return self.uringlator.finish(self, id, error.Unexpected, .thread_unsafe);
         },
         .child_exit => {
+            const state = self.uringlator.ops.getOnePtr(.state, id);
+            const ovl = self.uringlator.ops.getOnePtr(.ovl, id);
             const job = win32.system.job_objects.CreateJobObjectW(null, null);
             _ = wtry(job != null and job.? != INVALID_HANDLE) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe);
             errdefer checked(CloseHandle(job.?));
-            _ = wtry(win32.system.job_objects.AssignProcessToJobObject(job.?, op.child)) catch return self.uringlator.finish(self, id, error.Unexpected, .thread_unsafe);
+            _ = wtry(win32.system.job_objects.AssignProcessToJobObject(job.?, state.child_exit.child)) catch return self.uringlator.finish(self, id, error.Unexpected, .thread_unsafe);
             const key: Iocp.Key = .{ .type = .child_exit, .id = id };
             var assoc: win32.system.job_objects.JOBOBJECT_ASSOCIATE_COMPLETION_PORT = .{
                 .CompletionKey = @ptrFromInt(@as(usize, @bitCast(key))),
                 .CompletionPort = self.iocp.port,
             };
-            self.ovls[id] = .{ .owned = .{ .job = job.? } };
+            ovl.* = .{ .owned = .{ .job = job.? } };
             errdefer self.ovls[id] = .{};
             _ = wtry(win32.system.job_objects.SetInformationJobObject(
                 job.?,
@@ -356,38 +395,62 @@ pub fn uringlator_start(self: *@This(), op: anytype, id: u16) !void {
                 @sizeOf(@TypeOf(assoc)),
             )) catch return self.uringlator.finish(self, id, error.Unexpected, .thread_unsafe);
         },
-        .wait_event_source => op.source.native.addWaiter(&op._.link),
+        .wait_event_source => {
+            const state = self.uringlator.ops.getOnePtr(.state, id);
+            const win_state = self.uringlator.ops.getOnePtr(.win_state, id);
+            state.wait_event_source.source.native.addWaiter(&win_state.event_source.link);
+        },
         // can be performed without a thread
-        .notify_event_source, .close_event_source => self.onThreadPosixExecutor(op, id, .thread_unsafe),
-        else => {
+        inline .notify_event_source, .close_event_source => |tag| {
+            const result = self.uringlator.ops.getOne(.out_result, id);
+            const state = self.uringlator.ops.getOnePtr(.state, id);
+            self.blockingPosixExecutor(tag, state.toOp(tag, result), id, .thread_unsafe);
+        },
+        inline else => |tag| {
             // perform non IOCP supported operation on a thread
-            try self.posix_pool.spawn(onThreadPosixExecutor, .{ self, op, id, .thread_safe });
+            const result = self.uringlator.ops.getOne(.out_result, id);
+            const state = self.uringlator.ops.getOnePtr(.state, id);
+            try self.posix_pool.spawn(blockingPosixExecutor, .{ self, tag, state.toOp(tag, result), id, .thread_safe });
         },
     }
 }
 
-pub fn uringlator_cancel(self: *@This(), op: anytype, id: u16) bool {
-    switch (comptime Operation.tagFromPayloadType(@TypeOf(op.*))) {
+pub fn uringlator_cancel(self: *@This(), id: aio.Id, op_type: Operation, err: Operation.Error) bool {
+    switch (op_type) {
         .read, .write => {
-            return io.CancelIoEx(self.ovls[id].owned.handle, &self.ovls[id].overlapped) != 0;
+            const ovl = self.uringlator.ops.getOnePtr(.ovl, id);
+            if (io.CancelIoEx(ovl.owned.handle, &ovl.overlapped) != 0) {
+                self.uringlator.finish(self, id, err, .thread_unsafe);
+                return true;
+            }
+            return false;
         },
-        inline .accept, .recv, .send, .send_msg, .recv_msg => {
-            return io.CancelIoEx(@ptrCast(op.socket), &self.ovls[id].overlapped) != 0;
+        inline .accept, .recv, .send, .send_msg, .recv_msg => |tag| {
+            const result = self.uringlator.ops.getOne(.out_result, id);
+            const op = self.uringlator.ops.getOnePtr(.state, id).toOp(tag, result);
+            const ovl = self.uringlator.ops.getOnePtr(.ovl, id);
+            if (io.CancelIoEx(@ptrCast(op.socket), &ovl.overlapped) != 0) {
+                self.uringlator.finish(self, id, err, .thread_unsafe);
+                return true;
+            }
+            return false;
         },
         .child_exit => {
-            self.ovls[id].deinit();
-            self.ovls[id] = .{};
-            self.uringlator.finish(self, id, error.Canceled, .thread_unsafe);
+            var ovl = self.uringlator.ops.getOnePtr(.ovl, id);
+            ovl.deinit();
+            self.uringlator.finish(self, id, err, .thread_unsafe);
             return true;
         },
         .timeout, .link_timeout => {
-            self.tqueue.disarm(.monotonic, id);
-            self.uringlator.finish(self, id, error.Canceled, .thread_unsafe);
+            self.tqueue.disarm(.monotonic, id.cast(usize)) catch return false; // raced
+            self.uringlator.finish(self, id, err, .thread_unsafe);
             return true;
         },
         .wait_event_source => {
-            op.source.native.removeWaiter(&op._.link);
-            self.uringlator.finish(self, id, error.Canceled, .thread_unsafe);
+            const state = self.uringlator.ops.getOnePtr(.state, id);
+            var ctx = &self.uringlator.ops.getOnePtr(.win_state, id).event_source;
+            state.wait_event_source.source.native.removeWaiter(&ctx.link);
+            self.uringlator.finish(self, id, err, .thread_unsafe);
             return true;
         },
         else => {},
@@ -395,26 +458,44 @@ pub fn uringlator_cancel(self: *@This(), op: anytype, id: u16) bool {
     return false;
 }
 
-pub fn uringlator_complete(self: *@This(), op: anytype, id: u16, failure: Operation.Error) void {
-    defer self.ovls[id].deinit();
+pub fn uringlator_complete(self: *@This(), id: aio.Id, op_type: Operation, failure: Operation.Error) void {
+    var ovl = self.uringlator.ops.getOnePtr(.ovl, id);
+    defer ovl.deinit();
     if (failure == error.Success) {
-        switch (comptime Operation.tagFromPayloadType(@TypeOf(op.*))) {
-            .timeout, .link_timeout => self.tqueue.disarm(.monotonic, id),
-            .wait_event_source => op.source.native.removeWaiter(&op._.link),
-            .accept => {
-                if (op.out_addr) |a| @memcpy(std.mem.asBytes(a), op._[@sizeOf(std.posix.sockaddr) + 16 .. @sizeOf(std.posix.sockaddr) * 2 + 16]);
+        switch (op_type) {
+            .wait_event_source => {
+                const state = self.uringlator.ops.getOnePtr(.state, id);
+                var ctx = &self.uringlator.ops.getOnePtr(.win_state, id).event_source;
+                state.wait_event_source.source.native.removeWaiter(&ctx.link);
             },
-            inline .read, .recv => op.out_read.* = self.ovls[id].res,
-            inline .write, .send => {
-                if (op.out_written) |w| w.* = self.ovls[id].res;
+            .accept => {
+                const state = self.uringlator.ops.getOnePtr(.state, id);
+                if (state.accept.out_addr) |a| {
+                    const win_state = self.uringlator.ops.getOnePtr(.win_state, id);
+                    @memcpy(std.mem.asBytes(a), win_state.accept[@sizeOf(std.posix.sockaddr) + 16 .. @sizeOf(std.posix.sockaddr) * 2 + 16]);
+                }
+            },
+            .read, .recv => {
+                const out_read = self.uringlator.ops.getOne(.out_result, id).cast(*usize);
+                out_read.* = ovl.res;
+            },
+            .write, .send => {
+                const out_written = self.uringlator.ops.getOne(.out_result, id).cast(?*usize);
+                if (out_written) |w| w.* = ovl.res;
             },
             else => {},
         }
     } else {
-        switch (comptime Operation.tagFromPayloadType(@TypeOf(op.*))) {
-            .timeout, .link_timeout => self.tqueue.disarm(.monotonic, id),
-            .wait_event_source => op.source.native.removeWaiter(&op._.link),
-            .accept => if (op.out_socket.* != INVALID_SOCKET) checked(CloseHandle(op.out_socket.*)),
+        switch (op_type) {
+            .wait_event_source => {
+                const state = self.uringlator.ops.getOnePtr(.state, id);
+                var ctx = &self.uringlator.ops.getOnePtr(.win_state, id).event_source;
+                state.wait_event_source.source.native.removeWaiter(&ctx.link);
+            },
+            .accept => {
+                const out_socket = self.uringlator.ops.getOne(.out_result, id).cast(*std.posix.socket_t);
+                if (out_socket.* != INVALID_SOCKET) checked(CloseHandle(out_socket.*));
+            },
             else => {},
         }
     }

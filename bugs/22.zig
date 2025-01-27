@@ -4,13 +4,10 @@
 // Fixed in <https://github.com/Cloudef/zig-aio/pull/30>
 
 const std = @import("std");
-const aio = @import("aio");
 const coro = @import("coro");
 
 pub fn sleep(ns: u64) void {
-    coro.io.single(aio.Timeout{
-        .ns = @intCast(ns),
-    }) catch @panic("Unable to sleep");
+    coro.io.single(.timeout, .{ .ns = @intCast(ns) }) catch @panic("Unable to sleep");
 }
 
 pub fn main() !void {

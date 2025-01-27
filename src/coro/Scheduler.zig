@@ -113,17 +113,17 @@ pub fn run(self: *@This(), mode: CompleteMode) aio.Error!void {
     }
 }
 
-pub fn aio_queue(_: *@This(), op: anytype, id: aio.Id) void {
+pub fn aio_queue(_: *@This(), id: aio.Id, userdata: usize) void {
     const OperationContext = @import("io.zig").OperationContext;
-    std.debug.assert(op.userdata != 0);
-    var ctx: *OperationContext = @ptrFromInt(op.userdata);
+    std.debug.assert(userdata != 0);
+    var ctx: *OperationContext = @ptrFromInt(userdata);
     ctx.id = id;
 }
 
-pub fn aio_complete(_: *@This(), op: anytype, _: aio.Id, failed: bool) void {
+pub fn aio_complete(_: *@This(), _: aio.Id, userdata: usize, failed: bool) void {
     const OperationContext = @import("io.zig").OperationContext;
-    std.debug.assert(op.userdata != 0);
-    var ctx: *OperationContext = @ptrFromInt(op.userdata);
+    std.debug.assert(userdata != 0);
+    var ctx: *OperationContext = @ptrFromInt(userdata);
     var frame: *Frame = ctx.whole.frame;
     std.debug.assert(ctx.whole.num_operations > 0);
     ctx.completed = true;

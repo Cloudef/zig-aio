@@ -60,20 +60,20 @@ const Region = struct {
         while (self.ticker.running.load(.acquire)) {
             if (!self.ready.load(.acquire)) {
                 // we were too fast, do something else
-                try coro.io.single(aio.Timeout{ .ns = 1 });
+                try coro.io.single(.timeout, .{ .ns = 1 });
                 continue;
             }
-            try coro.io.single(aio.WaitEventSource{ .source = &self.ticker.start });
+            try coro.io.single(.wait_event_source, .{ .source = &self.ticker.start });
             self.ready.store(false, .release);
             std.log.debug("{d: >2}: tick", .{self.id});
-            try coro.io.single(aio.NotifyEventSource{ .source = &self.ticker.end });
+            try coro.io.single(.notify_event_source, .{ .source = &self.ticker.end });
         }
     }
 
     fn otherWork(self: *@This()) !void {
         while (self.ticker.running.load(.acquire)) {
             // simulate other work
-            try coro.io.single(aio.Timeout{ .ns = 1 * std.time.ns_per_s });
+            try coro.io.single(.timeout, .{ .ns = 1 * std.time.ns_per_s });
         }
     }
 };

@@ -14,16 +14,16 @@ pub fn main() !void {
     var len2: usize = 0;
 
     const num_errors = try aio.complete(.{
-        aio.Read{
+        aio.op(.read, .{
             .file = f,
             .buffer = &buf,
             .out_read = &len,
-        },
-        aio.Read{
+        }, .unlinked),
+        aio.op(.read, .{
             .file = f2,
             .buffer = &buf2,
             .out_read = &len2,
-        },
+        }, .unlinked),
     });
 
     log.info("{s}", .{buf[0..len]});

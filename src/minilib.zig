@@ -1,7 +1,7 @@
 pub const DynamicThreadPool = @import("minilib/DynamicThreadPool.zig");
 pub const FixedArrayList = @import("minilib/fixed_array_list.zig").FixedArrayList;
 pub const DoubleBufferedFixedArrayList = @import("minilib/fixed_array_list.zig").DoubleBufferedFixedArrayList;
-pub const ItemPool = @import("minilib/item_pool.zig").ItemPool;
+pub const Id = @import("minilib/id.zig").Id;
 pub const TimerQueue = @import("minilib/TimerQueue.zig");
 
 const std = @import("std");

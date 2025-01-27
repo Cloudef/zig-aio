@@ -60,7 +60,7 @@ pub fn yieldForCompletion(self: *@This(), func: anytype, args: anytype) MixError
     try self.pool.spawn(entrypoint, .{ self, &completed, &token, func, &res, args });
     while (!completed.load(.acquire)) {
         const nerr = io.do(.{
-            aio.WaitEventSource{ .source = &self.source },
+            aio.op(.wait_event_source, .{ .source = &self.source }, .unlinked),
         }, if (token.canceled.load(.acquire)) .io_cancel else .io) catch 1;
         if (nerr > 0) {
             if (Frame.current()) |frame| {

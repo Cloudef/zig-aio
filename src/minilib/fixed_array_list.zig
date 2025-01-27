@@ -34,6 +34,23 @@ pub fn FixedArrayList(T: type, SZ: type) type {
         pub fn reset(self: *@This()) void {
             self.len = 0;
         }
+
+        pub fn slice(self: *@This()) []T {
+            return self.items[0..self.len];
+        }
+
+        pub fn constSlice(self: @This()) []const T {
+            return self.items[0..self.len];
+        }
+
+        pub fn swapRemoveNeedle(self: *@This(), needle: T) error{NotFound}!void {
+            for (self.constSlice(), 0..) |stack, idx| {
+                if (!std.meta.eql(stack, needle)) continue;
+                self.swapRemove(@intCast(idx));
+                return;
+            }
+            return error.NotFound;
+        }
     };
 }
 
