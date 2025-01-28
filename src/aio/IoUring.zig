@@ -182,8 +182,8 @@ pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode, handler: anyty
     const n = try uring_copy_cqes(&self.io, self.cqes, if (mode == .nonblocking) 0 else 1);
     for (self.cqes[0..n]) |*cqe| {
         const id = aio.Id.init(cqe.user_data);
-        defer self.ops.release(id) catch unreachable;
         const op_type = self.ops.getOne(.type, id);
+
         var failed: bool = false;
         _ = switch (op_type) {
             .child_exit => blk: {
@@ -251,8 +251,12 @@ pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode, handler: anyty
             result.num_errors += 1;
             failed = true;
         };
+
+        const userdata = self.ops.getOne(.userdata, id);
+        self.ops.release(id) catch unreachable;
+
         if (@TypeOf(handler) != void) {
-            handler.aio_complete(id, self.ops.getOne(.userdata, id), failed);
+            handler.aio_complete(id, userdata, failed);
         }
     }
 
