@@ -155,7 +155,7 @@ pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode, handler: anyty
 
         var off: usize = 0;
         again: while (off < self.pfd.len) {
-            for (self.pfd.constSlice(), 0..) |*pfd, pid| {
+            for (self.pfd.constSlice()[off..], off..) |*pfd, pid| {
                 off = pid;
                 if (pfd.revents == 0) continue;
                 if (pfd.fd == self.source.fd) {
