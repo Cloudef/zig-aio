@@ -263,26 +263,26 @@ test "Mutex" {
         thread.join();
     }
 
-    std.debug.assert(value == 1024000);
+    std.testing.expectEqual(value, 1024000);
 }
 
 test "RwLock" {
     const Test = struct {
-        fn incrementer(lock: *RwLock, value: *usize, value2: *usize) !void {
+        fn incrementer(lock: *RwLock, value: *usize, check_value: *usize) !void {
             try lock.lock();
             defer lock.unlock();
 
             value.* += 1000;
 
-            const stored = value2.*;
+            const stored = check_value.*;
 
             // simulates a "workload" + makes coroutines to try lock
             try coro.io.single(.timeout, .{ .ns = std.time.ns_per_ms });
 
-            value2.* = stored + 1000;
+            check_value.* = stored + 1000;
         }
 
-        fn checker(lock: *RwLock, value: *usize, value2: *usize) !void {
+        fn checker(lock: *RwLock, value: *usize, check_value: *usize) !void {
             while (true) {
                 // simulates a "workload"
                 try coro.io.single(.timeout, .{ .ns = std.time.ns_per_ms });
@@ -290,20 +290,20 @@ test "RwLock" {
                 try lock.lockShared();
                 defer lock.unlock();
 
-                if (value.* == 1024000 and value2.* == 1024000) break;
+                if (value.* == 1024000 and check_value.* == 1024000) break;
             }
         }
 
-        fn test_thread(lock: *RwLock, value: *usize, value2: *usize) !void {
+        fn test_thread(lock: *RwLock, value: *usize, check_value: *usize) !void {
             var scheduler = try coro.Scheduler.init(std.testing.allocator, .{});
             defer scheduler.deinit();
 
             for (0..128) |_| {
-                _ = try scheduler.spawn(incrementer, .{ lock, value, value2 }, .{ .detached = true });
+                _ = try scheduler.spawn(incrementer, .{ lock, value, check_value }, .{ .detached = true });
             }
 
             for (0..16) |_| {
-                _ = try scheduler.spawn(checker, .{ lock, value, value2 }, .{ .detached = true });
+                _ = try scheduler.spawn(checker, .{ lock, value, check_value }, .{ .detached = true });
             }
 
             try scheduler.run(.wait);
@@ -314,24 +314,24 @@ test "RwLock" {
     defer lock.deinit();
 
     var value: usize = 0;
-    var value2: usize = 0;
+    var check_value: usize = 0;
 
     var threads: [8]std.Thread = undefined;
 
     for (0..8) |i| {
-        threads[i] = try std.Thread.spawn(.{}, Test.test_thread, .{ &lock, &value, &value2 });
+        threads[i] = try std.Thread.spawn(.{}, Test.test_thread, .{ &lock, &value, &check_value });
     }
 
     for (threads) |thread| {
         thread.join();
     }
 
-    std.debug.assert(value == 1024000);
-    std.debug.assert(value2 == 1024000);
+    std.testing.expectEqual(value, 1024000);
+    std.testing.expectEqual(check_value, 1024000);
 
     // check if it has successfully returned in its initial state.
-    std.debug.assert(lock.counter == 0);
-    std.debug.assert(lock.locked == false);
+    std.testing.expectEqual(lock.counter, 0);
+    std.testing.expectEqual(lock.locked, false);
 }
 
 test "Mutex.Cancel" {
@@ -394,7 +394,7 @@ test "Mutex.Cancel" {
         thread.join();
     }
 
-    std.debug.assert(value == check_value);
+    std.testing.expectEqual(value, check_value);
 }
 
 test "RwLock.Cancel" {
@@ -471,9 +471,9 @@ test "RwLock.Cancel" {
         thread.join();
     }
 
-    std.debug.assert(value == check_value);
+    std.testing.expectEqual(value, check_value);
 
     // check if it has successfully returned in its initial state.
-    std.debug.assert(lock.counter == 0);
-    std.debug.assert(lock.locked == false);
+    std.testing.expectEqual(lock.counter, 0);
+    std.testing.expectEqual(lock.locked, false);
 }
