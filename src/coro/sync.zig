@@ -8,6 +8,7 @@ fn wakeupWaiters(list: *Frame.WaitList, status: anytype) void {
     }
 }
 
+/// Cooperatively scheduled thread unsafe Semaphore
 pub const Semaphore = struct {
     waiters: Frame.WaitList = .{},
     used: bool = false,
@@ -45,6 +46,7 @@ pub const Semaphore = struct {
     }
 };
 
+/// Cooperatively scheduled thread unsafe ResetEvent
 pub const ResetEvent = struct {
     waiters: Frame.WaitList = .{},
     is_set: bool = false,
