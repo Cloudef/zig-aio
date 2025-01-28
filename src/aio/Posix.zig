@@ -260,7 +260,7 @@ fn nonBlockingPosixExecutorFcntl(self: *@This(), comptime op_type: Operation, op
     const old: struct { usize, bool } = blk: {
         if (readiness.fd != posix.invalid_fd) {
             const flags = std.posix.fcntl(readiness.fd, std.posix.F.GETFL, 0) catch return error.FcntlFailed;
-            if ((flags & NONBLOCK) == 0) break :blk .{ flags, false };
+            if (flags & NONBLOCK == NONBLOCK) break :blk .{ flags, false };
             _ = std.posix.fcntl(readiness.fd, std.posix.F.SETFL, flags | NONBLOCK) catch return error.FcntlFailed;
             break :blk .{ flags, true };
         }
