@@ -180,14 +180,17 @@ pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode, handler: anyty
                             switch (op_type) {
                                 inline else => |tag| {
                                     if (hasField(Operation.map.getAssertContains(tag).Error, "BrokenPipe")) {
+                                        Uringlator.debug("poll: {}: {} => ERR (BrokenPipe)", .{ id, op_type });
                                         self.uringlator.finish(self, id, error.BrokenPipe, .thread_unsafe);
                                     } else {
+                                        Uringlator.debug("poll: {}: {} => ERR (Unexpected)", .{ id, op_type });
                                         self.uringlator.finish(self, id, error.Unexpected, .thread_unsafe);
                                     }
                                     break :again;
                                 },
                             }
                         } else {
+                            Uringlator.debug("poll: {}: {} => NVAL (Unexpected)", .{ id, op_type });
                             self.uringlator.finish(self, id, error.Unexpected, .thread_unsafe);
                             break :again;
                         }
