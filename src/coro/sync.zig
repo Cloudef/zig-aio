@@ -290,7 +290,7 @@ test "RwLock" {
                 try coro.io.single(.timeout, .{ .ns = 16 * std.time.ns_per_ms });
 
                 try lock.lockShared();
-                defer lock.unlock();
+                defer lock.unlockShared();
 
                 if (value.* == 1024000 and check_value.* == 1024000) break;
             }
@@ -304,9 +304,9 @@ test "RwLock" {
                 _ = try scheduler.spawn(incrementer, .{ lock, value, check_value }, .{ .detached = true });
             }
 
-            // for (0..16) |_| {
-            //     _ = try scheduler.spawn(checker, .{ lock, value, check_value }, .{ .detached = true });
-            // }
+            for (0..16) |_| {
+                _ = try scheduler.spawn(checker, .{ lock, value, check_value }, .{ .detached = true });
+            }
 
             try scheduler.run(.wait);
         }
@@ -418,7 +418,7 @@ test "RwLock.Cancel" {
         fn locksharer(lock: *RwLock) !void {
             while (true) {
                 try lock.lockShared();
-                defer lock.unlock();
+                defer lock.unlockShared();
 
                 // simulates a "workload"
                 try coro.io.single(.timeout, .{ .ns = 16 * std.time.ns_per_ms });
