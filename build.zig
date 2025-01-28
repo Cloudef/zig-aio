@@ -70,7 +70,7 @@ pub fn build(b: *std.Build) void {
 
     if (target.query.os_tag orelse builtin.os.tag == .windows) {
         if (b.lazyDependency("zigwin32", .{})) |zigwin32| {
-            aio.addImport("win32", zigwin32.module("zigwin32"));
+            aio.addImport("win32", zigwin32.module("win32"));
         }
     }
 
