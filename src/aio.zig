@@ -135,7 +135,7 @@ pub inline fn sanityCheck(pairs: anytype) void {
             if (!@hasDecl(@TypeOf(pair), "MAGIC_AIO_OP")) {
                 @compileError("Pass ops using the aio.op function");
             }
-            if (comptime @TypeOf(pair.op) == LinkTimeout) {
+            if (comptime pair.tag == .link_timeout) {
                 if (comptime idx == 0) {
                     @compileError("aio.LinkTimeout is not linked to any operation");
                 } else {
