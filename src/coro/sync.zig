@@ -241,16 +241,14 @@ test "Mutex" {
             defer scheduler.deinit();
 
             for (0..128) |_| {
-                _ = try scheduler.spawn(incrementer, .{ lock, value }, .{
-                    .detached = true
-                });
+                _ = try scheduler.spawn(incrementer, .{ lock, value }, .{ .detached = true });
             }
 
             try scheduler.run(.wait);
         }
     };
 
-    var lock: Mutex = try .init();
+    var lock = try Mutex.init();
     defer lock.deinit();
 
     var value: usize = 0;
@@ -301,22 +299,18 @@ test "RwLock" {
             defer scheduler.deinit();
 
             for (0..128) |_| {
-                _  = try scheduler.spawn(incrementer, .{ lock, value, value2 }, .{
-                    .detached = true
-                });
+                _ = try scheduler.spawn(incrementer, .{ lock, value, value2 }, .{ .detached = true });
             }
 
             for (0..16) |_| {
-                _ = try scheduler.spawn(checker, .{ lock, value, value2 }, .{
-                    .detached = true
-                });
+                _ = try scheduler.spawn(checker, .{ lock, value, value2 }, .{ .detached = true });
             }
 
             try scheduler.run(.wait);
         }
     };
 
-    var lock: RwLock = try .init();
+    var lock = try RwLock.init();
     defer lock.deinit();
 
     var value: usize = 0;
