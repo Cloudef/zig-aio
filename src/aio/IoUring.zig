@@ -223,13 +223,6 @@ pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode, handler: anyty
                 op.out_file = self.ops.getOne(.out_result, id).cast(*std.fs.File);
                 break :blk uring_handle_completion(tag, op, undefined, cqe);
             },
-            inline .timeout, .link_timeout => |tag| blk: {
-                const state = self.ops.getOnePtr(.state, id);
-                var op: Operation.map.getAssertContains(tag) = undefined;
-                op.out_id = self.ops.getOne(.out_id, id);
-                op.out_error = @ptrCast(self.ops.getOne(.out_error, id));
-                break :blk uring_handle_completion(tag, op, state, cqe);
-            },
             inline .nop,
             .fsync,
             .poll,
@@ -237,6 +230,8 @@ pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode, handler: anyty
             .shutdown,
             .close_file,
             .close_dir,
+            .timeout,
+            .link_timeout,
             .cancel,
             .rename_at,
             .unlink_at,
