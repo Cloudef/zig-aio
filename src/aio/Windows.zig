@@ -181,7 +181,10 @@ pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode, handler: anyty
     if (!try self.uringlator.submit(self)) return .{};
     var res: aio.CompletionResult = .{};
     while (res.num_completed == 0 and res.num_errors == 0) {
-        if (!self.signaled) self.poll(mode, .thread_unsafe) catch unreachable;
+        self.poll(switch (self.signaled) {
+            true => .nonblocking,
+            false => mode,
+        }, .thread_unsafe) catch unreachable;
         self.signaled = false;
         res = self.uringlator.complete(self, handler);
         if (mode == .nonblocking) break;
