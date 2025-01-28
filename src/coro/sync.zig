@@ -123,19 +123,19 @@ const Mutex = struct {
 pub const RwLock = struct {
     state: usize,
     mutex: Mutex,
-    event_source: aio.EventSource,
+    semaphore: aio.EventSource,
 
     pub fn init() !@This() {
         return .{
             .state = 0,
             .mutex = try Mutex.init(),
-            .event_source = try aio.EventSource.init(),
+            .semaphore = try aio.EventSource.init(),
         };
     }
 
     pub fn deinit(self: *@This()) void {
         self.mutex.deinit();
-        self.event_source.deinit();
+        self.semaphore.deinit();
     }
 
     const IS_WRITING: usize = 1;
@@ -166,8 +166,9 @@ pub const RwLock = struct {
         const state = @atomicRmw(usize, &rwl.state, .Add, IS_WRITING -% WRITER, .seq_cst);
         if (state & READER_MASK != 0) {
             try coro.io.single(.wait_event_source, .{
-                .source = &rwl.event_source,
+                .source = &rwl.semaphore,
             });
+            while (true) rwl.semaphore.waitNonBlocking() catch break;
         }
     }
 
@@ -220,7 +221,7 @@ pub const RwLock = struct {
         const state = @atomicRmw(usize, &rwl.state, .Sub, READER, .seq_cst);
 
         if ((state & READER_MASK == READER) and (state & IS_WRITING != 0))
-            rwl.event_source.notify();
+            rwl.semaphore.notify();
     }
 };
 
