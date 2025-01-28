@@ -263,7 +263,7 @@ test "Mutex" {
         thread.join();
     }
 
-    std.testing.expectEqual(value, 1024000);
+    try std.testing.expectEqual(value, 1024000);
 }
 
 test "RwLock" {
@@ -326,12 +326,12 @@ test "RwLock" {
         thread.join();
     }
 
-    std.testing.expectEqual(value, 1024000);
-    std.testing.expectEqual(check_value, 1024000);
+    try std.testing.expectEqual(value, 1024000);
+    try std.testing.expectEqual(check_value, 1024000);
 
     // check if it has successfully returned in its initial state.
-    std.testing.expectEqual(lock.counter, 0);
-    std.testing.expectEqual(lock.locked, false);
+    try std.testing.expectEqual(lock.counter, 0);
+    try std.testing.expectEqual(lock.locked, false);
 }
 
 test "Mutex.Cancel" {
@@ -394,7 +394,7 @@ test "Mutex.Cancel" {
         thread.join();
     }
 
-    std.testing.expectEqual(value, check_value);
+    try std.testing.expectEqual(value, check_value);
 }
 
 test "RwLock.Cancel" {
@@ -471,9 +471,9 @@ test "RwLock.Cancel" {
         thread.join();
     }
 
-    std.testing.expectEqual(value, check_value);
+    try std.testing.expectEqual(value, check_value);
 
     // check if it has successfully returned in its initial state.
-    std.testing.expectEqual(lock.counter, 0);
-    std.testing.expectEqual(lock.locked, false);
+    try std.testing.expectEqual(lock.counter, 0);
+    try std.testing.expectEqual(lock.locked, false);
 }
