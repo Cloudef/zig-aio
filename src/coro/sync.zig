@@ -419,11 +419,11 @@ test "RwLock.Cancel" {
 
         fn locksharer(lock: *RwLock) !void {
             while (true) {
-                // simulates a "workload"
-                try coro.io.single(.timeout, .{ .ns = std.time.ns_per_ms });
-
                 try lock.lockShared();
                 defer lock.unlock();
+
+                // simulates a "workload"
+                try coro.io.single(.timeout, .{ .ns = 16 * std.time.ns_per_ms });
             }
         }
 
