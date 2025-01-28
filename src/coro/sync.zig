@@ -83,7 +83,7 @@ const Mutex = struct {
     pub fn init() !@This() {
         return .{
             .native = .{},
-            .event_source = try .init(),
+            .event_source = try aio.EventSource.init(),
         };
     }
 
@@ -124,7 +124,7 @@ pub const RwLock = struct {
 
     pub fn init() !@This() {
         return .{
-            .event_source = try .init(),
+            .event_source = try aio.EventSource.init(),
             .guard = .{},
             .locked = false,
             .counter = 0,
@@ -241,8 +241,9 @@ test "Mutex" {
             defer scheduler.deinit();
 
             for (0..128) |_| {
-                const task = try scheduler.spawn(incrementer, .{ lock, value }, .{});
-                task.detach();
+                _ = try scheduler.spawn(incrementer, .{ lock, value }, .{
+                    .detached = true
+                });
             }
 
             try scheduler.run(.wait);
@@ -300,13 +301,15 @@ test "RwLock" {
             defer scheduler.deinit();
 
             for (0..128) |_| {
-                const task = try scheduler.spawn(incrementer, .{ lock, value, value2 }, .{});
-                task.detach();
+                _  = try scheduler.spawn(incrementer, .{ lock, value, value2 }, .{
+                    .detached = true
+                });
             }
 
             for (0..16) |_| {
-                const task = try scheduler.spawn(checker, .{ lock, value, value2 }, .{});
-                task.detach();
+                _ = try scheduler.spawn(checker, .{ lock, value, value2 }, .{
+                    .detached = true
+                });
             }
 
             try scheduler.run(.wait);
