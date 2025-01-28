@@ -266,6 +266,9 @@ fn nonBlockingPosixExecutorFcntl(self: *@This(), comptime op_type: Operation, op
         }
         break :blk .{ 0, false };
     };
+    defer if (old[1]) {
+        _ = std.posix.fcntl(readiness.fd, std.posix.F.SETFL, old[0]) catch {};
+    };
 
     var failure: Operation.Error = error.Success;
     posix.perform(op_type, op, readiness) catch |err| {
@@ -273,7 +276,6 @@ fn nonBlockingPosixExecutorFcntl(self: *@This(), comptime op_type: Operation, op
         failure = err;
     };
 
-    if (old[1]) _ = std.posix.fcntl(readiness.fd, std.posix.F.SETFL, old[0]) catch {};
     self.uringlator.finish(self, id, failure, .thread_unsafe);
 }
 
