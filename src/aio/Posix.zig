@@ -133,24 +133,21 @@ pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode, handler: anyty
 
     var res: aio.CompletionResult = .{};
     while (res.num_completed == 0 and res.num_errors == 0) {
-        if (self.signaled) {
-            self.signaled = false;
-            res = self.uringlator.complete(self, handler);
-            if (mode == .blocking) continue;
-            return res;
-        }
-
         // I was thinking if we should use epoll/kqueue if available
         // The pros is that we don't have to iterate the self.pfd.items
         // However, the self.pfd.items changes frequently so we have to keep re-registering fds anyways
         // Poll is pretty much anywhere, so poll it is. This is a posix backend anyways.
-        const n = posix.poll(self.pfd.slice(), if (mode == .blocking) -1 else 0) catch |err| return switch (err) {
+        const n = posix.poll(self.pfd.slice(), if (mode == .blocking and !self.signaled) -1 else 0) catch |err| return switch (err) {
             error.NetworkSubsystemFailed => unreachable,
             else => |e| e,
         };
         if (n == 0) {
+            if (self.signaled) {
+                self.signaled = false;
+                res = self.uringlator.complete(self, handler);
+            }
             if (mode == .blocking) continue; // should not happen in practice
-            return .{};
+            break;
         }
 
         var off: usize = 0;
@@ -163,6 +160,7 @@ pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode, handler: anyty
                     std.debug.assert(pfd.revents & std.posix.POLL.ERR == 0);
                     std.debug.assert(pfd.revents & std.posix.POLL.HUP == 0);
                     self.source.waitNonBlocking() catch {};
+                    self.signaled = false;
                     res = self.uringlator.complete(self, handler);
                 } else {
                     std.debug.assert(pid > 0);
