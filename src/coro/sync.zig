@@ -1,3 +1,6 @@
+const std = @import("std");
+const coro = @import("../coro.zig");
+const aio = @import("aio");
 const Frame = @import("Frame.zig");
 
 fn wakeupWaiters(list: *Frame.WaitList, status: anytype) void {
@@ -71,11 +74,6 @@ pub const ResetEvent = struct {
         self.is_set = false;
     }
 };
-
-const std = @import("std");
-
-const coro = @import("../coro.zig");
-const aio = @import("aio");
 
 /// A thread-safe mutual exclusion between schedulers.
 const Mutex = struct {
