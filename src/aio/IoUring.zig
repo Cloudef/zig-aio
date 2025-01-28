@@ -650,7 +650,7 @@ fn uring_handle_completion(comptime op_type: Operation, op: Operation.map.getAss
             },
             .close_file, .close_dir, .close_socket => switch (err) {
                 .CANCELED => error.Canceled,
-                else => std.posix.unexpectedErrno(err),
+                else => std.posix.unexpectedErrno(err) catch unreachable,
             },
             .notify_event_source, .wait_event_source, .close_event_source => switch (err) {
                 .CANCELED => error.Canceled,
