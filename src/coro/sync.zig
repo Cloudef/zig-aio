@@ -174,8 +174,6 @@ pub const RwLock = struct {
                 try coro.io.single(.wait_event_source, .{
                     .source = &self.event_source,
                 });
-
-                if (frame.canceled) return error.Canceled;
             }
         } else {
             while (!self.tryLock()) {
@@ -194,8 +192,6 @@ pub const RwLock = struct {
                 try coro.io.single(.wait_event_source, .{
                     .source = &self.event_source,
                 });
-
-                if (frame.canceled) return error.Canceled;
             }
         } else {
             defer self.event_source.notify();
