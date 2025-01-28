@@ -168,8 +168,8 @@ pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode, handler: anyty
                     std.debug.assert(pid > 0);
                     const id = self.pid.constSlice()[pid - 1];
                     const readiness = self.uringlator.ops.getOne(.readiness, id);
-                    if (pfd.fd != readiness.fd) continue;
-                    if (pfd.events != readinessToPollEvents(readiness)) continue;
+                    std.debug.assert(pfd.fd == readiness.fd);
+                    std.debug.assert(pfd.events == readinessToPollEvents(readiness));
                     defer {
                         // do not poll this fd again
                         self.pfd.swapRemove(@truncate(pid));
