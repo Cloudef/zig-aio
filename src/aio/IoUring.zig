@@ -652,9 +652,21 @@ fn uring_handle_completion(comptime op_type: Operation, op: Operation.map.getAss
                 .CANCELED => error.Canceled,
                 else => std.posix.unexpectedErrno(err) catch unreachable,
             },
-            .notify_event_source, .wait_event_source, .close_event_source => switch (err) {
+            .notify_event_source => switch (err) {
                 .CANCELED => error.Canceled,
-                else => std.posix.unexpectedErrno(err),
+                else => @panic("EventSource.notify failed"),
+            },
+            .wait_event_source => switch (err) {
+                .CANCELED => error.Canceled,
+                // XXX: Weird that eventfd gives us EAGAIN, should not happen
+                //      This does not happen if EFD is not set to O_NONBLOCK
+                // <https://github.com/axboe/liburing/issues/364>
+                .AGAIN => error.Success, // ignore and hope that things are okay
+                else => @panic("EventSource.wait failed"),
+            },
+            .close_event_source => switch (err) {
+                .CANCELED => error.Canceled,
+                else => unreachable,
             },
             .timeout => switch (err) {
                 .SUCCESS, .INTR, .INVAL, .AGAIN => unreachable,
