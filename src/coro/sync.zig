@@ -77,18 +77,15 @@ pub const ResetEvent = struct {
 
 /// A thread-safe mutual exclusion between schedulers.
 const Mutex = struct {
-    native: std.Thread.Mutex,
-    event_source: aio.EventSource,
+    native: std.Thread.Mutex = .{},
+    semaphore: aio.EventSource,
 
     pub fn init() !@This() {
-        return .{
-            .native = .{},
-            .event_source = try aio.EventSource.init(),
-        };
+        return .{ .semaphore = try aio.EventSource.init() };
     }
 
     pub fn deinit(self: *@This()) void {
-        self.event_source.deinit();
+        self.semaphore.deinit();
     }
 
     pub inline fn tryLock(self: *@This()) bool {
@@ -98,36 +95,32 @@ const Mutex = struct {
     pub fn lock(self: *@This()) !void {
         if (Frame.current()) |frame| {
             if (frame.canceled) return error.Canceled;
-
             while (!self.tryLock()) {
                 try coro.io.single(.wait_event_source, .{
-                    .source = &self.event_source,
+                    .source = &self.semaphore,
                 });
-
-                if (frame.canceled) return error.Canceled;
             }
         } else {
             while (!self.tryLock()) {
-                self.event_source.wait();
+                self.semaphore.wait();
             }
         }
     }
 
     pub fn unlock(self: *@This()) void {
         self.native.unlock();
-        self.event_source.notify();
+        self.semaphore.notify();
     }
 };
 
 /// A thread-safe read-write lock between schedulers.
 pub const RwLock = struct {
-    state: usize,
+    state: usize = 0,
     mutex: Mutex,
     semaphore: aio.EventSource,
 
     pub fn init() !@This() {
         return .{
-            .state = 0,
             .mutex = try Mutex.init(),
             .semaphore = try aio.EventSource.init(),
         };
