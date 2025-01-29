@@ -360,18 +360,24 @@ pub fn Uringlator(BackendOperation: type) type {
                             };
 
                             if (raced) {
-                                failure = error.Canceled;
+                                failure = error.Success;
                             } else {
                                 const cres: enum { ok, not_found } = blk: {
                                     _ = self.ops.lookup(cid) catch break :blk .not_found;
-                                    self.ops.setOne(.next, cid, cid);
-                                    self.finish(backend, cid, error.Canceled, .thread_unsafe);
+                                    std.debug.assert(self.started.isSet(cid.slot));
+                                    std.debug.assert(!self.link_lock.isSet(cid.slot));
+                                    const cid_type = self.ops.getOne(.type, cid);
+                                    self.ops.setOne(.next, cid, cid); // sever the link
+                                    _ = backend.uringlator_cancel(cid, cid_type, error.Canceled);
+                                    // ^ even if the operation is not in cancelable state anymore
+                                    //   the backend will still wait for it to complete
+                                    //   however, the operation chain will be severed
                                     break :blk .ok;
                                 };
 
                                 failure = switch (cres) {
                                     .ok => error.Expired,
-                                    else => error.Success,
+                                    .not_found => error.Success,
                                 };
                             }
                         },
@@ -398,6 +404,7 @@ pub fn Uringlator(BackendOperation: type) type {
 
                 const next = self.ops.getOne(.next, res.id);
                 if (!std.meta.eql(next, res.id)) {
+                    const link = self.ops.getOne(.link, res.id);
                     const next_type = self.ops.getOne(.type, next);
                     if (next_type == .link_timeout) {
                         const raced = blk: {
@@ -407,17 +414,22 @@ pub fn Uringlator(BackendOperation: type) type {
                         if (!raced) {
                             _ = self.ops.lookup(next) catch unreachable; // inconsistent state
                             std.debug.assert(self.started.isSet(next.slot));
-                            switch (self.ops.getOne(.link, res.id)) {
+                            std.debug.assert(!self.link_lock.isSet(next.slot));
+                            _ = switch (link) {
                                 .unlinked => unreachable, // inconsistent state
-                                .soft => if (!backend.uringlator_cancel(next, .link_timeout, error.Canceled)) unreachable, // inconsistent state
-                                .hard => if (!backend.uringlator_cancel(next, .link_timeout, error.Success)) unreachable, // inconsistent state
-                            }
+                                .soft => backend.uringlator_cancel(next, .link_timeout, error.Success),
+                                .hard => backend.uringlator_cancel(next, .link_timeout, error.Success),
+                            };
                         }
-                    } else if (failure != error.Success and self.ops.getOne(.link, res.id) == .soft) {
+                    } else if ((link == .soft or op_type == .link_timeout) and failure != error.Success) {
                         _ = self.ops.lookup(next) catch unreachable; // inconsistent state
+                        std.debug.assert(!self.started.isSet(next.slot));
+                        std.debug.assert(self.link_lock.isSet(next.slot));
                         self.finish(backend, next, error.Canceled, .thread_unsafe);
                     } else {
                         _ = self.ops.lookup(next) catch unreachable; // inconsistent state
+                        std.debug.assert(!self.started.isSet(next.slot));
+                        std.debug.assert(self.link_lock.isSet(next.slot));
                         self.link_lock.unset(next.slot);
                     }
                 }

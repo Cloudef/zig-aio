@@ -448,7 +448,15 @@ test "LinkTimeout" {
             op(.link_timeout, .{ .ns = 2 * std.time.ns_per_s }, .soft),
             op(.timeout, .{ .ns = 1 * std.time.ns_per_s }, .unlinked),
         });
-        try std.testing.expectEqual(1, num_errors);
+        try std.testing.expectEqual(0, num_errors);
+    }
+    {
+        const num_errors = try complete(.{
+            op(.timeout, .{ .ns = 2 * std.time.ns_per_s }, .soft),
+            op(.link_timeout, .{ .ns = 1 * std.time.ns_per_s }, .hard),
+            op(.timeout, .{ .ns = 1 * std.time.ns_per_s }, .unlinked),
+        });
+        try std.testing.expectEqual(3, num_errors);
     }
     {
         const num_errors = try complete(.{
