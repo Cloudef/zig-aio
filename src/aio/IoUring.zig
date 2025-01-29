@@ -370,7 +370,7 @@ fn uring_init(n: u16) aio.Error!std.os.linux.IoUring {
         0, // 5.4
     };
     for (flags) |f| {
-        return uring_init_inner(n, f) catch |err| switch (err) {
+        return uring_init_inner(n, f | std.os.linux.IORING_SETUP_CLAMP) catch |err| switch (err) {
             error.ArgumentsInvalid => continue,
             else => |e| return e,
         };
