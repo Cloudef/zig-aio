@@ -294,7 +294,6 @@ pub fn Uringlator(BackendOperation: type) type {
 
                     const tag = self.ops.getOne(.type, id);
                     self.queued.swapRemove(@intCast(idx));
-                    self.started.set(id.slot);
                     try self.start(tag, id, backend);
 
                     // start linked timeout immediately as well if there's one
@@ -309,31 +308,38 @@ pub fn Uringlator(BackendOperation: type) type {
             return true;
         }
 
+        fn cancel(self: *@This(), id: aio.Id, err: Operation.Error, backend: anytype) error{ NotFound, InProgress }!void {
+            _ = try self.ops.lookup(id);
+            if (self.started.isSet(id.slot)) {
+                std.debug.assert(std.mem.indexOfScalar(aio.Id, self.queued.constSlice(), id) == null);
+                if (!backend.uringlator_cancel(id, self.ops.getOne(.type, id), err)) {
+                    return error.InProgress;
+                }
+            } else {
+                self.queued.swapRemoveNeedle(id) catch unreachable;
+                self.finish(backend, id, err, .thread_unsafe);
+            }
+        }
+
         fn start(self: *@This(), op_type: Operation, id: aio.Id, backend: anytype) aio.Error!void {
             if (!std.meta.eql(self.ops.getOne(.next, id), id)) {
                 debug("perform: {}: {} => {}", .{ id, op_type, self.ops.getOne(.next, id) });
             } else {
                 debug("perform: {}: {}", .{ id, op_type });
             }
+            std.debug.assert(!self.started.isSet(id.slot));
+            self.started.set(id.slot);
+            std.debug.assert(std.mem.indexOfScalar(aio.Id, self.queued.constSlice(), id) == null);
             switch (op_type) {
                 .nop => self.finish(backend, id, error.Success, .thread_unsafe),
                 .cancel => blk: {
                     const state = self.ops.getOne(.state, id);
-                    _ = self.ops.lookup(state.cancel.id) catch {
-                        self.finish(backend, id, error.NotFound, .thread_unsafe);
+                    std.debug.assert(state.cancel.id != id);
+                    self.cancel(state.cancel.id, error.Canceled, backend) catch |err| {
+                        self.finish(backend, id, err, .thread_unsafe);
                         break :blk;
                     };
-                    if (self.started.isSet(id.slot)) {
-                        if (!backend.uringlator_cancel(state.cancel.id, self.ops.getOne(.type, state.cancel.id), error.Canceled)) {
-                            self.finish(backend, id, error.InProgress, .thread_unsafe);
-                        } else {
-                            self.finish(backend, id, error.Success, .thread_unsafe);
-                        }
-                    } else {
-                        self.queued.swapRemoveNeedle(state.cancel.id) catch unreachable;
-                        self.finish(backend, state.cancel.id, error.Canceled, .thread_unsafe);
-                        self.finish(backend, id, error.Success, .thread_unsafe);
-                    }
+                    self.finish(backend, id, error.Success, .thread_unsafe);
                 },
                 else => |tag| try backend.uringlator_start(id, tag),
             }
@@ -346,9 +352,12 @@ pub fn Uringlator(BackendOperation: type) type {
             for (finished) |res| {
                 _ = self.ops.lookup(res.id) catch continue; // raced
                 const op_type = self.ops.getOne(.type, res.id);
+                std.debug.assert(std.mem.indexOfScalar(aio.Id, self.queued.constSlice(), res.id) == null);
 
                 var failure = res.failure;
                 if (failure != error.Canceled) {
+                    std.debug.assert(self.started.isSet(res.id.slot));
+                    std.debug.assert(!self.link_lock.isSet(res.id.slot));
                     switch (op_type) {
                         .link_timeout => {
                             const cid = self.ops.getOne(.prev, res.id);
@@ -366,9 +375,8 @@ pub fn Uringlator(BackendOperation: type) type {
                                     _ = self.ops.lookup(cid) catch break :blk .not_found;
                                     std.debug.assert(self.started.isSet(cid.slot));
                                     std.debug.assert(!self.link_lock.isSet(cid.slot));
-                                    const cid_type = self.ops.getOne(.type, cid);
                                     self.ops.setOne(.next, cid, cid); // sever the link
-                                    _ = backend.uringlator_cancel(cid, cid_type, error.Canceled);
+                                    self.cancel(cid, error.Canceled, backend) catch {};
                                     // ^ even if the operation is not in cancelable state anymore
                                     //   the backend will still wait for it to complete
                                     //   however, the operation chain will be severed
@@ -417,19 +425,21 @@ pub fn Uringlator(BackendOperation: type) type {
                             std.debug.assert(!self.link_lock.isSet(next.slot));
                             _ = switch (link) {
                                 .unlinked => unreachable, // inconsistent state
-                                .soft => backend.uringlator_cancel(next, .link_timeout, error.Success),
-                                .hard => backend.uringlator_cancel(next, .link_timeout, error.Success),
+                                .soft => self.cancel(next, error.Success, backend) catch {},
+                                .hard => self.cancel(next, error.Success, backend) catch {},
                             };
                         }
                     } else if ((link == .soft or op_type == .link_timeout) and failure != error.Success) {
                         _ = self.ops.lookup(next) catch unreachable; // inconsistent state
                         std.debug.assert(!self.started.isSet(next.slot));
                         std.debug.assert(self.link_lock.isSet(next.slot));
-                        self.finish(backend, next, error.Canceled, .thread_unsafe);
+                        std.debug.assert(std.mem.indexOfScalar(aio.Id, self.queued.constSlice(), next) != null);
+                        self.cancel(next, error.Canceled, backend) catch unreachable;
                     } else {
                         _ = self.ops.lookup(next) catch unreachable; // inconsistent state
                         std.debug.assert(!self.started.isSet(next.slot));
                         std.debug.assert(self.link_lock.isSet(next.slot));
+                        std.debug.assert(std.mem.indexOfScalar(aio.Id, self.queued.constSlice(), next) != null);
                         self.link_lock.unset(next.slot);
                     }
                 }
