@@ -80,7 +80,7 @@ const IdAllocator = aio.Id.Allocator(UringOperation);
 
 io: std.os.linux.IoUring,
 ops: IdAllocator,
-cqes: []std.os.linux.io_uring_cqe,
+cqes: [*]std.os.linux.io_uring_cqe,
 
 pub fn isSupported(op_types: []const Operation) bool {
     var ops: [Operation.map.count()]std.os.linux.IORING_OP = undefined;
@@ -123,13 +123,13 @@ pub fn init(allocator: std.mem.Allocator, n: u16) aio.Error!@This() {
     errdefer ops.deinit(allocator);
     const cqes = try allocator.alloc(std.os.linux.io_uring_cqe, @intCast(io.cq.cqes.len));
     errdefer allocator.free(cqes);
-    return .{ .io = io, .ops = ops, .cqes = cqes };
+    return .{ .io = io, .ops = ops, .cqes = cqes.ptr };
 }
 
 pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
-    self.io.deinit();
     self.ops.deinit(allocator);
-    allocator.free(self.cqes);
+    allocator.free(self.cqes[0..self.io.cq.cqes.len]);
+    self.io.deinit();
     self.* = undefined;
 }
 
@@ -178,8 +178,12 @@ pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode, handler: anyty
     if (self.ops.empty()) return .{};
     _ = try uring_submit(&self.io);
 
+    const n = try uring_copy_cqes(&self.io, self.cqes[0..self.io.cq.cqes.len], switch (mode) {
+        .nonblocking => 0,
+        .blocking => 1,
+    });
+
     var result: aio.CompletionResult = .{};
-    const n = try uring_copy_cqes(&self.io, self.cqes, if (mode == .nonblocking) 0 else 1);
     for (self.cqes[0..n]) |*cqe| {
         // XXX: relevant to zero-copy ops, not handled yet
         std.debug.assert(cqe.flags & std.os.linux.IORING_CQE_F_MORE == 0);
