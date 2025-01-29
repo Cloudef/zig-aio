@@ -351,7 +351,6 @@ pub fn uringlator_dequeue(self: *@This(), id: aio.Id, comptime op_type: Operatio
 pub fn uringlator_start(self: *@This(), id: aio.Id, op_type: Operation) !void {
     if (self.pending.isSet(id.slot)) {
         self.in_flight.set(id.slot);
-        std.debug.assert(std.mem.indexOfScalar(aio.Id, self.pid.constSlice(), id) == null);
         switch (op_type) {
             .poll => self.uringlator.finish(self, id, error.Success, .thread_unsafe),
             .timeout => {
@@ -494,7 +493,6 @@ pub fn uringlator_cancel(self: *@This(), id: aio.Id, op_type: Operation, err: Op
                 self.pid.swapRemove(@truncate(idx - 1));
                 break;
             }
-            std.debug.assert(std.mem.indexOfScalar(aio.Id, self.pid.constSlice(), id) == null);
             self.uringlator.finish(self, id, err, .thread_unsafe);
             return true;
         },
@@ -512,7 +510,6 @@ pub fn uringlator_complete(self: *@This(), id: aio.Id, op_type: Operation, _: Op
         },
         else => {},
     }
-    std.debug.assert(std.mem.indexOfScalar(aio.Id, self.pid.constSlice(), id) == null);
     readiness.* = .{};
 }
 

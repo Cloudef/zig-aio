@@ -311,7 +311,6 @@ pub fn Uringlator(BackendOperation: type) type {
         fn cancel(self: *@This(), id: aio.Id, err: Operation.Error, backend: anytype) error{ NotFound, InProgress }!void {
             _ = try self.ops.lookup(id);
             if (self.started.isSet(id.slot)) {
-                std.debug.assert(std.mem.indexOfScalar(aio.Id, self.queued.constSlice(), id) == null);
                 if (!backend.uringlator_cancel(id, self.ops.getOne(.type, id), err)) {
                     return error.InProgress;
                 }
@@ -329,12 +328,11 @@ pub fn Uringlator(BackendOperation: type) type {
             }
             std.debug.assert(!self.started.isSet(id.slot));
             self.started.set(id.slot);
-            std.debug.assert(std.mem.indexOfScalar(aio.Id, self.queued.constSlice(), id) == null);
             switch (op_type) {
                 .nop => self.finish(backend, id, error.Success, .thread_unsafe),
                 .cancel => blk: {
                     const state = self.ops.getOne(.state, id);
-                    std.debug.assert(state.cancel.id != id);
+                    std.debug.assert(!std.meta.eql(state.cancel.id, id));
                     self.cancel(state.cancel.id, error.Canceled, backend) catch |err| {
                         self.finish(backend, id, err, .thread_unsafe);
                         break :blk;
@@ -352,7 +350,6 @@ pub fn Uringlator(BackendOperation: type) type {
             for (finished) |res| {
                 _ = self.ops.lookup(res.id) catch continue; // raced
                 const op_type = self.ops.getOne(.type, res.id);
-                std.debug.assert(std.mem.indexOfScalar(aio.Id, self.queued.constSlice(), res.id) == null);
 
                 var failure = res.failure;
                 if (failure != error.Canceled) {
@@ -433,13 +430,11 @@ pub fn Uringlator(BackendOperation: type) type {
                         _ = self.ops.lookup(next) catch unreachable; // inconsistent state
                         std.debug.assert(!self.started.isSet(next.slot));
                         std.debug.assert(self.link_lock.isSet(next.slot));
-                        std.debug.assert(std.mem.indexOfScalar(aio.Id, self.queued.constSlice(), next) != null);
                         self.cancel(next, error.Canceled, backend) catch unreachable;
                     } else {
                         _ = self.ops.lookup(next) catch unreachable; // inconsistent state
                         std.debug.assert(!self.started.isSet(next.slot));
                         std.debug.assert(self.link_lock.isSet(next.slot));
-                        std.debug.assert(std.mem.indexOfScalar(aio.Id, self.queued.constSlice(), next) != null);
                         self.link_lock.unset(next.slot);
                     }
                 }
