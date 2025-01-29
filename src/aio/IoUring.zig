@@ -393,7 +393,7 @@ fn uring_queue(io: *std.os.linux.IoUring, comptime op_type: Operation, op: Opera
         .open_at => try io.openat(user_data, op.dir.fd, op.path, posix.convertOpenFlags(op.flags), 0),
         .close_file => try io.close(user_data, op.file.handle),
         .close_dir => try io.close(user_data, op.dir.fd),
-        .timeout => try io.timeout(user_data, &state.timeout, 0, 0),
+        .timeout => try io.timeout(user_data, &state.timeout, 0, std.os.linux.IORING_TIMEOUT_ETIME_SUCCESS),
         .link_timeout => try io.link_timeout(user_data, &state.timeout, 0),
         .cancel => try io.cancel(user_data, op.id.cast(u64), 0),
         .rename_at => try io.renameat(user_data, op.old_dir.fd, op.old_path, op.new_dir.fd, op.new_path, linux.RENAME_NOREPLACE),
@@ -681,7 +681,7 @@ fn uring_handle_completion(comptime op_type: Operation, op: Operation.map.getAss
             .link_timeout => switch (err) {
                 .SUCCESS, .INTR, .INVAL, .AGAIN => unreachable,
                 .TIME => error.Expired,
-                .ALREADY, .CANCELED => error.Canceled,
+                .ALREADY, .CANCELED, .NOENT => error.Canceled,
                 else => std.posix.unexpectedErrno(err),
             },
             .cancel => switch (err) {
