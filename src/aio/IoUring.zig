@@ -181,6 +181,10 @@ pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode, handler: anyty
     var result: aio.CompletionResult = .{};
     const n = try uring_copy_cqes(&self.io, self.cqes, if (mode == .nonblocking) 0 else 1);
     for (self.cqes[0..n]) |*cqe| {
+        // XXX: relevant to zero-copy ops, not handled yet
+        std.debug.assert(cqe.flags & std.os.linux.IORING_CQE_F_MORE == 0);
+        std.debug.assert(cqe.flags & std.os.linux.IORING_CQE_F_NOTIF == 0);
+
         const id = aio.Id.init(cqe.user_data);
         const op_type = self.ops.getOne(.type, id);
 
@@ -284,6 +288,9 @@ pub fn immediate(pairs: anytype) aio.Error!u16 {
     while (num > 0) {
         const n = try uring_copy_cqes(&io, &cqes, num);
         for (cqes[0..n]) |*cqe| {
+            // XXX: relevant to zero-copy ops, not handled yet
+            std.debug.assert(cqe.flags & std.os.linux.IORING_CQE_F_MORE == 0);
+            std.debug.assert(cqe.flags & std.os.linux.IORING_CQE_F_NOTIF == 0);
             @setEvalBranchQuota(1000 * pairs.len);
             inline for (pairs, 0..) |pair, idx| if (idx == cqe.user_data) {
                 uring_handle_completion(pair.tag, pair.op, &state[idx], cqe) catch {
