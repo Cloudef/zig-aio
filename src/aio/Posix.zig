@@ -157,7 +157,7 @@ pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode, handler: anyty
 
         var off: usize = 0;
         again: while (off < self.pfd.len) {
-            for (self.pfd.constSlice()[off..], off..) |*pfd, pid| {
+            for (self.pfd.constSlice()[off..], off..) |pfd, pid| {
                 off = pid;
                 if (pfd.revents == 0) continue;
                 if (pfd.fd == self.source.fd) {
@@ -173,11 +173,12 @@ pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode, handler: anyty
                     const readiness = self.uringlator.ops.getOne(.readiness, id);
                     std.debug.assert(pfd.fd == readiness.fd);
                     std.debug.assert(pfd.events == readinessToPollEvents(readiness));
-                    defer {
-                        // do not poll this fd again
-                        self.pfd.swapRemove(@truncate(pid));
-                        self.pid.swapRemove(@truncate(pid - 1));
-                    }
+                    std.debug.assert(self.pending.isSet(id.slot));
+
+                    // do not poll this fd again
+                    self.pfd.swapRemove(@truncate(pid));
+                    self.pid.swapRemove(@truncate(pid - 1));
+
                     const op_type = self.uringlator.ops.getOne(.type, id);
                     if (pfd.revents & std.posix.POLL.ERR != 0 or pfd.revents & std.posix.POLL.NVAL != 0) {
                         if (pfd.revents & std.posix.POLL.ERR != 0) {
@@ -199,12 +200,14 @@ pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode, handler: anyty
                             break :again;
                         }
                     }
+
                     // start it for real this time
                     if (self.uringlator.ops.getOne(.next, id) != id) {
                         Uringlator.debug("ready: {}: {} => {}", .{ id, op_type, self.uringlator.ops.getOne(.next, id) });
                     } else {
                         Uringlator.debug("ready: {}: {}", .{ id, op_type });
                     }
+
                     try self.uringlator_start(id, op_type);
                     break :again;
                 }
@@ -348,6 +351,7 @@ pub fn uringlator_dequeue(self: *@This(), id: aio.Id, comptime op_type: Operatio
 pub fn uringlator_start(self: *@This(), id: aio.Id, op_type: Operation) !void {
     if (self.pending.isSet(id.slot)) {
         self.in_flight.set(id.slot);
+        std.debug.assert(std.mem.indexOfScalar(aio.Id, self.pid.constSlice(), id) == null);
         switch (op_type) {
             .poll => self.uringlator.finish(self, id, error.Success, .thread_unsafe),
             .timeout => {
@@ -491,6 +495,7 @@ pub fn uringlator_cancel(self: *@This(), id: aio.Id, op_type: Operation, err: Op
                 self.pid.swapRemove(@truncate(idx - 1));
                 break;
             }
+            std.debug.assert(std.mem.indexOfScalar(aio.Id, self.pid.constSlice(), id) == null);
             self.uringlator.finish(self, id, err, .thread_unsafe);
             return true;
         },
@@ -508,6 +513,7 @@ pub fn uringlator_complete(self: *@This(), id: aio.Id, op_type: Operation, _: Op
         },
         else => {},
     }
+    std.debug.assert(std.mem.indexOfScalar(aio.Id, self.pid.constSlice(), id) == null);
     readiness.* = .{};
 }
 
