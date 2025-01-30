@@ -486,11 +486,11 @@ pub fn uringlator_complete(self: *@This(), id: aio.Id, op_type: Operation, failu
                     @memcpy(std.mem.asBytes(a), win_state.accept[@sizeOf(std.posix.sockaddr) + 16 .. @sizeOf(std.posix.sockaddr) * 2 + 16]);
                 }
             },
-            .read, .recv => {
+            .read, .recv, .recv_msg => {
                 const out_read = self.uringlator.ops.getOne(.out_result, id).cast(*usize);
                 out_read.* = ovl.res;
             },
-            .write, .send => {
+            .write, .send, .send_msg => {
                 const out_written = self.uringlator.ops.getOne(.out_result, id).cast(?*usize);
                 if (out_written) |w| w.* = ovl.res;
             },
