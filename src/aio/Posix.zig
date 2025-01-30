@@ -138,35 +138,29 @@ pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode, handler: anyty
 
     var res: aio.CompletionResult = .{};
     while (res.num_completed == 0 and res.num_errors == 0) {
-        // I was thinking if we should use epoll/kqueue if available
-        // The pros is that we don't have to iterate the self.pfd.items
-        // However, the self.pfd.items changes frequently so we have to keep re-registering fds anyways
-        // Poll is pretty much anywhere, so poll it is. This is a posix backend anyways.
-        const n = posix.poll(self.pfd.slice(), if (mode == .blocking and !self.signaled) -1 else 0) catch |err| return switch (err) {
+        // TODO: poll in macos is very slow, write "better poll" interface that uses kqueue/epoll/poll
+        const should_block = mode == .blocking and !self.signaled;
+        const n = posix.poll(self.pfd.slice(), if (should_block) -1 else 0) catch |err| return switch (err) {
             error.NetworkSubsystemFailed => unreachable,
             else => |e| e,
         };
-        if (n == 0) {
-            if (self.signaled) {
-                self.signaled = false;
-                res = self.uringlator.complete(self, handler);
-            }
-            if (mode == .blocking) continue; // should not happen in practice
-            break;
-        }
 
         var off: usize = 0;
-        again: while (off < self.pfd.len) {
+        var handled: usize = 0;
+        again: while (off < self.pfd.len and handled < n) {
             for (self.pfd.constSlice()[off..], off..) |pfd, pid| {
-                off = pid;
                 if (pfd.revents == 0) continue;
+
+                off = pid;
+                handled += 1;
+
                 if (pfd.fd == self.source.fd) {
+                    std.debug.assert(pid == 0);
                     std.debug.assert(pfd.revents & std.posix.POLL.NVAL == 0);
                     std.debug.assert(pfd.revents & std.posix.POLL.ERR == 0);
                     std.debug.assert(pfd.revents & std.posix.POLL.HUP == 0);
-                    self.source.waitNonBlocking() catch {};
-                    self.signaled = false;
-                    res = self.uringlator.complete(self, handler);
+                    self.source.waitNonBlocking() catch break;
+                    self.signaled = true; // threaded operation finished
                 } else {
                     std.debug.assert(pid > 0);
                     const id = self.pid.constSlice()[pid - 1];
@@ -191,13 +185,13 @@ pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode, handler: anyty
                                         Uringlator.debug("poll: {}: {} => ERR (Unexpected)", .{ id, op_type });
                                         self.uringlator.finish(self, id, error.Unexpected, .thread_unsafe);
                                     }
-                                    break :again;
+                                    continue :again;
                                 },
                             }
                         } else {
                             Uringlator.debug("poll: {}: {} => NVAL (Unexpected)", .{ id, op_type });
                             self.uringlator.finish(self, id, error.Unexpected, .thread_unsafe);
-                            break :again;
+                            continue :again;
                         }
                     }
 
@@ -209,10 +203,17 @@ pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode, handler: anyty
                     }
 
                     try self.uringlator_start(id, op_type);
-                    break :again;
+                    continue :again;
                 }
             }
             break;
+        }
+
+        while (self.signaled) {
+            self.signaled = false;
+            const tmp = self.uringlator.complete(self, handler);
+            res.num_errors += tmp.num_errors;
+            res.num_completed += tmp.num_completed;
         }
 
         if (mode == .nonblocking) break;

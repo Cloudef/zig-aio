@@ -131,7 +131,11 @@ fn poll(self: *@This(), mode: aio.Dynamic.CompletionMode, comptime safety: Uring
     if (res != 1 and maybe_ovl == null) return;
 
     const id: aio.Id = switch (key.type) {
-        .nop => return, // non iocp operation finished
+        .nop => {
+            // non iocp operation finished
+            self.signaled = true;
+            return;
+        },
         .shutdown, .event_source, .child_exit => key.id,
         .overlapped => blk: {
             const parent: *IoContext = @fieldParentPtr("overlapped", maybe_ovl.?);
@@ -185,8 +189,12 @@ pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode, handler: anyty
             true => .nonblocking,
             false => mode,
         }, .thread_unsafe) catch unreachable;
-        self.signaled = false;
-        res = self.uringlator.complete(self, handler);
+        while (self.signaled) {
+            self.signaled = false;
+            const tmp = self.uringlator.complete(self, handler);
+            res.num_errors += tmp.num_errors;
+            res.num_completed += tmp.num_completed;
+        }
         if (mode == .nonblocking) break;
     }
     return res;
