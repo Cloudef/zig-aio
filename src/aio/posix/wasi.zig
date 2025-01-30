@@ -30,6 +30,7 @@ pub const EventSource = struct {
     }
 
     pub fn waitNonBlocking(self: *@This()) error{WouldBlock}!void {
+        // TODO: actually blocks
         var trash: [1]u8 = undefined;
         _ = std.posix.read(self.fd, &trash) catch |err| switch (err) {
             error.WouldBlock => return error.WouldBlock,
