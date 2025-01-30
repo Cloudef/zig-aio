@@ -147,13 +147,13 @@ pub const RwLock = struct {
         _ = @atomicRmw(usize, &rwl.state, .Add, WRITER, .seq_cst);
         try rwl.mutex.lock();
         rwl.locking_thread.store(std.Thread.getCurrentId(), .unordered);
-
+        var state = @atomicRmw(usize, &rwl.state, .Add, IS_WRITING -% WRITER, .seq_cst);
         while (true) {
-            const state = @atomicRmw(usize, &rwl.state, .Add, IS_WRITING -% WRITER, .seq_cst);
             if (state & READER_MASK == 0) break;
             try coro.io.single(.wait_event_source, .{
                 .source = &rwl.semaphore,
             });
+            state = @atomicLoad(usize, &rwl.state, .seq_cst);
         }
     }
 
@@ -164,6 +164,7 @@ pub const RwLock = struct {
     }
 
     pub fn lockShared(rwl: *@This()) !void {
+        // a coroutine may yield while holding a lock and then try lockShared on some other task
         while (rwl.locking_thread.load(.unordered) == std.Thread.getCurrentId()) {
             try rwl.mutex.lock();
             rwl.mutex.unlock();
@@ -187,12 +188,7 @@ pub const RwLock = struct {
     }
 
     pub fn unlockShared(rwl: *@This()) void {
-        if (rwl.locking_thread.load(.unordered) == std.Thread.getCurrentId()) {
-            @panic("RwLock: unlockShared while locked by the same thread");
-        }
-
         const state = @atomicRmw(usize, &rwl.state, .Sub, READER, .seq_cst);
-
         if ((state & READER_MASK == READER) and (state & IS_WRITING != 0))
             rwl.semaphore.notify();
     }
