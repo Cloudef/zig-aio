@@ -153,6 +153,7 @@ pub fn build(b: *std.Build) void {
     inline for (.{
         .ping_pongs,
         .ticker,
+        .flow,
     }) |bench| {
         const exe = b.addExecutable(.{
             .name = @tagName(bench),
