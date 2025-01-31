@@ -136,23 +136,21 @@ fn poll(self: *@This(), mode: aio.Dynamic.CompletionMode, comptime safety: Uring
             self.signaled = true;
             return;
         },
-        .shutdown, .event_source, .child_exit => key.id,
+        .shutdown => return error.Shutdown,
+        .event_source, .child_exit => key.id,
         .overlapped => blk: {
             const parent: *IoContext = @fieldParentPtr("overlapped", maybe_ovl.?);
             break :blk self.uringlator.ops.unsafeIdFromSlot(@intCast((@intFromPtr(parent) - @intFromPtr(self.uringlator.ops.soa.ovl)) / @sizeOf(IoContext)));
         },
     };
 
-    Uringlator.debug("iocp: {}", .{key.type});
+    // the id is no longer valid, probably raced with cancel
+    _ = self.uringlator.ops.lookup(id) catch return;
 
     if (res == 1) {
         switch (key.type) {
-            .nop => unreachable, // already handled
-            .shutdown => return error.Shutdown,
-            .event_source => {
-                const source: *EventSource = @ptrCast(@alignCast(maybe_ovl.?));
-                source.waitNonBlocking() catch {};
-            },
+            .nop, .shutdown => unreachable, // already handled
+            .event_source => {},
             .child_exit => {
                 switch (transferred) {
                     win32.system.system_services.JOB_OBJECT_MSG_EXIT_PROCESS, win32.system.system_services.JOB_OBJECT_MSG_ABNORMAL_EXIT_PROCESS => {},
@@ -258,7 +256,7 @@ fn getHandleAccessInfo(handle: HANDLE) !fs.FILE_ACCESS_FLAGS {
     return @bitCast(access.AccessFlags);
 }
 
-pub fn uringlator_queue(self: *@This(), id: aio.Id, comptime op_type: Operation, op: Operation.map.getAssertContains(op_type)) aio.Error!WindowsOperation {
+pub fn uringlator_queue(_: *@This(), _: aio.Id, comptime op_type: Operation, op: Operation.map.getAssertContains(op_type)) aio.Error!WindowsOperation {
     switch (op_type) {
         .poll => return aio.Error.Unsupported,
         .accept => op.out_socket.* = INVALID_SOCKET,
@@ -267,7 +265,7 @@ pub fn uringlator_queue(self: *@This(), id: aio.Id, comptime op_type: Operation,
     return .{
         .ovl = .{},
         .win_state = switch (op_type) {
-            .wait_event_source => .{ .event_source = .{ .id = id, .iocp = &self.iocp } },
+            .wait_event_source => .{ .event_source = undefined },
             inline .recv, .send => .{ .wsabuf = .{.{ .buf = @constCast(@ptrCast(op.buffer.ptr)), .len = @intCast(op.buffer.len) }} },
             .accept => .{ .accept = undefined },
             else => undefined,
@@ -408,8 +406,13 @@ pub fn uringlator_start(self: *@This(), id: aio.Id, op_type: Operation) !void {
         },
         .wait_event_source => {
             const state = self.uringlator.ops.getOnePtr(.state, id);
-            const win_state = self.uringlator.ops.getOnePtr(.win_state, id);
-            state.wait_event_source.source.native.addWaiter(&win_state.event_source.link);
+            if (state.wait_event_source.source.waitNonBlocking()) {
+                self.uringlator.finish(self, id, error.Success, .thread_unsafe);
+            } else |_| {
+                var ctx = &self.uringlator.ops.getOnePtr(.win_state, id).event_source;
+                ctx.* = .{ .id = id, .iocp = &self.iocp };
+                state.wait_event_source.source.native.addWaiter(&ctx.link);
+            }
         },
         // can be performed without a thread
         inline .notify_event_source, .close_event_source => |tag| {
@@ -460,7 +463,7 @@ pub fn uringlator_cancel(self: *@This(), id: aio.Id, op_type: Operation, err: Op
         .wait_event_source => {
             const state = self.uringlator.ops.getOnePtr(.state, id);
             var ctx = &self.uringlator.ops.getOnePtr(.win_state, id).event_source;
-            state.wait_event_source.source.native.removeWaiter(&ctx.link);
+            state.wait_event_source.source.native.removeWaiter(&ctx.link) catch return false;
             self.uringlator.finish(self, id, err, .thread_unsafe);
             return true;
         },
@@ -474,11 +477,6 @@ pub fn uringlator_complete(self: *@This(), id: aio.Id, op_type: Operation, failu
     defer ovl.deinit();
     if (failure == error.Success) {
         switch (op_type) {
-            .wait_event_source => {
-                const state = self.uringlator.ops.getOnePtr(.state, id);
-                var ctx = &self.uringlator.ops.getOnePtr(.win_state, id).event_source;
-                state.wait_event_source.source.native.removeWaiter(&ctx.link);
-            },
             .accept => {
                 const state = self.uringlator.ops.getOnePtr(.state, id);
                 if (state.accept.out_addr) |a| {
@@ -498,11 +496,6 @@ pub fn uringlator_complete(self: *@This(), id: aio.Id, op_type: Operation, failu
         }
     } else {
         switch (op_type) {
-            .wait_event_source => {
-                const state = self.uringlator.ops.getOnePtr(.state, id);
-                var ctx = &self.uringlator.ops.getOnePtr(.win_state, id).event_source;
-                state.wait_event_source.source.native.removeWaiter(&ctx.link);
-            },
             .accept => {
                 const out_socket = self.uringlator.ops.getOne(.out_result, id).cast(*std.posix.socket_t);
                 if (out_socket.* != INVALID_SOCKET) checked(CloseHandle(out_socket.*));
