@@ -7,9 +7,17 @@ on:
 jobs:
   automation:
     runs-on: ubuntu-latest
+
+    permissions:
+      id-token: write
+      contents: read
+
     steps:
       - uses: actions/checkout@v4
       - uses: DeterminateSystems/nix-installer-action@main
+        with:
+          determinate: true
+      - uses: DeterminateSystems/flakehub-cache-action@main
       - run: |
           nix run .#test
           nix run .#readme > README.md
@@ -20,11 +28,20 @@ jobs:
             README.md
           commit-msg: Automatic update
           github-token: ${{ secrets.GITHUB_TOKEN }}
+
   macos-test:
     runs-on: macos-latest
+
+    permissions:
+      id-token: write
+      contents: read
+
     steps:
       - uses: actions/checkout@v4
       - uses: DeterminateSystems/nix-installer-action@main
+        with:
+          determinate: true
+      - uses: DeterminateSystems/flakehub-cache-action@main
       - run: |
           nix run .#test
           nix run .#readme
