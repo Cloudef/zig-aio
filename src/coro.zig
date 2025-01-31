@@ -17,7 +17,7 @@ pub const Options = struct {
     /// Default io queue entries
     io_queue_entries: u16 = 4096,
     /// Default stack size for coroutines
-    stack_size: usize = 1.049e+6, // 1 MiB
+    stack_size: usize = 1_048_576, // 1 MiB
 };
 
 pub const Scheduler = @import("coro/Scheduler.zig");
