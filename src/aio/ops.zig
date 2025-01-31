@@ -25,7 +25,6 @@ const SharedError = error{
 /// Can be used to wakeup the backend, custom notifications, etc...
 pub const Nop = struct {
     pub const Error = SharedError;
-    ident: usize,
     out_id: ?*Id = null,
     out_error: ?*Error = null,
     userdata: usize = 0,

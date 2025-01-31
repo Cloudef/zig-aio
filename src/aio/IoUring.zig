@@ -31,7 +31,6 @@ pub const EventSource = linux.EventSource;
 
 const UringOperation = struct {
     const State = union {
-        nop: usize,
         child_exit: struct {
             child: std.process.Child.Id,
             state: union {
@@ -45,7 +44,6 @@ const UringOperation = struct {
 
         fn init(comptime op_type: Operation, op: Operation.map.getAssertContains(op_type)) @This() {
             return switch (op_type) {
-                .nop => .{ .nop = op.ident },
                 .child_exit => .{
                     .child_exit = .{
                         .child = op.child,
