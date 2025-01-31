@@ -295,7 +295,7 @@ pub const MkDirAt = struct {
     pub const Error = std.fs.Dir.MakeError || SharedError;
     dir: std.fs.Dir,
     path: [*:0]const u8,
-    mode: u32 = std.fs.Dir.default_mode,
+    mode: posix.mode_t = std.fs.Dir.default_mode,
     out_id: ?*Id = null,
     out_error: ?*Error = null,
     userdata: usize = 0,

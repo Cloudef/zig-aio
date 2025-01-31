@@ -97,7 +97,7 @@ const UringlatorOperation = struct {
         mkdir_at: struct {
             dir: std.fs.Dir,
             path: [*:0]const u8,
-            mode: u32,
+            mode: posix.mode_t,
         },
         symlink_at: struct {
             dir: std.fs.Dir,

@@ -11,6 +11,8 @@ const wasi = @import("wasi.zig");
 // Minimum stack size for the `perform` function
 pub const stack_size = 512000; // 512KB
 
+pub const mode_t = std.posix.mode_t;
+
 // This file implements stuff that's not in std, not implement properly or not
 // abstracted for all the platforms that we want to support
 
