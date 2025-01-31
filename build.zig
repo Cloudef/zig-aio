@@ -1,8 +1,6 @@
 const builtin = @import("builtin");
 const std = @import("std");
 
-const WASM_MEMORY_LIMIT: usize = 1e+9; // 1GiB
-
 pub fn build(b: *std.Build) void {
     var target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
@@ -101,7 +99,7 @@ pub fn build(b: *std.Build) void {
         });
         exe.root_module.addImport("aio", aio);
         exe.root_module.addImport("coro", coro);
-        var cmd = makeRunStep(b, target, exe, WASM_MEMORY_LIMIT, "example:" ++ @tagName(example), "Run " ++ @tagName(example) ++ " example");
+        var cmd = makeRunStep(b, target, exe, "example:" ++ @tagName(example), "Run " ++ @tagName(example) ++ " example", .{});
         run_all.dependOn(&cmd.step);
     }
 
@@ -124,7 +122,7 @@ pub fn build(b: *std.Build) void {
             .coro => addImportsFrom(tst.root_module, coro),
             else => unreachable,
         }
-        var cmd = makeRunStep(b, target, tst, WASM_MEMORY_LIMIT, "test:" ++ @tagName(mod), "Run " ++ @tagName(mod) ++ " tests");
+        var cmd = makeRunStep(b, target, tst, "test:" ++ @tagName(mod), "Run " ++ @tagName(mod) ++ " tests", .{});
         test_step.dependOn(&cmd.step);
     }
 
@@ -145,7 +143,7 @@ pub fn build(b: *std.Build) void {
         });
         exe.root_module.addImport("aio", aio);
         exe.root_module.addImport("coro", coro);
-        var cmd = makeRunStep(b, target, exe, WASM_MEMORY_LIMIT, "bug:" ++ @tagName(bug), "Check regression for #" ++ @tagName(bug));
+        var cmd = makeRunStep(b, target, exe, "bug:" ++ @tagName(bug), "Check regression for #" ++ @tagName(bug), .{});
         bug_step.dependOn(&cmd.step);
     }
 
@@ -166,7 +164,7 @@ pub fn build(b: *std.Build) void {
         });
         exe.root_module.addImport("aio", aio);
         exe.root_module.addImport("coro", coro);
-        var cmd = makeRunStep(b, target, exe, WASM_MEMORY_LIMIT, "bench:" ++ @tagName(bench), "Run " ++ @tagName(bench) ++ " benchmark");
+        var cmd = makeRunStep(b, target, exe, "bench:" ++ @tagName(bench), "Run " ++ @tagName(bench) ++ " benchmark", .{});
         bench_step.dependOn(&cmd.step);
     }
 }
@@ -176,11 +174,15 @@ fn addImportsFrom(dst: *std.Build.Module, src: *std.Build.Module) void {
     while (iter.next()) |e| dst.addImport(e.key_ptr.*, e.value_ptr.*);
 }
 
-fn makeRunStep(b: *std.Build, target: std.Build.ResolvedTarget, step: *std.Build.Step.Compile, max_memory: usize, name: []const u8, description: []const u8) *std.Build.Step.Run {
-    const cmd = switch (target.query.os_tag orelse builtin.os.tag) {
+const RunStepOptions = struct {
+    wasm_max_memory: usize = 1e+9, // 1GiB
+};
+
+fn runArtifactForStep(b: *std.Build, target: std.Build.ResolvedTarget, step: *std.Build.Step.Compile, opts: RunStepOptions) *std.Build.Step.Run {
+    return switch (target.query.os_tag orelse builtin.os.tag) {
         .wasi => blk: {
             step.shared_memory = true;
-            step.max_memory = std.mem.alignForward(usize, max_memory, 65536);
+            step.max_memory = std.mem.alignForward(usize, opts.wasm_max_memory, 65536);
             step.import_memory = true;
             step.export_memory = true;
             step.root_module.export_symbol_names = &.{"wasi_thread_start"};
@@ -190,6 +192,10 @@ fn makeRunStep(b: *std.Build, target: std.Build.ResolvedTarget, step: *std.Build
         },
         else => b.addRunArtifact(step),
     };
+}
+
+fn makeRunStep(b: *std.Build, target: std.Build.ResolvedTarget, step: *std.Build.Step.Compile, name: []const u8, description: []const u8, opts: RunStepOptions) *std.Build.Step.Run {
+    const cmd = runArtifactForStep(b, target, step, opts);
     if (b.args) |args| cmd.addArgs(args);
     const run = b.step(name, description);
     run.dependOn(&cmd.step);
