@@ -4,10 +4,14 @@ const std = @import("std");
 const coro = @import("coro");
 const aio = @import("aio");
 
+pub const std_options: std.Options = .{
+    .log_level = .debug,
+};
+
 const Ticker = struct {
     start: aio.EventSource,
     end: aio.EventSource,
-    running: std.atomic.Value(bool) = .init(true),
+    running: std.atomic.Value(bool) = std.atomic.Value(bool).init(true),
 
     pub fn init() !@This() {
         return .{
@@ -27,7 +31,7 @@ const Region = struct {
     id: u16,
     thread: std.Thread,
     ticker: *Ticker,
-    ready: std.atomic.Value(bool) = .init(false),
+    ready: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
 
     // thread local
     gpa: std.heap.GeneralPurposeAllocator(.{}) = undefined,
@@ -46,9 +50,9 @@ const Region = struct {
     }
 
     pub fn run(self: *@This()) !void {
-        self.gpa = .init;
+        self.gpa = .{};
         defer _ = self.gpa.deinit();
-        self.scheduler = try .init(self.gpa.allocator(), .{});
+        self.scheduler = try coro.Scheduler.init(self.gpa.allocator(), .{});
         defer self.scheduler.deinit();
         _ = try self.scheduler.spawn(tickerLoop, .{self}, .{ .detached = true });
         try self.scheduler.run(.wait);
@@ -86,9 +90,9 @@ fn RegionScheduler(comptime num_regions: u16) type {
 
         pub fn init(self: *@This()) void {
             errdefer @panic("welp, lets not even try");
-            self.ticker = try .init();
+            self.ticker = try Ticker.init();
             for (&self.region, 0..) |*region, id| try region.init(@intCast(id + 1), &self.ticker);
-            self.thread = try .spawn(.{}, @This().run, .{self});
+            self.thread = try std.Thread.spawn(.{}, @This().run, .{self});
         }
 
         pub fn deinit(self: *@This()) void {
