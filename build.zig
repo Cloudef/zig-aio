@@ -99,6 +99,8 @@ pub fn build(b: *std.Build) void {
         });
         exe.root_module.addImport("aio", aio);
         exe.root_module.addImport("coro", coro);
+        const install = b.addInstallArtifact(exe, .{ .dest_dir = .{ .override = .{ .custom = "example" } } });
+        b.getInstallStep().dependOn(&install.step);
         var cmd = makeRunStep(b, target, exe, "example:" ++ @tagName(example), "Run " ++ @tagName(example) ++ " example", .{});
         run_all.dependOn(&cmd.step);
     }
@@ -164,6 +166,8 @@ pub fn build(b: *std.Build) void {
         });
         exe.root_module.addImport("aio", aio);
         exe.root_module.addImport("coro", coro);
+        const install = b.addInstallArtifact(exe, .{ .dest_dir = .{ .override = .{ .custom = "bench" } } });
+        b.getInstallStep().dependOn(&install.step);
         var cmd = makeRunStep(b, target, exe, "bench:" ++ @tagName(bench), "Run " ++ @tagName(bench) ++ " benchmark", .{});
         bench_step.dependOn(&cmd.step);
     }
