@@ -15,9 +15,7 @@ const Result = struct {
 
 const UringlatorOperation = struct {
     const State = union {
-        nop: struct {
-            ident: usize,
-        },
+        nop: struct {},
         fsync: struct {
             file: std.fs.File,
         },

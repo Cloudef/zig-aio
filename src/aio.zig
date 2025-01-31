@@ -296,7 +296,7 @@ test "Nop" {
         }
     };
     const handler: Handler = .{};
-    try dynamic.queue(op(.nop, .{ .ident = 69, .userdata = 42 }, .unlinked), handler);
+    try dynamic.queue(op(.nop, .{ .userdata = 42 }, .unlinked), handler);
     try std.testing.expectEqual(0, dynamic.completeAll(handler));
 }
 
