@@ -23,6 +23,7 @@
 
       # nix run .#test
       apps.test = with env.pkgs; env.app [wasmtime] ''
+        set -e
         zig version
         if [[ "$(uname)" == "Linux" ]]; then
           echo "zig build test bug -Daio:posix=disable -Dsanitize=true"
