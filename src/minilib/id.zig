@@ -61,6 +61,7 @@ pub fn Id(IndexBits: type, EntropyBits: type) type {
 
             return struct {
                 cursor: IndexBits = 0,
+                in_use: IndexBits = 0,
                 slots: [*]EntropyBits,
                 used: std.DynamicBitSetUnmanaged,
                 soa: SoAStruct,
@@ -92,11 +93,11 @@ pub fn Id(IndexBits: type, EntropyBits: type) type {
                 }
 
                 pub fn empty(self: *@This()) bool {
-                    return self.used.count() == 0;
+                    return self.in_use == 0;
                 }
 
                 pub fn next(self: *@This()) ?IdType {
-                    if (self.used.count() == self.used.bit_length) return null;
+                    if (self.in_use == self.used.bit_length) return null;
                     const n: IndexBits = @intCast(self.used.bit_length);
                     defer self.cursor = (self.cursor +| 1) % n;
                     while (self.used.isSet(self.cursor)) self.cursor = (self.cursor +| 1) % n;
@@ -118,12 +119,14 @@ pub fn Id(IndexBits: type, EntropyBits: type) type {
                     if (self.used.isSet(id.slot)) return error.AlreadyInUse;
                     self.used.set(id.slot);
                     self.set(id, initial);
+                    self.in_use += 1;
                 }
 
                 pub fn release(self: *@This(), id: IdType) error{NotFound}!void {
                     const idx = try self.lookup(id);
                     self.slots[idx] +%= 1;
                     self.used.unset(idx);
+                    self.in_use -= 1;
                 }
 
                 pub fn get(self: *@This(), id: IdType) SoALayout {
