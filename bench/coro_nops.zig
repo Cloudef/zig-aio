@@ -12,8 +12,9 @@ const TOTAL_NOPS = 2_500_000;
 fn nopLoop(total: usize) !void {
     var i: usize = 0;
     while (i < total) {
-        try coro.io.single(.nop, .{});
-        i += 1;
+        const chunk = 32;
+        try coro.io.multi(.{aio.op(.nop, .{}, .unlinked)} ** chunk);
+        i += chunk;
     }
 }
 
@@ -23,7 +24,8 @@ pub fn main() !void {
 
     const allocator = gpa.allocator();
 
-    var scheduler = try coro.Scheduler.init(allocator, .{});
+    const queue_size: u16 = 32_768;
+    var scheduler = try coro.Scheduler.init(allocator, .{ .io_queue_entries = queue_size });
     defer scheduler.deinit();
 
     _ = try scheduler.spawn(nopLoop, .{TOTAL_NOPS}, .{});
