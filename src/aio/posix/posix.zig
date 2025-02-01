@@ -259,7 +259,8 @@ pub fn perform(comptime op_type: Operation, op: Operation.map.getAssertContains(
         .close_dir => std.posix.close(op.dir.fd),
         .rename_at => try renameAtUring(op.old_dir, op.old_path, op.new_dir, op.new_path),
         .unlink_at => try std.posix.unlinkatZ(op.dir.fd, op.path, 0),
-        .mkdir_at => try std.posix.mkdiratZ(op.dir.fd, op.path, op.mode),
+        // TODO: remove intCast once zig 0.14 is out
+        .mkdir_at => try std.posix.mkdiratZ(op.dir.fd, op.path, @intCast(op.mode)),
         .symlink_at => try symlinkAtUring(op.target, op.dir, op.link_path),
         .child_exit => {
             var watcher: ChildWatcher = .{ .id = op.child, .fd = readiness.fd };
