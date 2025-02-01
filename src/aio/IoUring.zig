@@ -114,7 +114,8 @@ pub fn isSupported(op_types: []const Operation) bool {
 /// TODO: give options perhaps? More customization?
 pub fn init(allocator: std.mem.Allocator, n: u16) aio.Error!@This() {
     Supported.query();
-    const n2 = std.math.ceilPowerOfTwo(u16, n) catch unreachable;
+    // TODO: give backends ability to return the actual chosen queue size
+    const n2 = std.math.ceilPowerOfTwo(u16, n) catch n;
     var io = try uring_init(n2);
     errdefer io.deinit();
     var ops = try IdAllocator.init(allocator, @intCast(io.sq.sqes.len));
