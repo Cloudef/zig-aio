@@ -128,6 +128,7 @@ pub const Dynamic = struct {
 };
 
 pub inline fn sanityCheck(pairs: anytype) void {
+    @setEvalBranchQuota(pairs.len * 1024);
     const ti = @typeInfo(@TypeOf(pairs));
     if (comptime (ti == .Struct and ti.Struct.is_tuple) or ti == .Array) {
         if (comptime pairs.len == 0) @compileError("no work to be done");
