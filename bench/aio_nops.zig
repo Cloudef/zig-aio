@@ -6,7 +6,7 @@ pub const std_options: std.Options = .{
     .log_level = .debug,
 };
 
-const TOTAL_NOPS = 2_500_000;
+const TOTAL_NOPS = 2_500_000_00;
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
