@@ -154,6 +154,7 @@ pub fn build(b: *std.Build) void {
         .ping_pongs,
         .ticker,
         .flow,
+        .aio_nops,
         .coro_nops,
     }) |bench| {
         const exe = b.addExecutable(.{
