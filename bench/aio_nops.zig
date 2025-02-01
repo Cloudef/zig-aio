@@ -8,6 +8,16 @@ pub const std_options: std.Options = .{
 
 const TOTAL_NOPS = 2_500_000_00;
 
+fn nopLoop(io: *aio.Dynamic, total: usize) !void {
+    var i: usize = 0;
+    while (i < total) {
+        const batch = 32;
+        try io.queue(.{aio.op(.nop, .{}, .unlinked)} ** batch, {});
+        const res = try io.complete(.blocking, {});
+        i += res.num_completed;
+    }
+}
+
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
@@ -18,15 +28,10 @@ pub fn main() !void {
     var io = try aio.Dynamic.init(allocator, queue_size);
     defer io.deinit(allocator);
 
+    var total: usize = TOTAL_NOPS;
+    std.mem.doNotOptimizeAway(&total);
     const start_time = try std.time.Instant.now();
-    var i: usize = 0;
-    while (i < TOTAL_NOPS) {
-        for (0..queue_size) |_| {
-            try io.queue(aio.op(.nop, .{}, .unlinked), {});
-        }
-        const res = try io.complete(.blocking, {});
-        i += res.num_completed;
-    }
+    try nopLoop(&io, total);
     const end_time = try std.time.Instant.now();
 
     const elapsed: f64 = @floatFromInt(end_time.since(start_time));

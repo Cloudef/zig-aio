@@ -12,9 +12,9 @@ const TOTAL_NOPS = 2_500_000_00;
 fn nopLoop(total: usize) !void {
     var i: usize = 0;
     while (i < total) {
-        const chunk = 32;
-        try coro.io.multi(.{aio.op(.nop, .{}, .unlinked)} ** chunk);
-        i += chunk;
+        const batch = 32;
+        try coro.io.multi(.{aio.op(.nop, .{}, .unlinked)} ** batch);
+        i += batch;
     }
 }
 
