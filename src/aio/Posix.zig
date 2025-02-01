@@ -53,7 +53,7 @@ pub fn isSupported(_: []const Operation) bool {
 pub fn init(allocator: std.mem.Allocator, n: u16) aio.Error!@This() {
     var tqueue = try TimerQueue.init(allocator);
     errdefer tqueue.deinit();
-    var pfd = try FixedArrayList(std.posix.pollfd, u32).init(allocator, n + 1);
+    var pfd = try FixedArrayList(std.posix.pollfd, u32).init(allocator, @as(u32, @intCast(n)) + 1);
     errdefer pfd.deinit(allocator);
     var pid = try FixedArrayList(aio.Id, u16).init(allocator, n);
     errdefer pid.deinit(allocator);
