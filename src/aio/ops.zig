@@ -293,9 +293,10 @@ pub const UnlinkAt = struct {
 /// std.fs.Dir.makeDir
 pub const MkDirAt = struct {
     pub const Error = std.fs.Dir.MakeError || SharedError;
+    pub const default_mode = if (std.posix.mode_t == u0) 0 else std.fs.Dir.default_mode;
     dir: std.fs.Dir,
     path: [*:0]const u8,
-    mode: std.posix.mode_t = std.fs.Dir.default_mode,
+    mode: std.posix.mode_t = default_mode,
     out_id: ?*Id = null,
     out_error: ?*Error = null,
     userdata: usize = 0,
