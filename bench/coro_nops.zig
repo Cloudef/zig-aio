@@ -7,7 +7,7 @@ pub const std_options: std.Options = .{
     .log_level = .debug,
 };
 
-const TOTAL_NOPS = 2_500_000;
+const TOTAL_NOPS = 2_500_000_00;
 
 fn nopLoop(total: usize) !void {
     var i: usize = 0;
