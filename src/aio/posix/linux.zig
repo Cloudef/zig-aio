@@ -62,7 +62,7 @@ pub const ChildWatcher = struct {
         var siginfo: std.posix.siginfo_t = undefined;
         while (true) {
             const res = std.os.linux.waitid(.PIDFD, self.fd, &siginfo, std.posix.W.EXITED | std.posix.W.NOHANG);
-            return switch (errnoFromSyscall(res)) {
+            return switch (std.os.linux.E.init(res)) {
                 .SUCCESS => posix.statusToTerm(@intCast(siginfo.fields.common.second.sigchld.status)),
                 .INTR => continue,
                 .CHILD => error.NotFound,
@@ -79,13 +79,6 @@ pub const ChildWatcher = struct {
     }
 };
 
-// std.os.linux.errnoFromSyscall is not pub :(
-pub fn errnoFromSyscall(r: usize) std.os.linux.E {
-    const signed_r: isize = @bitCast(r);
-    const int = if (signed_r > -4096 and signed_r < 0) -signed_r else 0;
-    return @enumFromInt(int);
-}
-
 pub const PidfdOpenError = error{
     ProcessFdQuotaExceeded,
     SystemFdQuotaExceeded,
@@ -98,7 +91,7 @@ pub const PidfdOpenError = error{
 pub fn pidfd_open(id: std.posix.fd_t, flags: std.posix.O) PidfdOpenError!std.posix.fd_t {
     while (true) {
         const res = std.os.linux.pidfd_open(id, @bitCast(flags));
-        return switch (errnoFromSyscall(res)) {
+        return switch (std.os.linux.E.init(res)) {
             .SUCCESS => @intCast(res),
             .INVAL => unreachable,
             .AGAIN, .INTR => continue,
@@ -124,7 +117,7 @@ pub fn renameat2(
 ) std.posix.RenameError!void {
     while (true) {
         const res = std.os.linux.renameat2(old_dir, old_path, new_dir, new_path, flags);
-        const e = errnoFromSyscall(res);
+        const e = std.os.linux.E.init(res);
         return switch (e) {
             .SUCCESS => {},
             .INVAL => unreachable,

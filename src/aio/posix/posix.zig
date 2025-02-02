@@ -346,7 +346,7 @@ fn recvmsgPosix(sockfd: std.posix.socket_t, msg: *msghdr, flags: u32) RecvMsgErr
         switch (builtin.target.os.tag) {
             .linux => {
                 const res = std.os.linux.recvmsg(sockfd, msg, flags);
-                return switch (linux.errnoFromSyscall(res)) {
+                return switch (std.os.linux.E.init(res)) {
                     .SUCCESS => @intCast(res),
                     .INVAL, .BADF, .NOTSOCK => unreachable,
                     .AGAIN => error.WouldBlock,
