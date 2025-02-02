@@ -21,11 +21,11 @@ pub fn build(b: *std.Build) void {
         aio_opts.addOption(bool, "debug", debug);
 
         const PosixMode = enum { auto, force, disable };
-        const posix = b.option(PosixMode, "aio:posix", "posix mode [auto, force, disable]") orelse .auto;
+        const posix = b.option(PosixMode, "aio:posix", "posix mode") orelse .auto;
         aio_opts.addOption(PosixMode, "posix", posix);
 
         const WasiMode = enum { wasi, wasix };
-        const wasi = b.option(WasiMode, "aio:wasi", "wasi mode [wasi, wasix]") orelse .wasi;
+        const wasi = b.option(WasiMode, "aio:wasi", "wasi mode") orelse .wasi;
         aio_opts.addOption(WasiMode, "wasi", wasi);
     }
 
