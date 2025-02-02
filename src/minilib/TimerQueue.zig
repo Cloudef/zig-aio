@@ -154,7 +154,7 @@ fn Queue(comptime name: []const u8, Impl: type) type {
 /// This is the simplest one to implement, as we don't have to register suspend callbacks from the OS
 const MonotonicQueue = Queue("MonotonicQueue", struct {
     pub fn now() !u128 {
-        const clock_id = switch (builtin.os.tag) {
+        const clock_id: std.posix.clockid_t = switch (builtin.os.tag) {
             .windows => {
                 // TODO: make this equivalent to linux MONOTONIC
                 // <https://stackoverflow.com/questions/24330496/how-do-i-create-monotonic-clock-on-windows-which-doesnt-tick-during-suspend>
@@ -184,12 +184,11 @@ const MonotonicQueue = Queue("MonotonicQueue", struct {
                 if (rc != .SUCCESS) return error.Unsupported;
                 return ns;
             },
-            .macos, .ios, .tvos, .watchos, .visionos => std.posix.CLOCK.UPTIME_RAW,
-            .linux, .openbsd => std.posix.CLOCK.MONOTONIC,
-            else => std.posix.CLOCK.UPTIME,
+            .macos, .ios, .tvos, .watchos, .visionos => .UPTIME_RAW,
+            .linux, .openbsd => .MONOTONIC,
+            else => .UPTIME,
         };
-        var ts: std.posix.timespec = undefined;
-        std.posix.clock_gettime(clock_id, &ts) catch return error.Unsupported;
+        const ts = std.posix.clock_gettime(clock_id) catch return error.Unsupported;
         return (@as(u128, @intCast(ts.sec)) * std.time.ns_per_s) + @as(u128, @intCast(ts.nsec));
     }
 
@@ -206,7 +205,7 @@ const MonotonicQueue = Queue("MonotonicQueue", struct {
 /// and check if any timers got expired
 const BoottimeQueue = Queue("BoottimeQueue", struct {
     pub fn now() !u128 {
-        const clock_id = switch (builtin.os.tag) {
+        const clock_id: std.posix.clockid_t = switch (builtin.os.tag) {
             .windows => {
                 const qpc = std.os.windows.QueryPerformanceCounter();
                 const qpf = std.os.windows.QueryPerformanceFrequency();
@@ -234,12 +233,11 @@ const BoottimeQueue = Queue("BoottimeQueue", struct {
                 if (rc != .SUCCESS) return error.Unsupported;
                 return ns;
             },
-            .macos, .ios, .tvos, .watchos, .visionos => std.posix.CLOCK.MONOTONIC_RAW,
-            .linux => std.posix.CLOCK.BOOTTIME,
-            else => std.posix.CLOCK.MONOTONIC,
+            .macos, .ios, .tvos, .watchos, .visionos => .MONOTONIC_RAW,
+            .linux => .BOOTTIME,
+            else => .MONOTONIC,
         };
-        var ts: std.posix.timespec = undefined;
-        std.posix.clock_gettime(clock_id, &ts) catch return error.Unsupported;
+        const ts = std.posix.clock_gettime(clock_id) catch return error.Unsupported;
         return (@as(u128, @intCast(ts.sec)) * std.time.ns_per_s) + @as(u128, @intCast(ts.nsec));
     }
 
@@ -280,8 +278,7 @@ const RealtimeQueue = Queue("RealtimeQueue", struct {
                 return value.toEpoch();
             },
             else => {
-                var ts: std.posix.timespec = undefined;
-                std.posix.clock_gettime(std.posix.CLOCK.REALTIME, &ts) catch return error.Unsupported;
+                const ts = std.posix.clock_gettime(.REALTIME) catch return error.Unsupported;
                 return (@as(u128, @intCast(ts.sec)) * std.time.ns_per_s) + @as(u128, @intCast(ts.nsec));
             },
         }
@@ -401,9 +398,10 @@ const LinuxTimerQueue = struct {
     pub fn schedule(self: *@This(), clock: Clock, ns: u128, user_data: usize, opts: TimeoutOptions) !void {
         if (opts.expirations != 0 and opts.absolute) unreachable; // expirations must be 1 with absolute time
         const fd = switch (clock) {
-            .monotonic => std.posix.timerfd_create(std.posix.CLOCK.MONOTONIC, .{ .CLOEXEC = true, .NONBLOCK = true }),
-            .boottime => std.posix.timerfd_create(std.posix.CLOCK.BOOTTIME, .{ .CLOEXEC = true, .NONBLOCK = true }),
-            .realtime => std.posix.timerfd_create(std.posix.CLOCK.REALTIME, .{ .CLOEXEC = true, .NONBLOCK = true }),
+            .monotonic => std.posix.timerfd_create(.MONOTONIC, .{ .CLOEXEC = true, .NONBLOCK = true }),
+            // TODO: https://github.com/ziglang/zig/pull/22725
+            .boottime => std.posix.timerfd_create(@enumFromInt(@intFromEnum(std.posix.CLOCK.BOOTTIME)), .{ .CLOEXEC = true, .NONBLOCK = true }),
+            .realtime => std.posix.timerfd_create(.REALTIME, .{ .CLOEXEC = true, .NONBLOCK = true }),
         } catch |err| return switch (err) {
             error.AccessDenied => unreachable,
             else => |e| e,
