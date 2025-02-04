@@ -145,7 +145,7 @@ fn poll(self: *@This(), mode: aio.Dynamic.CompletionMode, comptime safety: Uring
     };
 
     // the id is no longer valid, probably raced with cancel
-    _ = self.uringlator.ops.lookup(id) catch return;
+    self.uringlator.ops.lookup(id) catch return;
 
     if (res == 1) {
         switch (key.type) {
