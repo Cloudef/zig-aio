@@ -43,6 +43,50 @@ pub inline fn socket(domain: u32, socket_type: u32, protocol: u32) std.posix.Soc
     return posix.socket(domain, socket_type, protocol);
 }
 
+/// IO backend
+const IO = switch (builtin.target.os.tag) {
+    .linux => @import("aio/linux.zig").IO,
+    .windows => @import("aio/Windows.zig"),
+    else => @import("aio/Posix.zig"),
+};
+
+/// Checks if the current backend supports the operations
+pub fn isSupported(operations: []const Operation) bool {
+    return IO.isSupported(operations);
+}
+
+pub const EventSource = struct {
+    native: IO.EventSource,
+
+    pub const Error = error{
+        ProcessFdQuotaExceeded,
+        SystemFdQuotaExceeded,
+        SystemResources,
+        Unexpected,
+    };
+
+    pub fn init() @This().Error!@This() {
+        return .{ .native = try IO.EventSource.init() };
+    }
+
+    pub fn deinit(self: *@This()) void {
+        self.native.deinit();
+        self.* = undefined;
+    }
+
+    pub fn notify(self: *@This()) void {
+        self.native.notify();
+    }
+
+    pub fn wait(self: *@This()) void {
+        self.native.wait();
+    }
+
+    pub fn waitNonBlocking(self: *@This()) error{WouldBlock}!void {
+        return self.native.waitNonBlocking();
+    }
+};
+
 /// Initialize a single operation for a IO function
 pub fn op(comptime op_type: Operation, values: Operation.map.getAssertContains(op_type), comptime link: Link) struct {
     op: @TypeOf(values),
@@ -51,6 +95,35 @@ pub fn op(comptime op_type: Operation, values: Operation.map.getAssertContains(o
     pub const MAGIC_AIO_OP = 0xdeadbeef;
 } {
     return .{ .op = values };
+}
+
+pub inline fn sanityCheck(pairs: anytype) void {
+    @setEvalBranchQuota(pairs.len * 1024);
+    const ti = @typeInfo(@TypeOf(pairs));
+    if (comptime (ti == .Struct and ti.Struct.is_tuple) or ti == .Array) {
+        if (comptime pairs.len == 0) @compileError("no work to be done");
+        inline for (pairs, 0..) |pair, idx| {
+            if (!@hasDecl(@TypeOf(pair), "MAGIC_AIO_OP")) {
+                @compileError("Pass ops using the aio.op function");
+            }
+            if (comptime pair.tag == .link_timeout) {
+                if (comptime idx == 0) {
+                    @compileError("aio.LinkTimeout is not linked to any operation");
+                } else {
+                    inline for (pairs, 0..) |pair2, idx2| {
+                        if (idx2 == idx - 1 and pair2.link == .unlinked) {
+                            @compileError("aio.LinkTimeout is not linked to any operation");
+                        }
+                    }
+                }
+            }
+            if (comptime idx == pairs.len - 1 and pair.link != .unlinked) {
+                @compileError("Last operation is not .unlinked");
+            }
+        }
+    } else {
+        @compileError("Expected a tuple or array of operations");
+    }
 }
 
 pub const Error = error{
@@ -127,35 +200,6 @@ pub const Dynamic = struct {
     }
 };
 
-pub inline fn sanityCheck(pairs: anytype) void {
-    @setEvalBranchQuota(pairs.len * 1024);
-    const ti = @typeInfo(@TypeOf(pairs));
-    if (comptime (ti == .Struct and ti.Struct.is_tuple) or ti == .Array) {
-        if (comptime pairs.len == 0) @compileError("no work to be done");
-        inline for (pairs, 0..) |pair, idx| {
-            if (!@hasDecl(@TypeOf(pair), "MAGIC_AIO_OP")) {
-                @compileError("Pass ops using the aio.op function");
-            }
-            if (comptime pair.tag == .link_timeout) {
-                if (comptime idx == 0) {
-                    @compileError("aio.LinkTimeout is not linked to any operation");
-                } else {
-                    inline for (pairs, 0..) |pair2, idx2| {
-                        if (idx2 == idx - 1 and pair2.link == .unlinked) {
-                            @compileError("aio.LinkTimeout is not linked to any operation");
-                        }
-                    }
-                }
-            }
-            if (comptime idx == pairs.len - 1 and pair.link != .unlinked) {
-                @compileError("Last operation is not .unlinked");
-            }
-        }
-    } else {
-        @compileError("Expected a tuple or array of operations");
-    }
-}
-
 /// Completes a list of operations immediately, blocks until complete
 /// For error handling you must check the `out_error` field in the operation
 /// Returns the number of errors occured, 0 if there were no errors
@@ -177,49 +221,6 @@ pub inline fn single(comptime op_type: Operation, values: Operation.map.getAsser
     cpy.out_error = &err;
     if (try complete(.{op(op_type, cpy, .unlinked)}) > 0) return err;
 }
-
-/// Checks if the current backend supports the operations
-pub fn isSupported(operations: []const Operation) bool {
-    return IO.isSupported(operations);
-}
-
-pub const EventSource = struct {
-    native: IO.EventSource,
-
-    pub const Error = error{
-        ProcessFdQuotaExceeded,
-        SystemFdQuotaExceeded,
-        SystemResources,
-        Unexpected,
-    };
-
-    pub fn init() @This().Error!@This() {
-        return .{ .native = try IO.EventSource.init() };
-    }
-
-    pub fn deinit(self: *@This()) void {
-        self.native.deinit();
-        self.* = undefined;
-    }
-
-    pub fn notify(self: *@This()) void {
-        self.native.notify();
-    }
-
-    pub fn wait(self: *@This()) void {
-        self.native.wait();
-    }
-
-    pub fn waitNonBlocking(self: *@This()) error{WouldBlock}!void {
-        return self.native.waitNonBlocking();
-    }
-};
-
-const IO = switch (builtin.target.os.tag) {
-    .linux => @import("aio/linux.zig").IO,
-    .windows => @import("aio/Windows.zig"),
-    else => @import("aio/Posix.zig"),
-};
 
 const ops = @import("aio/ops.zig");
 pub const Operation = ops.Operation;
