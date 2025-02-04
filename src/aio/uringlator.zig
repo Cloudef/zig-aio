@@ -303,7 +303,7 @@ pub fn Uringlator(BackendOperation: type) type {
         }
 
         fn cancel(self: *@This(), id: aio.Id, err: Operation.Error, backend: anytype) error{ NotFound, InProgress }!void {
-            _ = try self.ops.lookup(id);
+            try self.ops.lookup(id);
             if (self.started.isSet(id.slot)) {
                 std.debug.assert(std.mem.indexOfScalar(aio.Id, self.queued.constSlice(), id) == null);
                 if (!backend.uringlator_cancel(id, self.ops.getOne(.type, id), err)) {
@@ -344,7 +344,7 @@ pub fn Uringlator(BackendOperation: type) type {
 
             var num_errors: u16 = 0;
             for (finished) |res| {
-                _ = self.ops.lookup(res.id) catch continue; // raced
+                self.ops.lookup(res.id) catch continue; // raced
                 const op_type = self.ops.getOne(.type, res.id);
                 std.debug.assert(std.mem.indexOfScalar(aio.Id, self.queued.constSlice(), res.id) == null);
 
@@ -366,7 +366,7 @@ pub fn Uringlator(BackendOperation: type) type {
                                 failure = error.Success;
                             } else {
                                 const cres: enum { ok, not_found } = blk: {
-                                    _ = self.ops.lookup(cid) catch break :blk .not_found;
+                                    self.ops.lookup(cid) catch break :blk .not_found;
                                     std.debug.assert(self.started.isSet(cid.slot));
                                     std.debug.assert(!self.link_lock.isSet(cid.slot));
                                     self.ops.setOne(.next, cid, cid); // sever the link
@@ -414,7 +414,7 @@ pub fn Uringlator(BackendOperation: type) type {
                             break :blk false;
                         };
                         if (!raced) {
-                            _ = self.ops.lookup(next) catch unreachable; // inconsistent state
+                            self.ops.lookup(next) catch unreachable; // inconsistent state
                             std.debug.assert(self.started.isSet(next.slot));
                             std.debug.assert(!self.link_lock.isSet(next.slot));
                             _ = switch (link) {
@@ -424,13 +424,13 @@ pub fn Uringlator(BackendOperation: type) type {
                             };
                         }
                     } else if ((link == .soft or op_type == .link_timeout) and failure != error.Success) {
-                        _ = self.ops.lookup(next) catch unreachable; // inconsistent state
+                        self.ops.lookup(next) catch unreachable; // inconsistent state
                         std.debug.assert(!self.started.isSet(next.slot));
                         std.debug.assert(self.link_lock.isSet(next.slot));
                         std.debug.assert(std.mem.indexOfScalar(aio.Id, self.queued.constSlice(), next) != null);
                         self.cancel(next, error.Canceled, backend) catch unreachable;
                     } else {
-                        _ = self.ops.lookup(next) catch unreachable; // inconsistent state
+                        self.ops.lookup(next) catch unreachable; // inconsistent state
                         std.debug.assert(!self.started.isSet(next.slot));
                         std.debug.assert(self.link_lock.isSet(next.slot));
                         std.debug.assert(std.mem.indexOfScalar(aio.Id, self.queued.constSlice(), next) != null);

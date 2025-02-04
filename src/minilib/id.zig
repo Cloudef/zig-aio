@@ -108,10 +108,9 @@ pub fn Id(IndexBits: type, EntropyBits: type) type {
                     return .{ .slot = slot, .generation = self.slots[slot] };
                 }
 
-                pub fn lookup(self: *@This(), id: IdType) error{NotFound}!IndexBits {
+                pub fn lookup(self: *@This(), id: IdType) error{NotFound}!void {
                     if (self.slots[id.slot] != id.generation) return error.NotFound;
                     if (!self.used.isSet(id.slot)) return error.NotFound;
-                    return id.slot;
                 }
 
                 pub fn use(self: *@This(), id: IdType, initial: SoALayout) error{AlreadyInUse}!void {
@@ -123,41 +122,41 @@ pub fn Id(IndexBits: type, EntropyBits: type) type {
                 }
 
                 pub fn release(self: *@This(), id: IdType) error{NotFound}!void {
-                    const idx = try self.lookup(id);
-                    self.slots[idx] +%= 1;
-                    self.used.unset(idx);
+                    try self.lookup(id);
+                    self.slots[id.slot] +%= 1;
+                    self.used.unset(id.slot);
                     self.in_use -= 1;
                 }
 
                 pub fn get(self: *@This(), id: IdType) SoALayout {
-                    const idx = self.lookup(id) catch unreachable;
+                    self.lookup(id) catch unreachable;
                     var v: SoALayout = undefined;
                     inline for (std.meta.fields(SoALayout)) |field| {
-                        @field(v, field.name) = @field(self.soa, field.name)[idx];
+                        @field(v, field.name) = @field(self.soa, field.name)[id.slot];
                     }
                     return v;
                 }
 
                 pub fn getOne(self: *@This(), comptime field: FieldEnum, id: IdType) @FieldType(SoALayout, @tagName(field)) {
-                    const idx = self.lookup(id) catch unreachable;
-                    return @field(self.soa, @tagName(field))[idx];
+                    self.lookup(id) catch unreachable;
+                    return @field(self.soa, @tagName(field))[id.slot];
                 }
 
                 pub fn getOnePtr(self: *@This(), comptime field: FieldEnum, id: IdType) *@FieldType(SoALayout, @tagName(field)) {
-                    const idx = self.lookup(id) catch unreachable;
-                    return &@field(self.soa, @tagName(field))[idx];
+                    self.lookup(id) catch unreachable;
+                    return &@field(self.soa, @tagName(field))[id.slot];
                 }
 
                 pub fn set(self: *@This(), id: IdType, v: SoALayout) void {
-                    const idx = self.lookup(id) catch unreachable;
+                    self.lookup(id) catch unreachable;
                     inline for (std.meta.fields(SoALayout)) |field| {
-                        @field(self.soa, field.name)[idx] = @field(v, field.name);
+                        @field(self.soa, field.name)[id.slot] = @field(v, field.name);
                     }
                 }
 
                 pub fn setOne(self: *@This(), comptime field: FieldEnum, id: IdType, v: @FieldType(SoALayout, @tagName(field))) void {
-                    const idx = self.lookup(id) catch unreachable;
-                    @field(self.soa, @tagName(field))[idx] = v;
+                    self.lookup(id) catch unreachable;
+                    @field(self.soa, @tagName(field))[id.slot] = v;
                 }
             };
         }
