@@ -356,9 +356,9 @@ pub fn Uringlator(BackendOperation: type) type {
                     switch (op_type) {
                         .link_timeout => {
                             const cid = self.ops.getOne(.prev, res.id);
-                            std.debug.assert(!std.meta.eql(cid, res.id));
 
                             const raced = blk: {
+                                if (std.meta.eql(cid, res.id)) break :blk true;
                                 for (finished) |res2| if (std.meta.eql(cid, res2.id)) break :blk true;
                                 break :blk false;
                             };
@@ -370,7 +370,6 @@ pub fn Uringlator(BackendOperation: type) type {
                                     self.ops.lookup(cid) catch break :blk .not_found;
                                     std.debug.assert(self.started.isSet(cid.slot));
                                     std.debug.assert(!self.link_lock.isSet(cid.slot));
-                                    self.ops.setOne(.next, cid, cid); // sever the link
                                     self.cancel(cid, error.Canceled, backend) catch {};
                                     // ^ even if the operation is not in cancelable state anymore
                                     //   the backend will still wait for it to complete
@@ -435,6 +434,17 @@ pub fn Uringlator(BackendOperation: type) type {
                         std.debug.assert(self.link_lock.isSet(next.slot));
                         self.link_lock.unset(next.slot);
                     }
+
+                    // sever the link with the next op in chain
+                    self.ops.setOne(.prev, next, next);
+                }
+
+                const prev = self.ops.getOne(.prev, res.id);
+                if (!std.meta.eql(prev, res.id)) {
+                    if (self.ops.lookup(prev)) {
+                        // sever the link with the previous op in chain
+                        self.ops.setOne(.next, prev, prev);
+                    } else |_| {}
                 }
 
                 backend.uringlator_complete(res.id, op_type, failure);
