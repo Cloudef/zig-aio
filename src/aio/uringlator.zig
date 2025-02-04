@@ -467,6 +467,7 @@ pub fn Uringlator(BackendOperation: type) type {
 
         pub fn finish(self: *@This(), backend: anytype, id: aio.Id, failure: Operation.Error, comptime safety: Safety) void {
             debug("finish: {} {}", .{ id, failure });
+            if (safety == .thread_unsafe) self.ops.lookup(id) catch unreachable; // trying to finish nonexistant id
             self.finished.add(.{ .id = id, .failure = failure }) catch unreachable;
             backend.uringlator_notify(safety);
         }
