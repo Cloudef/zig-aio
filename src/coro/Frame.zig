@@ -142,6 +142,7 @@ pub fn complete(self: *@This(), mode: CompleteMode, comptime Result: type) Resul
     self.detached = false;
 
     if (current()) |frame| {
+        std.debug.assert(frame != self); // completing self is a deadlock
         self.completer = frame;
         while (self.status != .completed) {
             if (mode == .cancel and tryCancel(self)) break;
