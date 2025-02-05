@@ -197,8 +197,6 @@ fn clock(userdata: usize, timeout: i32) std.os.wasi.subscription_t {
 }
 
 pub fn poll(fds: []std.posix.pollfd, timeout: i32) std.posix.PollError!usize {
-    if (fds.len == 0) return 0;
-
     // TODO: maybe use thread local arena instead?
     const MAX_POLL_FDS = 4096;
     var subs: std.BoundedArray(std.os.wasi.subscription_t, MAX_POLL_FDS) = .{};
@@ -224,7 +222,7 @@ pub fn poll(fds: []std.posix.pollfd, timeout: i32) std.posix.PollError!usize {
         }
     }
 
-    if (subs.len == 0) {
+    if (fds.len > 0 and subs.len == 0) {
         return error.Unexpected;
     }
 
