@@ -1,4 +1,4 @@
-pub const DynamicThreadPool = @import("minilib/DynamicThreadPool.zig");
+pub const DynamicThreadPool = @import("minilib/dynamic_thread_pool.zig").DynamicThreadPool;
 pub const FixedArrayList = @import("minilib/fixed_array_list.zig").FixedArrayList;
 pub const DoubleBufferedFixedArrayList = @import("minilib/fixed_array_list.zig").DoubleBufferedFixedArrayList;
 pub const Id = @import("minilib/id.zig").Id;
