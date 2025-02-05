@@ -9,20 +9,7 @@ const DynamicThreadPool = @import("minilib").DynamicThreadPool;
 const Uringlator = @import("uringlator.zig").Uringlator(PosixOperation);
 
 // This tries to emulate io_uring functionality.
-// If something does not match how it works on io_uring on linux, it should be change to match.
-// While this uses readiness before performing the requests, the io_uring model is not particularily
-// suited for readiness, thus don't expect this backend to be particularily effecient.
-// However it might be still more pleasant experience than (e)poll/kqueueing away as the behaviour should be
-// more or less consistent.
-
-comptime {
-    if (builtin.single_threaded) {
-        @compileError(
-            \\Posix backend requires building with threads as otherwise it may block the whole program.
-            \\To only target linux and io_uring, set `aio_options.posix = .disable` in your root .zig file.
-        );
-    }
-}
+// If something does not match how it works on io_uring on linux, it should be changed to match.
 
 pub const EventSource = posix.EventSource;
 
@@ -35,14 +22,16 @@ const needs_kludge = switch (builtin.target.os.tag) {
     else => false,
 };
 
+const single_threaded = builtin.single_threaded or aio.options.max_threads == 1;
+
 tqueue: TimerQueue, // timer queue implementing linux -like timers
-pfd: FixedArrayList(std.posix.pollfd, u32), // current fds that we must poll for wakeup
+pfd: if (!single_threaded) FixedArrayList(std.posix.pollfd, u32) else FixedArrayList(std.posix.pollfd, u16), // current fds that we must poll for wakeup
 pid: FixedArrayList(aio.Id, u16), // maps pfd to id
-posix_pool: DynamicThreadPool, // thread pool for performing operations, not all operations will be performed here
+posix_pool: if (!single_threaded) DynamicThreadPool else void, // thread pool for performing operations, not all operations will be performed here
 kludge_pool: if (needs_kludge) DynamicThreadPool else void, // thread pool for performing operations which can't be polled for readiness
 pending: std.DynamicBitSetUnmanaged, // operation is pending on readiness fd (poll)
 in_flight: std.DynamicBitSetUnmanaged, // operation is executing and can't be canceled
-source: EventSource, // when threaded operations finish, they signal it using this event source
+source: if (!single_threaded) EventSource else void, // when threaded operations finish, they signal it using this event source
 signaled: bool = false, // some operations have signaled immediately, optimization to avoid running poll when not required
 uringlator: Uringlator,
 
@@ -53,22 +42,33 @@ pub fn isSupported(_: []const Operation) bool {
 pub fn init(allocator: std.mem.Allocator, n: u16) aio.Error!@This() {
     var tqueue = try TimerQueue.init(allocator);
     errdefer tqueue.deinit();
-    var pfd = try FixedArrayList(std.posix.pollfd, u32).init(allocator, @as(u32, @intCast(n)) + 1);
+    var pfd = switch (single_threaded) {
+        true => try FixedArrayList(std.posix.pollfd, u16).init(allocator, n),
+        false => try FixedArrayList(std.posix.pollfd, u32).init(allocator, @as(u32, @intCast(n)) + 1),
+    };
     errdefer pfd.deinit(allocator);
     var pid = try FixedArrayList(aio.Id, u16).init(allocator, n);
     errdefer pid.deinit(allocator);
-    var posix_pool = DynamicThreadPool.init(allocator, .{
-        .max_threads = aio.options.max_threads,
-        .name = "aio:POSIX",
-        .stack_size = posix.stack_size,
-    }) catch |err| return switch (err) {
-        error.TimerUnsupported => error.Unsupported,
-        else => |e| e,
+    var posix_pool = switch (single_threaded) {
+        true => {},
+        false => DynamicThreadPool.init(allocator, .{
+            .max_threads = aio.options.max_threads,
+            .name = "aio:POSIX",
+            .stack_size = posix.stack_size,
+        }) catch |err| return switch (err) {
+            error.TimerUnsupported => error.Unsupported,
+            else => |e| e,
+        },
     };
-    errdefer posix_pool.deinit();
+    errdefer if (!single_threaded) posix_pool.deinit();
     var kludge_pool = switch (needs_kludge) {
+        // Kludge threads are used when operation cannot be polled for readiness.
+        // One example is macos's /dev/tty which can only be queried for readiness using select/pselect.
+        // <https://lists.apple.com/archives/Darwin-dev/2006/Apr/msg00066.html>
+        // <https://nathancraddock.com/blog/macos-dev-tty-polling/>
+        // Only used on platforms that need this hack (darwin)
         true => DynamicThreadPool.init(allocator, .{
-            .max_threads = aio.options.posix_max_kludge_threads,
+            .max_threads = 16,
             .name = "aio:KLUDGE",
             .stack_size = posix.stack_size,
         }) catch |err| return switch (err) {
@@ -84,9 +84,11 @@ pub fn init(allocator: std.mem.Allocator, n: u16) aio.Error!@This() {
     errdefer in_flight_set.deinit(allocator);
     var uringlator = try Uringlator.init(allocator, n);
     errdefer uringlator.deinit(allocator);
-    var source = try EventSource.init();
-    errdefer source.deinit();
-    pfd.add(.{ .fd = source.fd, .events = std.posix.POLL.IN, .revents = 0 }) catch unreachable;
+    var source = if (!single_threaded) try EventSource.init() else {};
+    errdefer if (!single_threaded) source.deinit();
+    if (!single_threaded) {
+        pfd.add(.{ .fd = source.fd, .events = std.posix.POLL.IN, .revents = 0 }) catch unreachable;
+    }
     return .{
         .tqueue = tqueue,
         .pfd = pfd,
@@ -103,13 +105,13 @@ pub fn init(allocator: std.mem.Allocator, n: u16) aio.Error!@This() {
 pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
     self.uringlator.shutdown(self);
     self.tqueue.deinit();
-    self.posix_pool.deinit();
+    if (!single_threaded) self.posix_pool.deinit();
     if (needs_kludge) self.kludge_pool.deinit();
     self.pfd.deinit(allocator);
     self.pid.deinit(allocator);
     self.pending.deinit(allocator);
     self.in_flight.deinit(allocator);
-    self.source.deinit();
+    if (!single_threaded) self.source.deinit();
     self.uringlator.deinit(allocator);
     self.* = undefined;
 }
@@ -133,14 +135,19 @@ fn readinessToPollEvents(readiness: posix.Readiness) i16 {
     return events;
 }
 
+pub fn onTimeout(self: *@This(), user_data: usize) void {
+    self.uringlator.finish(self, aio.Id.init(user_data), error.Success, .thread_unsafe);
+}
+
 pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode, handler: anytype) aio.Error!aio.CompletionResult {
     if (!try self.uringlator.submit(self)) return .{};
 
     var res: aio.CompletionResult = .{};
     while (res.num_completed == 0 and res.num_errors == 0) {
         // TODO: poll in macos is very slow, write "better poll" interface that uses kqueue/epoll/poll
+        const wait_time = std.math.cast(i32, self.tqueue.tick(self)) orelse -1;
         const should_block = mode == .blocking and !self.signaled;
-        const n = posix.poll(self.pfd.slice(), if (should_block) -1 else 0) catch |err| return switch (err) {
+        const n = posix.poll(self.pfd.slice(), if (should_block) wait_time else 0) catch |err| return switch (err) {
             error.NetworkSubsystemFailed => unreachable,
             else => |e| e,
         };
@@ -154,7 +161,7 @@ pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode, handler: anyty
                 off = pid;
                 handled += 1;
 
-                if (pfd.fd == self.source.fd) {
+                if (!single_threaded and pfd.fd == self.source.fd) {
                     std.debug.assert(pid == 0);
                     std.debug.assert(pfd.revents & std.posix.POLL.NVAL == 0);
                     std.debug.assert(pfd.revents & std.posix.POLL.ERR == 0);
@@ -162,8 +169,8 @@ pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode, handler: anyty
                     self.source.waitNonBlocking() catch break;
                     self.signaled = true; // threaded operation finished
                 } else {
-                    std.debug.assert(pid > 0);
-                    const id = self.pid.constSlice()[pid - 1];
+                    std.debug.assert(pid >= @intFromBool(!single_threaded));
+                    const id = self.pid.constSlice()[pid - @intFromBool(!single_threaded)];
                     const readiness = self.uringlator.ops.getOne(.readiness, id);
                     std.debug.assert(pfd.fd == readiness.fd);
                     std.debug.assert(pfd.events == readinessToPollEvents(readiness));
@@ -171,7 +178,7 @@ pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode, handler: anyty
 
                     // do not poll this fd again
                     self.pfd.swapRemove(@truncate(pid));
-                    self.pid.swapRemove(@truncate(pid - 1));
+                    self.pid.swapRemove(@truncate(pid - @intFromBool(!single_threaded)));
 
                     const op_type = self.uringlator.ops.getOne(.type, id);
                     if (pfd.revents & std.posix.POLL.ERR != 0 or pfd.revents & std.posix.POLL.NVAL != 0) {
@@ -255,6 +262,14 @@ fn blockingPosixExecutor(self: *@This(), comptime op_type: Operation, op: Operat
     self.uringlator.finish(self, id, failure, safety);
 }
 
+fn posixPerform(self: *@This(), comptime op_type: Operation, op: Operation.map.getAssertContains(op_type), id: aio.Id, readiness: posix.Readiness) !void {
+    if (single_threaded) {
+        self.blockingPosixExecutor(op_type, op, id, readiness, .thread_unsafe);
+    } else {
+        try self.posix_pool.spawn(blockingPosixExecutor, .{ self, op_type, op, id, readiness, .thread_safe });
+    }
+}
+
 fn nonBlockingPosixExecutor(self: *@This(), comptime op_type: Operation, op: Operation.map.getAssertContains(op_type), id: aio.Id, readiness: posix.Readiness) error{WouldBlock}!void {
     var failure: Operation.Error = error.Success;
     posix.perform(op_type, op, readiness) catch |err| {
@@ -288,11 +303,6 @@ fn nonBlockingPosixExecutorFcntl(self: *@This(), comptime op_type: Operation, op
     self.uringlator.finish(self, id, failure, .thread_unsafe);
 }
 
-fn onThreadTimeout(ctx: *anyopaque, user_data: usize) void {
-    var self: *@This() = @ptrCast(@alignCast(ctx));
-    self.uringlator.finish(self, aio.Id.init(user_data), error.Success, .thread_safe);
-}
-
 fn openReadiness(comptime op_type: Operation, op: Operation.map.getAssertContains(op_type)) !posix.Readiness {
     return switch (op_type) {
         .nop => .{},
@@ -318,6 +328,15 @@ fn openReadiness(comptime op_type: Operation, op: Operation.map.getAssertContain
 }
 
 pub fn uringlator_queue(self: *@This(), id: aio.Id, comptime op_type: Operation, op: Operation.map.getAssertContains(op_type)) aio.Error!PosixOperation {
+    comptime {
+        if (needs_kludge and builtin.single_threaded and op_type == .read_tty) {
+            @compileError(
+                \\Posix backend requires building with threads as otherwise it may block the whole program.
+                \\Unfortunately, on MacOS it is not possible to poll /dev/tty so you need threads.
+            );
+        }
+    }
+
     const readiness = openReadiness(op_type, op) catch |err| {
         self.pending.set(id.slot);
         self.uringlator.finish(self, id, err, .thread_unsafe);
@@ -357,13 +376,11 @@ pub fn uringlator_start(self: *@This(), id: aio.Id, op_type: Operation) !void {
             .poll => self.uringlator.finish(self, id, error.Success, .thread_unsafe),
             .timeout => {
                 const state = self.uringlator.ops.getOnePtr(.state, id);
-                const closure: TimerQueue.Closure = .{ .context = self, .callback = onThreadTimeout };
-                self.tqueue.schedule(.monotonic, state.timeout.ns, id.cast(usize), .{ .closure = closure }) catch self.uringlator.finish(self, id, error.Unexpected, .thread_unsafe);
+                self.tqueue.schedule(.monotonic, state.timeout.ns, id.cast(usize), .{}) catch self.uringlator.finish(self, id, error.Unexpected, .thread_unsafe);
             },
             .link_timeout => {
                 const state = self.uringlator.ops.getOnePtr(.state, id);
-                const closure: TimerQueue.Closure = .{ .context = self, .callback = onThreadTimeout };
-                self.tqueue.schedule(.monotonic, state.link_timeout.ns, id.cast(usize), .{ .closure = closure }) catch self.uringlator.finish(self, id, error.Unexpected, .thread_unsafe);
+                self.tqueue.schedule(.monotonic, state.link_timeout.ns, id.cast(usize), .{}) catch self.uringlator.finish(self, id, error.Unexpected, .thread_unsafe);
             },
             // can be performed here, doesn't have to be dispatched to thread
             inline .child_exit,
@@ -396,18 +413,16 @@ pub fn uringlator_start(self: *@This(), id: aio.Id, op_type: Operation) !void {
                     try self.kludge_pool.spawn(blockingPosixExecutor, .{ self, tag, state.toOp(tag, result), id, readiness, .thread_safe });
                 }
                 if (comptime builtin.target.os.tag == .wasi) {
-                    // perform on thread
-                    try self.posix_pool.spawn(blockingPosixExecutor, .{ self, tag, state.toOp(tag, result), id, readiness, .thread_safe });
+                    try self.posixPerform(tag, state.toOp(tag, result), id, readiness);
                 } else if (readiness.fd != posix.invalid_fd) {
                     self.nonBlockingPosixExecutorFcntl(tag, state.toOp(tag, result), id, readiness) catch |err| switch (err) {
                         // poll lied to us, or somebody else raced us, poll again
                         error.WouldBlock => self.pending.unset(id.slot),
-                        // perform on thread
-                        error.FcntlFailed => try self.posix_pool.spawn(blockingPosixExecutor, .{ self, tag, state.toOp(tag, result), id, readiness, .thread_safe }),
+                        // perform blockingly or on thread
+                        error.FcntlFailed => try self.posixPerform(tag, state.toOp(tag, result), id, readiness),
                     };
                 } else {
-                    // perform on thread
-                    try self.posix_pool.spawn(blockingPosixExecutor, .{ self, tag, state.toOp(tag, result), id, readiness, .thread_safe });
+                    try self.posixPerform(tag, state.toOp(tag, result), id, readiness);
                 }
             },
         }
@@ -488,7 +503,8 @@ pub fn uringlator_cancel(self: *@This(), id: aio.Id, op_type: Operation, err: Op
         },
         else => if (self.pending.isSet(id.slot) and !self.in_flight.isSet(id.slot)) {
             const readiness = self.uringlator.ops.getOnePtr(.readiness, id);
-            for (self.pfd.constSlice()[1..], self.pid.constSlice(), 1..) |pfd, pid, idx| {
+            const off = @intFromBool(!single_threaded);
+            for (self.pfd.constSlice()[off..], self.pid.constSlice(), off..) |pfd, pid, idx| {
                 if (pid != id) continue;
                 std.debug.assert(pfd.fd == readiness.fd);
                 std.debug.assert(pfd.events == readinessToPollEvents(readiness.*));

@@ -30,10 +30,8 @@
           zig build test bug -Daio:posix=disable -Dsanitize=true
           echo "zig build test bug -Daio:posix=force -Dsanitize=true"
           zig build test bug -Daio:posix=force -Dsanitize=true
-          echo "zig build test bug -Daio:posix=force -Dminilib:force_foreign_timer_queue=true -Dsanitize=true"
-          zig build test bug -Daio:posix=force -Dminilib:force_foreign_timer_queue=true -Dsanitize=true
-          # echo "zig build test:aio test:minilib -Dtarget=wasm32-wasi-none"
-          # zig build -Doptimize=ReleaseSafe test:aio test:minilib -Dtarget=wasm32-wasi-none
+          echo "zig build test:aio test:minilib -Dtarget=wasm32-wasi-none"
+          zig build -Doptimize=ReleaseSafe test:aio test:minilib -Dtarget=wasm32-wasi-none
         elif [[ "$(uname)" == "Darwin" ]]; then
           echo "zig build test bug"
           zig build test bug

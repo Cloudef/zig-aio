@@ -14,6 +14,8 @@ pub const Options = struct {
     debug: bool = build_options.debug,
     /// Max thread count for a thread pool if a backend requires one.
     /// By default use the cpu core count.
+    /// Use count 1 to disable threading in multi-threaded builds.
+    /// In single-threaded builds this option is ignored.
     max_threads: ?u32 = null,
     /// Operations that the main backend must support.
     /// If the operations are not supported by a main backend then a posix backend will be used instead.
@@ -23,13 +25,6 @@ pub const Options = struct {
     /// Choose a posix fallback mode.
     /// Posix backend is never used on windows
     posix: enum { auto, force, disable } = @enumFromInt(@intFromEnum(build_options.posix)),
-    /// Max kludge threads for the posix backend.
-    /// Kludge threads are used when operation cannot be polled for readiness.
-    /// One example is macos's /dev/tty which can only be queried for readiness using select/pselect.
-    /// <https://lists.apple.com/archives/Darwin-dev/2006/Apr/msg00066.html>
-    /// <https://nathancraddock.com/blog/macos-dev-tty-polling/>
-    /// Only used on platforms that need this hack (darwin)
-    posix_max_kludge_threads: usize = 16,
     /// Wasi support
     wasi: enum { wasi, wasix } = @enumFromInt(@intFromEnum(build_options.wasi)),
 };
