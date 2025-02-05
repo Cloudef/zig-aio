@@ -23,7 +23,7 @@ const needs_kludge = switch (builtin.target.os.tag) {
 };
 
 const single_threaded = builtin.single_threaded or aio.options.max_threads == 1;
-const needs_source = !single_threaded or needs_kludge;
+const needs_source = !single_threaded or (needs_kludge and !builtin.single_threaded);
 
 tqueue: TimerQueue, // timer queue implementing linux -like timers
 pfd: if (needs_source) FixedArrayList(std.posix.pollfd, u32) else FixedArrayList(std.posix.pollfd, u16), // current fds that we must poll for wakeup
