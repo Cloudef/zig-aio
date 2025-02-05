@@ -266,11 +266,11 @@ fn blockingPosixExecutor(self: *@This(), comptime op_type: Operation, op: Operat
     self.uringlator.finish(self, id, failure, safety);
 }
 
-fn posixPerform(self: *@This(), comptime op_type: Operation, op: Operation.map.getAssertContains(op_type), id: aio.Id, readiness: posix.Readiness, kludge: enum{kludge, normal}) !void {
+fn posixPerform(self: *@This(), comptime op_type: Operation, op: Operation.map.getAssertContains(op_type), id: aio.Id, readiness: posix.Readiness, kludge: enum { kludge, normal }) !void {
     if (needs_kludge and !builtin.single_threaded and kludge == .kludge) {
         if (self.in_flight_threaded == 0) {
             self.pfd.add(.{ .fd = self.source.fd, .events = std.posix.POLL.IN, .revents = 0 }) catch unreachable;
-            self.pid.add(.{.slot = 0xAAAA, .generation = 0xAA}) catch unreachable;
+            self.pid.add(.{ .slot = 0xAAAA, .generation = 0xAA }) catch unreachable;
         }
         self.in_flight_threaded +|= 1;
         try self.kludge_pool.spawn(blockingPosixExecutor, .{ self, op_type, op, id, readiness, .thread_safe });
@@ -279,7 +279,7 @@ fn posixPerform(self: *@This(), comptime op_type: Operation, op: Operation.map.g
     } else {
         if (self.in_flight_threaded == 0) {
             self.pfd.add(.{ .fd = self.source.fd, .events = std.posix.POLL.IN, .revents = 0 }) catch unreachable;
-            self.pid.add(.{.slot = 0xAAAA, .generation = 0xAA}) catch unreachable;
+            self.pid.add(.{ .slot = 0xAAAA, .generation = 0xAA }) catch unreachable;
         }
         self.in_flight_threaded +|= 1;
         try self.posix_pool.spawn(blockingPosixExecutor, .{ self, op_type, op, id, readiness, .thread_safe });

@@ -76,7 +76,7 @@ fn entrypoint(
 
     if (comptime @typeInfo(Result) == .ErrorUnion) {
         if (res) |_| {} else |err| {
-            debug("error: {}: {}", .{frame, err});
+            debug("error: {}: {}", .{ frame, err });
         }
     }
 
