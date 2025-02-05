@@ -73,6 +73,13 @@ fn entrypoint(
 
     debug("spawned: {}", .{frame});
     res = @call(.always_inline, func, args);
+
+    if (comptime @typeInfo(Result) == .ErrorUnion) {
+        if (res) |_| {} else |err| {
+            debug("error: {}: {}", .{frame, err});
+        }
+    }
+
     scheduler.running.remove(&frame.link);
     scheduler.completed.append(&frame.link);
 
