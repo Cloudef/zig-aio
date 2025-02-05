@@ -1,3 +1,4 @@
+const builtin = @import("builtin");
 const std = @import("std");
 const aio = @import("aio");
 const coro = @import("../coro.zig");
@@ -195,6 +196,10 @@ pub const RwLock = struct {
 };
 
 test "Mutex" {
+    if (builtin.single_threaded) {
+        return error.SkipZigTest;
+    }
+
     const Test = struct {
         fn incrementer(lock: *Mutex, value: *usize) !void {
             try lock.lock();
@@ -239,6 +244,10 @@ test "Mutex" {
 }
 
 test "RwLock" {
+    if (builtin.single_threaded) {
+        return error.SkipZigTest;
+    }
+
     const Test = struct {
         fn incrementer(lock: *RwLock, value: *usize, check_value: *usize) !void {
             try lock.lock();
@@ -303,6 +312,10 @@ test "RwLock" {
 }
 
 test "Mutex.Cancel" {
+    if (builtin.single_threaded) {
+        return error.SkipZigTest;
+    }
+
     const Test = struct {
         fn incrementer(lock: *Mutex, value: *usize, check_value: *usize) !void {
             while (true) {
@@ -366,6 +379,10 @@ test "Mutex.Cancel" {
 }
 
 test "RwLock.Cancel" {
+    if (builtin.single_threaded) {
+        return error.SkipZigTest;
+    }
+
     const Test = struct {
         fn incrementer(lock: *RwLock, value: *usize, check_value: *usize) !void {
             while (true) {

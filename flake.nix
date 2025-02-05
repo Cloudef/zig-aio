@@ -28,18 +28,28 @@
         if [[ "$(uname)" == "Linux" ]]; then
           echo "zig build test bug -Daio:posix=disable -Dsanitize=true"
           zig build test bug -Daio:posix=disable -Dsanitize=true
+          echo "zig build test bug -Daio:posix=disable -Dsingle-threaded=true"
+          zig build test bug -Daio:posix=disable -Dsingle-threaded=true
           echo "zig build test bug -Daio:posix=force -Dsanitize=true"
           zig build test bug -Daio:posix=force -Dsanitize=true
+          echo "zig build test bug -Daio:posix=force -Dsingle-threaded=true"
+          zig build test bug -Daio:posix=force -Dsingle-threaded=true
           echo "zig build test:aio test:minilib -Dtarget=wasm32-wasi-none"
           zig build -Doptimize=ReleaseSafe test:aio test:minilib -Dtarget=wasm32-wasi-none
         elif [[ "$(uname)" == "Darwin" ]]; then
           echo "zig build test bug"
           zig build test bug
+          echo "zig build test bug -Dsingle-threaded=true"
+          zig build test bug -Dsingle-threaded=true
           echo "zig build test bug -Dtarget=x86_64-macos"
           zig build test bug -Dtarget=x86_64-macos
+          echo "zig build test bug -Dtarget=x86_64-macos -Dsingle-threaded=true"
+          zig build test bug -Dtarget=x86_64-macos -Dsingle-threaded=true
         else
           echo "zig build test bug"
           zig build test bug
+          echo "zig build test bug -Dsingle-threaded=true"
+          zig build test bug -Dsingle-threaded=true
         fi
       '';
 
@@ -56,14 +66,14 @@
         tmpdir="$(mktemp -d)"
         trap 'rm -rf "$tmpdir"' EXIT
 
-        [[ "$(uname)" == "Linux" ]] && zig build -Daio:posix=disable -p "$tmpdir/new-uring"
-        zig build -Daio:posix=force -p "$tmpdir/new-posix"
+        [[ "$(uname)" == "Linux" ]] && zig build -Daio:posix=disable -Dsingle-threaded=true -p "$tmpdir/new-uring"
+        zig build -Daio:posix=force -Dsingle-threaded=true -p "$tmpdir/new-posix"
 
         git archive "''${COMMIT:-HEAD~1}" | tar x -C "$tmpdir"
         cd "$tmpdir"
 
-        [[ "$(uname)" == "Linux" ]] && zig build -Daio:posix=disable -p "$tmpdir/old-uring"
-        zig build -Daio:posix=force -p "$tmpdir/old-posix"
+        [[ "$(uname)" == "Linux" ]] && zig build -Daio:posix=disable -Dsingle-threaded=true -p "$tmpdir/old-uring"
+        zig build -Daio:posix=force -Dsingle-threaded=true -p "$tmpdir/old-posix"
 
         all=(old-posix/bench/*)
         for bench in "''${@:-''${all[@]}}"; do

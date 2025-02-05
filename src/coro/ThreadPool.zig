@@ -1,3 +1,4 @@
+const builtin = @import("builtin");
 const std = @import("std");
 const aio = @import("aio");
 const io = @import("io.zig");
@@ -100,6 +101,10 @@ pub fn spawnForCompletion(self: *@This(), scheduler: *Scheduler, func: anytype, 
 const ThreadPool = @This();
 
 test "ThreadPool" {
+    if (builtin.single_threaded) {
+        return error.SkipZigTest;
+    }
+
     const Test = struct {
         fn blocking() u32 {
             std.time.sleep(1 * std.time.ns_per_s);

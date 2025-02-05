@@ -16,8 +16,6 @@ pub fn main() !void {
 
     var scheduler = try coro.Scheduler.init(gpa.allocator(), .{});
     defer scheduler.deinit();
-    var pool = try coro.ThreadPool.init(gpa.allocator(), .{});
-    defer pool.deinit();
 
     _ = try scheduler.spawn(asyncMain, .{&scheduler}, .{});
     try scheduler.run(.wait);
