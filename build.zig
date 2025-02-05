@@ -120,7 +120,8 @@ pub fn build(b: *std.Build) void {
             .name = @tagName(bug),
             .root_source_file = b.path("bugs/" ++ @tagName(bug) ++ ".zig"),
             .target = target,
-            .optimize = optimize,
+            // TODO: hmm, investigate (fails on io_uring, prob related to gpa)
+            .optimize = if (bug == .ticker) .ReleaseFast else optimize,
             .sanitize_thread = sanitize,
             .single_threaded = if (bug == .ticker) false else single_threaded,
             .strip = false,
