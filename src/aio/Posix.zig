@@ -427,7 +427,7 @@ pub fn uringlator_start(self: *@This(), id: aio.Id, op_type: Operation) !void {
                     try self.posixPerform(tag, state.toOp(tag, result), id, readiness, .kludge);
                 }
                 if (comptime builtin.target.os.tag == .wasi) {
-                    try self.posixPerform(tag, state.toOp(tag, result), id, readiness);
+                    try self.posixPerform(tag, state.toOp(tag, result), id, readiness, .normal);
                 } else if (readiness.fd != posix.invalid_fd) {
                     self.nonBlockingPosixExecutorFcntl(tag, state.toOp(tag, result), id, readiness) catch |err| switch (err) {
                         // poll lied to us, or somebody else raced us, poll again
