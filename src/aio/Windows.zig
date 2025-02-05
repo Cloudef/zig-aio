@@ -23,14 +23,6 @@ const INVALID_SOCKET = win_sock.INVALID_SOCKET;
 // Optimized for Windows and uses IOCP operations whenever possible.
 // <https://int64.org/2009/05/14/io-completion-ports-made-easy/>
 
-comptime {
-    if (builtin.single_threaded) {
-        @compileError(
-            \\Windows backend requires building with threads as otherwise it may block the whole program.
-        );
-    }
-}
-
 pub const EventSource = wposix.EventSource;
 
 const IoContext = struct {
@@ -65,8 +57,10 @@ const WindowsOperation = struct {
     win_state: State, // windows specific state
 };
 
+const single_threaded = builtin.single_threaded or aio.options.max_threads == 1;
+
 iocp: Iocp,
-posix_pool: DynamicThreadPool, // thread pool for performing non iocp operations
+posix_pool: if (!single_threaded) DynamicThreadPool else void, // thread pool for performing non iocp operations
 tqueue: TimerQueue, // timer queue implementing linux -like timers
 signaled: bool = false, // some operations have signaled immediately, optimization to polling iocp when not required
 uringlator: Uringlator,
@@ -83,15 +77,18 @@ pub fn init(allocator: std.mem.Allocator, n: u16) aio.Error!@This() {
     errdefer iocp.deinit();
     var tqueue = try TimerQueue.init(allocator);
     errdefer tqueue.deinit();
-    var posix_pool = DynamicThreadPool.init(allocator, .{
-        .max_threads = aio.options.max_threads,
-        .name = "aio:POSIX",
-        .stack_size = @import("posix/posix.zig").stack_size,
-    }) catch |err| return switch (err) {
-        error.TimerUnsupported => error.Unsupported,
-        else => |e| e,
+    var posix_pool = switch (single_threaded) {
+        true => {},
+        false => DynamicThreadPool.init(allocator, .{
+            .max_threads = aio.options.max_threads,
+            .name = "aio:POSIX",
+            .stack_size = @import("posix/posix.zig").stack_size,
+        }) catch |err| return switch (err) {
+            error.TimerUnsupported => error.Unsupported,
+            else => |e| e,
+        },
     };
-    errdefer posix_pool.deinit();
+    errdefer if (!single_threaded) posix_pool.deinit();
     var uringlator = try Uringlator.init(allocator, n);
     errdefer uringlator.deinit(allocator);
     return .{
@@ -105,7 +102,7 @@ pub fn init(allocator: std.mem.Allocator, n: u16) aio.Error!@This() {
 pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
     self.uringlator.shutdown(self);
     self.tqueue.deinit();
-    self.posix_pool.deinit();
+    if (!single_threaded) self.posix_pool.deinit();
     self.iocp.deinit();
     self.uringlator.deinit(allocator);
     self.* = undefined;
@@ -120,12 +117,17 @@ fn werr() Operation.Error {
     return error.Success;
 }
 
-fn poll(self: *@This(), mode: aio.Dynamic.CompletionMode, comptime safety: Uringlator.Safety) error{Shutdown}!void {
+pub fn onTimeout(self: *@This(), user_data: usize) void {
+    self.uringlator.finish(self, aio.Id.init(user_data), error.Success, .thread_unsafe);
+}
+
+fn poll(self: *@This(), mode: aio.Dynamic.CompletionMode, wait_time: u32, comptime safety: Uringlator.Safety) error{Shutdown}!void {
     var transferred: u32 = undefined;
     var key: Iocp.Key = undefined;
     var maybe_ovl: ?*io.OVERLAPPED = null;
+
     const res = io.GetQueuedCompletionStatus(self.iocp.port, &transferred, @ptrCast(&key), &maybe_ovl, switch (mode) {
-        .blocking => INFINITE,
+        .blocking => wait_time,
         .nonblocking => 0,
     });
     if (res != 1 and maybe_ovl == null) return;
@@ -183,10 +185,11 @@ pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode, handler: anyty
     if (!try self.uringlator.submit(self)) return .{};
     var res: aio.CompletionResult = .{};
     while (res.num_completed == 0 and res.num_errors == 0) {
+        const wait_time = std.math.cast(u32, self.tqueue.tick(self)) orelse INFINITE;
         self.poll(switch (self.signaled) {
             true => .nonblocking,
             false => mode,
-        }, .thread_unsafe) catch unreachable;
+        }, wait_time, .thread_unsafe) catch unreachable;
         while (self.signaled) {
             self.signaled = false;
             const tmp = self.uringlator.complete(self, handler);
@@ -228,11 +231,6 @@ fn blockingPosixExecutor(self: *@This(), comptime op_type: Operation, op: Operat
         break;
     }
     self.uringlator.finish(self, id, failure, safety);
-}
-
-fn onThreadTimeout(ctx: *anyopaque, user_data: usize) void {
-    var self: *@This() = @ptrCast(@alignCast(ctx));
-    self.uringlator.finish(self, aio.Id.init(user_data), error.Success, .thread_safe);
 }
 
 fn ovlOff(offset: u64) io.OVERLAPPED {
@@ -375,13 +373,11 @@ pub fn uringlator_start(self: *@This(), id: aio.Id, op_type: Operation) !void {
         },
         .timeout => {
             const state = self.uringlator.ops.getOnePtr(.state, id);
-            const closure: TimerQueue.Closure = .{ .context = self, .callback = onThreadTimeout };
-            self.tqueue.schedule(.monotonic, state.timeout.ns, id.cast(usize), .{ .closure = closure }) catch return self.uringlator.finish(self, id, error.Unexpected, .thread_unsafe);
+            self.tqueue.schedule(.monotonic, state.timeout.ns, id.cast(usize), .{}) catch return self.uringlator.finish(self, id, error.Unexpected, .thread_unsafe);
         },
         .link_timeout => {
             const state = self.uringlator.ops.getOnePtr(.state, id);
-            const closure: TimerQueue.Closure = .{ .context = self, .callback = onThreadTimeout };
-            self.tqueue.schedule(.monotonic, state.link_timeout.ns, id.cast(usize), .{ .closure = closure }) catch return self.uringlator.finish(self, id, error.Unexpected, .thread_unsafe);
+            self.tqueue.schedule(.monotonic, state.link_timeout.ns, id.cast(usize), .{}) catch return self.uringlator.finish(self, id, error.Unexpected, .thread_unsafe);
         },
         .child_exit => {
             const state = self.uringlator.ops.getOnePtr(.state, id);
@@ -421,10 +417,14 @@ pub fn uringlator_start(self: *@This(), id: aio.Id, op_type: Operation) !void {
             self.blockingPosixExecutor(tag, state.toOp(tag, result), id, .thread_unsafe);
         },
         inline else => |tag| {
-            // perform non IOCP supported operation on a thread
+            // perform non IOCP supported operation on a thread, or blockingly
             const result = self.uringlator.ops.getOne(.out_result, id);
             const state = self.uringlator.ops.getOnePtr(.state, id);
-            try self.posix_pool.spawn(blockingPosixExecutor, .{ self, tag, state.toOp(tag, result), id, .thread_safe });
+            if (single_threaded) {
+                self.blockingPosixExecutor(tag, state.toOp(tag, result), id, .thread_safe);
+            } else {
+                try self.posix_pool.spawn(blockingPosixExecutor, .{ self, tag, state.toOp(tag, result), id, .thread_safe });
+            }
         },
     }
 }

@@ -2,16 +2,8 @@ const builtin = @import("builtin");
 const std = @import("std");
 
 pub fn build(b: *std.Build) void {
-    var target = b.standardTargetOptions(.{});
+    const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
-
-    switch (target.query.os_tag orelse builtin.os.tag) {
-        .wasi => {
-            target.query.cpu_features_add.addFeature(@intFromEnum(std.Target.wasm.Feature.atomics));
-            target.query.cpu_features_add.addFeature(@intFromEnum(std.Target.wasm.Feature.bulk_memory));
-        },
-        else => {},
-    }
 
     const sanitize = b.option(bool, "sanitize", "use sanitizers when running examples or tests") orelse false;
 
@@ -35,22 +27,11 @@ pub fn build(b: *std.Build) void {
         coro_opts.addOption(bool, "debug", debug);
     }
 
-    var minilib_opts = b.addOptions();
-    {
-        const force_foreign_timer_queue = b.option(bool, "minilib:force_foreign_timer_queue", "force the use of foreign timer queue backend") orelse false;
-        minilib_opts.addOption(bool, "force_foreign_timer_queue", force_foreign_timer_queue);
-    }
-
     const minilib = b.addModule("minilib", .{
         .root_source_file = b.path("src/minilib.zig"),
         .target = target,
         .optimize = optimize,
-        .single_threaded = switch (target.query.os_tag orelse builtin.os.tag) {
-            .linux => null, // io_uring backend can be used without threads
-            else => false,
-        },
     });
-    minilib.addImport("build_options", minilib_opts.createModule());
 
     const aio = b.addModule("aio", .{
         .root_source_file = b.path("src/aio.zig"),
@@ -61,7 +42,6 @@ pub fn build(b: *std.Build) void {
             .freebsd, .openbsd, .dragonfly, .netbsd => true,
             else => false,
         },
-        .single_threaded = minilib.single_threaded,
     });
     aio.addImport("minilib", minilib);
     aio.addImport("build_options", aio_opts.createModule());
@@ -94,7 +74,6 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .optimize = optimize,
             .sanitize_thread = sanitize,
-            .single_threaded = minilib.single_threaded,
             .strip = false,
         });
         exe.root_module.addImport("aio", aio);
@@ -114,7 +93,6 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
             .filters = &.{test_filter},
             .link_libc = aio.link_libc,
-            .single_threaded = minilib.single_threaded,
             .sanitize_thread = sanitize,
             .strip = false,
         });
@@ -140,7 +118,6 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .optimize = optimize,
             .sanitize_thread = sanitize,
-            .single_threaded = minilib.single_threaded,
             .strip = false,
         });
         exe.root_module.addImport("aio", aio);
@@ -163,7 +140,7 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .optimize = .ReleaseFast,
             .sanitize_thread = sanitize,
-            .single_threaded = minilib.single_threaded,
+            .single_threaded = if (sanitize) false else bench != .ticker,
             .strip = false,
         });
         exe.root_module.addImport("aio", aio);
@@ -187,12 +164,8 @@ const RunStepOptions = struct {
 fn runArtifactForStep(b: *std.Build, target: std.Build.ResolvedTarget, step: *std.Build.Step.Compile, opts: RunStepOptions) *std.Build.Step.Run {
     return switch (target.query.os_tag orelse builtin.os.tag) {
         .wasi => blk: {
-            step.shared_memory = true;
             step.max_memory = std.mem.alignForward(usize, opts.wasm_max_memory, 65536);
-            step.import_memory = true;
-            step.export_memory = true;
-            step.root_module.export_symbol_names = &.{"wasi_thread_start"};
-            const wasmtime = b.addSystemCommand(&.{ "wasmtime", "-W", "trap-on-grow-failure=y", "-S", "threads=y", "--dir", "." });
+            const wasmtime = b.addSystemCommand(&.{ "wasmtime", "-W", "trap-on-grow-failure=y", "--dir", "." });
             wasmtime.addArtifactArg(step);
             break :blk wasmtime;
         },
