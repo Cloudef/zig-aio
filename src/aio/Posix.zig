@@ -145,12 +145,16 @@ pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode, handler: anyty
 
     var res: aio.CompletionResult = .{};
     while (res.num_completed == 0 and res.num_errors == 0) {
-        // TODO: poll in macos is very slow, write "better poll" interface that uses kqueue/epoll/poll
         const wait_time = std.math.cast(i32, self.tqueue.tick(self)) orelse -1;
         const should_block = mode == .blocking and !self.signaled;
-        const n = posix.poll(self.pfd.slice(), if (should_block) wait_time else 0) catch |err| return switch (err) {
-            error.NetworkSubsystemFailed => unreachable,
-            else => |e| e,
+
+        const n = blk: {
+            if (self.pfd.len == 0 and (!should_block or wait_time <= 0)) break :blk 0;
+            // TODO: poll in macos is very slow, write "better poll" interface that uses kqueue/epoll/poll
+            break :blk posix.poll(self.pfd.slice(), if (should_block) wait_time else 0) catch |err| return switch (err) {
+                error.NetworkSubsystemFailed => unreachable,
+                else => |e| e,
+            };
         };
 
         var off: usize = 0;
