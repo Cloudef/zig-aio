@@ -26,12 +26,13 @@ const single_threaded = builtin.single_threaded or aio.options.max_threads == 1;
 const needs_source = !single_threaded or (needs_kludge and !builtin.single_threaded);
 
 tqueue: TimerQueue, // timer queue implementing linux -like timers
-pfd: if (needs_source) FixedArrayList(std.posix.pollfd, u32) else FixedArrayList(std.posix.pollfd, u16), // current fds that we must poll for wakeup
+pfd: FixedArrayList(std.posix.pollfd, u16), // current fds that we must poll for wakeup
 pid: FixedArrayList(aio.Id, u16), // maps pfd to id
 posix_pool: if (!single_threaded) DynamicThreadPool else void, // thread pool for performing operations, not all operations will be performed here
 kludge_pool: if (needs_kludge and !builtin.single_threaded) DynamicThreadPool else void, // thread pool for performing operations which can't be polled for readiness
 pending: std.DynamicBitSetUnmanaged, // operation is pending on readiness fd (poll)
 in_flight: std.DynamicBitSetUnmanaged, // operation is executing and can't be canceled
+in_flight_threaded: if (needs_source) u16 else void = if (needs_source) 0 else {}, // threaded operations in flight
 source: if (needs_source) EventSource else void, // when threaded operations finish, they signal it using this event source
 signaled: bool = false, // some operations have signaled immediately, optimization to avoid running poll when not required
 uringlator: Uringlator,
@@ -43,10 +44,7 @@ pub fn isSupported(_: []const Operation) bool {
 pub fn init(allocator: std.mem.Allocator, n: u16) aio.Error!@This() {
     var tqueue = try TimerQueue.init(allocator);
     errdefer tqueue.deinit();
-    var pfd = switch (needs_source) {
-        true => try FixedArrayList(std.posix.pollfd, u32).init(allocator, @as(u32, @intCast(n)) + 1),
-        false => try FixedArrayList(std.posix.pollfd, u16).init(allocator, n),
-    };
+    var pfd = try FixedArrayList(std.posix.pollfd, u16).init(allocator, n);
     errdefer pfd.deinit(allocator);
     var pid = try FixedArrayList(aio.Id, u16).init(allocator, n);
     errdefer pid.deinit(allocator);
@@ -87,9 +85,6 @@ pub fn init(allocator: std.mem.Allocator, n: u16) aio.Error!@This() {
     errdefer uringlator.deinit(allocator);
     var source = if (needs_source) try EventSource.init() else {};
     errdefer if (needs_source) source.deinit();
-    if (needs_source) {
-        pfd.add(.{ .fd = source.fd, .events = std.posix.POLL.IN, .revents = 0 }) catch unreachable;
-    }
     return .{
         .tqueue = tqueue,
         .pfd = pfd,
@@ -167,15 +162,19 @@ pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode, handler: anyty
                 handled += 1;
 
                 if (needs_source and pfd.fd == self.source.fd) {
-                    std.debug.assert(pid == 0);
                     std.debug.assert(pfd.revents & std.posix.POLL.NVAL == 0);
                     std.debug.assert(pfd.revents & std.posix.POLL.ERR == 0);
                     std.debug.assert(pfd.revents & std.posix.POLL.HUP == 0);
                     self.source.waitNonBlocking() catch break;
                     self.signaled = true; // threaded operation finished
+                    self.in_flight_threaded -|= 1;
+                    if (self.in_flight_threaded == 0) {
+                        self.pfd.swapRemove(@truncate(pid));
+                        self.pid.swapRemove(@truncate(pid));
+                        continue :again;
+                    }
                 } else {
-                    std.debug.assert(pid >= @intFromBool(needs_source));
-                    const id = self.pid.constSlice()[pid - @intFromBool(needs_source)];
+                    const id = self.pid.constSlice()[pid];
                     const readiness = self.uringlator.ops.getOne(.readiness, id);
                     std.debug.assert(pfd.fd == readiness.fd);
                     std.debug.assert(pfd.events == readinessToPollEvents(readiness));
@@ -183,7 +182,7 @@ pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode, handler: anyty
 
                     // do not poll this fd again
                     self.pfd.swapRemove(@truncate(pid));
-                    self.pid.swapRemove(@truncate(pid - @intFromBool(needs_source)));
+                    self.pid.swapRemove(@truncate(pid));
 
                     const op_type = self.uringlator.ops.getOne(.type, id);
                     if (pfd.revents & std.posix.POLL.ERR != 0 or pfd.revents & std.posix.POLL.NVAL != 0) {
@@ -267,10 +266,22 @@ fn blockingPosixExecutor(self: *@This(), comptime op_type: Operation, op: Operat
     self.uringlator.finish(self, id, failure, safety);
 }
 
-fn posixPerform(self: *@This(), comptime op_type: Operation, op: Operation.map.getAssertContains(op_type), id: aio.Id, readiness: posix.Readiness) !void {
-    if (single_threaded) {
+fn posixPerform(self: *@This(), comptime op_type: Operation, op: Operation.map.getAssertContains(op_type), id: aio.Id, readiness: posix.Readiness, kludge: enum{kludge, normal}) !void {
+    if (needs_kludge and !builtin.single_threaded and kludge == .kludge) {
+        if (self.in_flight_threaded == 0) {
+            self.pfd.add(.{ .fd = self.source.fd, .events = std.posix.POLL.IN, .revents = 0 }) catch unreachable;
+            self.pid.add(.{.slot = 0xAAAA, .generation = 0xAA}) catch unreachable;
+        }
+        self.in_flight_threaded +|= 1;
+        try self.kludge_pool.spawn(blockingPosixExecutor, .{ self, op_type, op, id, readiness, .thread_safe });
+    } else if (single_threaded) {
         self.blockingPosixExecutor(op_type, op, id, readiness, .thread_unsafe);
     } else {
+        if (self.in_flight_threaded == 0) {
+            self.pfd.add(.{ .fd = self.source.fd, .events = std.posix.POLL.IN, .revents = 0 }) catch unreachable;
+            self.pid.add(.{.slot = 0xAAAA, .generation = 0xAA}) catch unreachable;
+        }
+        self.in_flight_threaded +|= 1;
         try self.posix_pool.spawn(blockingPosixExecutor, .{ self, op_type, op, id, readiness, .thread_safe });
     }
 }
@@ -413,7 +424,7 @@ pub fn uringlator_start(self: *@This(), id: aio.Id, op_type: Operation) !void {
                 const result = self.uringlator.ops.getOne(.out_result, id);
                 const readiness = self.uringlator.ops.getOne(.readiness, id);
                 if (needs_kludge and !builtin.single_threaded and tag == .read_tty) {
-                    try self.kludge_pool.spawn(blockingPosixExecutor, .{ self, tag, state.toOp(tag, result), id, readiness, .thread_safe });
+                    try self.posixPerform(tag, state.toOp(tag, result), id, readiness, .kludge);
                 }
                 if (comptime builtin.target.os.tag == .wasi) {
                     try self.posixPerform(tag, state.toOp(tag, result), id, readiness);
@@ -422,10 +433,10 @@ pub fn uringlator_start(self: *@This(), id: aio.Id, op_type: Operation) !void {
                         // poll lied to us, or somebody else raced us, poll again
                         error.WouldBlock => self.pending.unset(id.slot),
                         // perform blockingly or on thread
-                        error.FcntlFailed => try self.posixPerform(tag, state.toOp(tag, result), id, readiness),
+                        error.FcntlFailed => try self.posixPerform(tag, state.toOp(tag, result), id, readiness, .normal),
                     };
                 } else {
-                    try self.posixPerform(tag, state.toOp(tag, result), id, readiness);
+                    try self.posixPerform(tag, state.toOp(tag, result), id, readiness, .normal);
                 }
             },
         }
@@ -506,13 +517,12 @@ pub fn uringlator_cancel(self: *@This(), id: aio.Id, op_type: Operation, err: Op
         },
         else => if (self.pending.isSet(id.slot) and !self.in_flight.isSet(id.slot)) {
             const readiness = self.uringlator.ops.getOnePtr(.readiness, id);
-            const off = @intFromBool(needs_source);
-            for (self.pfd.constSlice()[off..], self.pid.constSlice(), off..) |pfd, pid, idx| {
+            for (self.pfd.constSlice()[0..], self.pid.constSlice(), 0..) |pfd, pid, idx| {
                 if (!std.meta.eql(pid, id)) continue;
                 std.debug.assert(pfd.fd == readiness.fd);
                 std.debug.assert(pfd.events == readinessToPollEvents(readiness.*));
                 self.pfd.swapRemove(@truncate(idx));
-                self.pid.swapRemove(@truncate(idx - 1));
+                self.pid.swapRemove(@truncate(idx));
                 break;
             }
             self.uringlator.finish(self, id, err, .thread_unsafe);
