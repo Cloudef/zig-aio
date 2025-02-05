@@ -6,7 +6,7 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
 
     const sanitize = b.option(bool, "sanitize", "use sanitizers when running examples or tests") orelse false;
-    const single_threaded = b.option(bool, "single-threaded", "use only a single thread") orelse false;
+    const single_threaded = b.option(bool, "single-threaded", "use only a single thread") orelse null;
 
     var aio_opts = b.addOptions();
     {
@@ -75,7 +75,7 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .optimize = optimize,
             .sanitize_thread = sanitize,
-            .single_threaded = single_threaded,
+            .single_threaded = if (example == .coro_wttr) false else single_threaded,
             .strip = false,
         });
         exe.root_module.addImport("aio", aio);
@@ -144,7 +144,7 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .optimize = .ReleaseFast,
             .sanitize_thread = sanitize,
-            .single_threaded = if (sanitize) single_threaded else bench != .ticker,
+            .single_threaded = if (bench == .ticker) false else single_threaded,
             .strip = false,
         });
         exe.root_module.addImport("aio", aio);
