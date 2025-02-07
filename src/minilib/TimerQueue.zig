@@ -302,7 +302,9 @@ pub fn tick(self: *@This(), handler: anytype) u64 {
                     timeouts[list.len - 1] = ns_now + intervals[list.len - 1];
                     self.sort(clock);
                 }
-                handler.onTimeout(userdata);
+                if (comptime @TypeOf(handler) != void) {
+                    handler.onTimeout(userdata);
+                }
             }
 
             if (list.len > 0) {
@@ -311,4 +313,30 @@ pub fn tick(self: *@This(), handler: anytype) u64 {
         }
     }
     return wait_time;
+}
+
+const TimerQueue = @This();
+
+test {
+    var queue = try TimerQueue.init(std.testing.allocator);
+    defer queue.deinit();
+    try queue.schedule(.monotonic, std.time.ns_per_s, 0, .{});
+    try queue.schedule(.monotonic, std.time.ns_per_s * 2, 1, .{});
+
+    const handler = struct {
+        var times: usize = 0;
+        fn onTimeout(userdata: usize) void {
+            std.debug.assert(userdata == times);
+            times += 1;
+        }
+    };
+
+    while (handler.times < 2) {
+        const wt = queue.tick(handler);
+        if (handler.times < 2) {
+            std.debug.assert(wt <= std.time.ns_per_s * 2);
+        } else {
+            std.debug.assert(wt > std.time.ns_per_s * 2);
+        }
+    }
 }

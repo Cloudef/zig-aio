@@ -44,3 +44,7 @@ pub fn MixErrorUnionWithErrorSet(comptime T: type, comptime E: type) type {
         else => E!T,
     };
 }
+
+test {
+    std.testing.refAllDecls(@This());
+}
