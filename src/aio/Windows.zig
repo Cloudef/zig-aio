@@ -421,7 +421,7 @@ pub fn uringlator_start(self: *@This(), id: aio.Id, op_type: Operation) !void {
             const result = self.uringlator.ops.getOne(.out_result, id);
             const state = self.uringlator.ops.getOnePtr(.state, id);
             if (single_threaded) {
-                self.blockingPosixExecutor(tag, state.toOp(tag, result), id, .thread_safe);
+                self.blockingPosixExecutor(tag, state.toOp(tag, result), id, .thread_unsafe);
             } else {
                 try self.posix_pool.spawn(blockingPosixExecutor, .{ self, tag, state.toOp(tag, result), id, .thread_safe });
             }
