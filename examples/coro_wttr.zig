@@ -17,6 +17,7 @@ fn getWeather(completed: *std.atomic.Value(u32), allocator: std.mem.Allocator, c
         try url.writer().print("https://wttr.in/{s}?AF&lang={s}", .{ city, lang });
     }
     var body = std.ArrayList(u8).init(allocator);
+    errdefer body.deinit();
     var client: std.http.Client = .{ .allocator = allocator };
     defer client.deinit();
     _ = try client.fetch(.{
@@ -101,13 +102,16 @@ pub fn main() !void {
     ltask.cancel();
 
     for (tasks.items, 0..) |task, idx| {
-        const body = try task.complete(.wait);
-        defer allocator.free(body);
-        if (idx == 3) {
-            try std.io.getStdOut().writer().print("\nAaand the current master zig version is... ", .{});
+        if (task.complete(.wait)) |body| {
+            defer allocator.free(body);
+            if (idx == 3) {
+                try std.io.getStdOut().writer().print("\nAaand the current master zig version is... ", .{});
+            }
+            try std.io.getStdOut().writeAll(body);
+            try std.io.getStdOut().writeAll("\n");
+        } else |err| {
+            try std.io.getStdOut().writer().print("request {} failed with: {}\n", .{ idx, err });
         }
-        try std.io.getStdOut().writeAll(body);
-        try std.io.getStdOut().writeAll("\n");
     }
 
     try std.io.getStdOut().writer().print("\nThat's all folks\n", .{});
