@@ -126,9 +126,9 @@ pub fn init(allocator: std.mem.Allocator, n: u16) aio.Error!@This() {
 }
 
 pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
+    self.io.deinit();
     self.ops.deinit(allocator);
     allocator.free(self.cqes[0..self.io.cq.cqes.len]);
-    self.io.deinit();
     self.* = undefined;
 }
 
