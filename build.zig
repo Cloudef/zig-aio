@@ -136,6 +136,7 @@ pub fn build(b: *std.Build) void {
     inline for (.{
         .ping_pongs,
         .flow,
+        .flow_uring,
         .aio_nops,
         .coro_nops,
     }) |bench| {

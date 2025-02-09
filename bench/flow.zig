@@ -7,7 +7,9 @@ pub const std_options: std.Options = .{
     .log_level = .debug,
 };
 
-const BYTES_RECEIVED = 500_000_000;
+const NUM_PACKETS = 1_000_000;
+const NUM_BUFFERS = 1;
+const BUFSZ = 1500;
 
 fn server(startup: *coro.ResetEvent) !void {
     var socket: std.posix.socket_t = undefined;
@@ -17,18 +19,19 @@ fn server(startup: *coro.ResetEvent) !void {
         .protocol = std.posix.IPPROTO.UDP,
         .out_socket = &socket,
     });
+    defer coro.io.single(.close_socket, .{ .socket = socket }) catch {};
 
     const address = std.net.Address.initIp4(.{ 0, 0, 0, 0 }, 3232);
     try std.posix.bind(socket, &address.any, address.getOsSockLen());
 
     startup.set();
 
+    var total_received: u64 = 0;
+    var total_packets: u64 = 0;
     const start_time = try std.time.Instant.now();
 
-    var total_received: u64 = 0;
-
-    while (true) {
-        var buf: [1500]u8 = undefined;
+    while (total_packets < NUM_PACKETS) {
+        var buf: [BUFSZ]u8 = undefined;
         var addr: std.posix.sockaddr.storage = undefined;
         var recv_iovec = [_]std.posix.iovec{.{
             .base = &buf,
@@ -56,23 +59,17 @@ fn server(startup: *coro.ResetEvent) !void {
         };
 
         total_received += size;
-
-        // If we're done then exit
-        if (total_received > BYTES_RECEIVED) {
-            break;
-        }
+        total_packets += 1;
     }
 
     const end_time = try std.time.Instant.now();
 
-    const elapsed: f64 = @floatFromInt(end_time.since(start_time));
-    const bytes_s: f64 = @as(f64, @floatFromInt(total_received)) / (elapsed / 1e9);
+    const elapsed: f64 = @as(f64, @floatFromInt(end_time.since(start_time))) / 1e9;
+    const bytes_s: f64 = @as(f64, @floatFromInt(total_received)) / elapsed;
+    const pps: f64 = @as(f64, @floatFromInt(total_packets)) / elapsed;
     log.info("{d:.2} megabytes/s", .{bytes_s / 1e6});
-    log.info("{d:.2} seconds total", .{elapsed / 1e9});
-
-    try coro.io.single(.close_socket, .{ .socket = socket });
-
-    std.posix.exit(0);
+    log.info("{d:.2} Mpps", .{pps / 1e6});
+    log.info("{d:.2} seconds total", .{elapsed});
 }
 
 const ClientMode = enum {
@@ -88,6 +85,7 @@ fn client(startup: *coro.ResetEvent, mode: ClientMode) !void {
         .protocol = std.posix.IPPROTO.UDP,
         .out_socket = &socket,
     });
+    defer coro.io.single(.close_socket, .{ .socket = socket }) catch {};
 
     const address = std.net.Address.initIp4(switch (mode) {
         .local => .{ 127, 0, 0, 1 },
@@ -96,9 +94,7 @@ fn client(startup: *coro.ResetEvent, mode: ClientMode) !void {
     try std.posix.setsockopt(socket, std.posix.SOL.SOCKET, std.posix.SO.BROADCAST, std.mem.asBytes(&@as(c_int, 1)));
     try std.posix.bind(socket, &address.any, address.getOsSockLen());
 
-    try startup.wait();
-
-    var buf: [1472]u8 = undefined;
+    var buf: [BUFSZ]u8 = undefined;
     @memset(&buf, 'P');
 
     var send_iovec = [_]std.posix.iovec_const{.{
@@ -118,12 +114,17 @@ fn client(startup: *coro.ResetEvent, mode: ClientMode) !void {
         .flags = 0,
     };
 
-    while (true) {
+    try startup.wait();
+    var total_packets: u64 = 0;
+
+    while (total_packets < NUM_PACKETS * 2) {
         // Send the ping
-        coro.io.single(.send_msg, .{
-            .socket = socket,
-            .msg = &send_msg,
-        }) catch |err| {
+        coro.io.multi(.{
+            aio.op(.send_msg, .{
+                .socket = socket,
+                .msg = &send_msg,
+            }, .unlinked),
+        } ** NUM_BUFFERS) catch |err| {
             if (err == error.SystemResources) {
                 try coro.io.single(.timeout, .{ .ns = 50 });
                 continue;
@@ -132,9 +133,10 @@ fn client(startup: *coro.ResetEvent, mode: ClientMode) !void {
                 return err;
             }
         };
+        total_packets += NUM_BUFFERS;
     }
 
-    try coro.io.single(.close_socket, .{ .socket = socket });
+    log.info("sent {} packets", .{NUM_PACKETS * 2});
 }
 
 pub fn main() !void {
@@ -152,19 +154,20 @@ pub fn main() !void {
         return error.InvalidArguments;
     }
 
-    var scheduler = try coro.Scheduler.init(allocator, .{});
+    const queue_size: u16 = 32_768;
+    var scheduler = try coro.Scheduler.init(allocator, .{ .io_queue_entries = queue_size });
     defer scheduler.deinit();
 
     var startup: coro.ResetEvent = .{};
     if (std.mem.eql(u8, mode, "server") or std.mem.eql(u8, mode, "both")) {
-        _ = try scheduler.spawn(server, .{&startup}, .{});
+        _ = try scheduler.spawn(server, .{&startup}, .{ .detached = true });
     } else {
         startup.set();
     }
 
     if (std.mem.eql(u8, mode, "client") or std.mem.eql(u8, mode, "both")) {
         const cmode: ClientMode = if (std.mem.eql(u8, mode, "both")) .local else .remote;
-        _ = try scheduler.spawn(client, .{ &startup, cmode }, .{});
+        _ = try scheduler.spawn(client, .{ &startup, cmode }, .{ .detached = true });
     }
 
     try scheduler.run(.wait);
