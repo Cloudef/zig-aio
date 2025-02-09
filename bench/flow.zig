@@ -75,7 +75,12 @@ fn server(startup: *coro.ResetEvent) !void {
     std.posix.exit(0);
 }
 
-fn client(startup: *coro.ResetEvent) !void {
+const ClientMode = enum {
+    local,
+    remote,
+};
+
+fn client(startup: *coro.ResetEvent, mode: ClientMode) !void {
     var socket: std.posix.socket_t = undefined;
     try coro.io.single(.socket, .{
         .domain = std.posix.AF.INET,
@@ -84,7 +89,10 @@ fn client(startup: *coro.ResetEvent) !void {
         .out_socket = &socket,
     });
 
-    const address = std.net.Address.initIp4(.{ 0, 0, 0, 0 }, 0);
+    const address = std.net.Address.initIp4(switch (mode) {
+        .local => .{ 127, 0, 0, 1 },
+        .remote => .{ 0, 0, 0, 0 },
+    }, 0);
     try std.posix.setsockopt(socket, std.posix.SOL.SOCKET, std.posix.SO.BROADCAST, std.mem.asBytes(&@as(c_int, 1)));
     try std.posix.bind(socket, &address.any, address.getOsSockLen());
 
@@ -155,7 +163,8 @@ pub fn main() !void {
     }
 
     if (std.mem.eql(u8, mode, "client") or std.mem.eql(u8, mode, "both")) {
-        _ = try scheduler.spawn(client, .{&startup}, .{});
+        const cmode: ClientMode = if (std.mem.eql(u8, mode, "both")) .local else .remote;
+        _ = try scheduler.spawn(client, .{ &startup, cmode }, .{});
     }
 
     try scheduler.run(.wait);
