@@ -275,6 +275,7 @@ pub fn perform(comptime op_type: Operation, op: Operation.map.getAssertContains(
         .close_event_source => op.source.deinit(),
         // these must be implemented by the backend
         .nop, .timeout, .link_timeout, .cancel, .poll => unreachable,
+        .recv_msg_br => unreachable,
     }
 }
 

@@ -156,6 +156,25 @@ pub const Dynamic = struct {
         self.* = undefined;
     }
 
+    /// Acquire a buffer ring from the backend
+    /// Backend can fill the buffers in zero-copy fashion avoiding context switches
+    /// If backend runs out of buffers operations will fail with `error.SystemResources`
+    pub fn acquireBufferRing(self: *@This(), buffers: []const []u8, writers: []?Id) error{ OutOfMemory, Unexpected }!BufferRingId {
+        return self.io.acquireBufferRing(buffers, writers);
+    }
+
+    /// Release buffer ring, the id is no longer valid
+    /// It is an programming error to release a buffer ring while operations are still using it
+    pub fn releaseBufferRing(self: *@This(), id: BufferRingId) void {
+        self.io.releaseBufferRing(id);
+    }
+
+    /// Release a single buffer inside a buffer ring
+    /// This notifies the backend that the buffer can be reused
+    pub fn releaseBuffer(self: *@This(), id: BufferRingId, bid: u16) void {
+        self.io.releaseBuffer(id, bid);
+    }
+
     /// Queue operations for future completion
     /// The call is atomic, if any of the operations fail to queue, then the given operations are reverted
     pub inline fn queue(self: *@This(), pairs: anytype, handler: anytype) Error!void {
@@ -220,6 +239,7 @@ pub inline fn single(comptime op_type: Operation, values: Operation.map.getAsser
 const ops = @import("aio/ops.zig");
 pub const Operation = ops.Operation;
 pub const Id = ops.Id;
+pub const BufferRingId = ops.BufferRingId;
 pub const Link = ops.Link;
 pub const Nop = ops.Nop;
 pub const Fsync = ops.Fsync;

@@ -8,6 +8,8 @@ pub const std_options: std.Options = .{
 };
 
 const BYTES_RECEIVED = 500_000_000;
+const NUM_BUFFERS = 8;
+const BUFSZ = 4096 * 2;
 
 fn server(startup: *coro.ResetEvent) !void {
     var socket: std.posix.socket_t = undefined;
@@ -27,35 +29,41 @@ fn server(startup: *coro.ResetEvent) !void {
 
     var total_received: u64 = 0;
 
+    var mega_buffer: [BUFSZ * NUM_BUFFERS]u8 = undefined;
+    var buffers: [NUM_BUFFERS][]u8 = undefined;
+    for (&buffers, 0..) |*buf, idx| buf.* = mega_buffer[idx * BUFSZ ..][0..BUFSZ];
+    var writers: [NUM_BUFFERS]?aio.Id = undefined;
+    const br_id = try coro.io.acquireBufferRing(&buffers, &writers);
+    defer coro.io.releaseBufferRing(br_id);
+
+    var addr: std.posix.sockaddr.storage = undefined;
+    var recv_msg = aio.posix.msghdr{
+        .name = @ptrCast(&addr),
+        .namelen = @sizeOf(@TypeOf(addr)),
+        .iov = undefined,
+        .iovlen = 0,
+        .control = null,
+        .controllen = 0,
+        .flags = 0,
+    };
+
     while (true) {
-        var buf: [1500]u8 = undefined;
-        var addr: std.posix.sockaddr.storage = undefined;
-        var recv_iovec = [_]std.posix.iovec{.{
-            .base = &buf,
-            .len = buf.len,
-        }};
-        var recv_msg = aio.posix.msghdr{
-            .name = @ptrCast(&addr),
-            .namelen = @sizeOf(@TypeOf(addr)),
-            .iov = &recv_iovec,
-            .iovlen = 1,
-            .control = null,
-            .controllen = 0,
-            .flags = 0,
-        };
+        try coro.io.multi(
+            .{
+                aio.op(.recv_msg_br, .{
+                    .socket = socket,
+                    .out_msg = &recv_msg,
+                    .buffer_ring = br_id,
+                }, .unlinked),
+            } ** NUM_BUFFERS,
+        );
 
-        // Receive the request
-        var size: usize = undefined;
-        coro.io.single(.recv_msg, .{
-            .socket = socket,
-            .out_msg = &recv_msg,
-            .out_read = &size,
-        }) catch |err| {
-            log.err("Error in serverRecv: {any}", .{err});
-            return err;
-        };
-
-        total_received += size;
+        for (buffers, writers, 0..) |buf, maybe_writer, bid| {
+            if (maybe_writer) |_| {
+                total_received += buf.len;
+                coro.io.releaseBuffer(br_id, @intCast(bid));
+            }
+        }
 
         // If we're done then exit
         if (total_received > BYTES_RECEIVED) {
@@ -98,7 +106,7 @@ fn client(startup: *coro.ResetEvent, mode: ClientMode) !void {
 
     try startup.wait();
 
-    var buf: [1472]u8 = undefined;
+    var buf: [BUFSZ]u8 = undefined;
     @memset(&buf, 'P');
 
     var send_iovec = [_]std.posix.iovec_const{.{
@@ -120,10 +128,12 @@ fn client(startup: *coro.ResetEvent, mode: ClientMode) !void {
 
     while (true) {
         // Send the ping
-        coro.io.single(.send_msg, .{
-            .socket = socket,
-            .msg = &send_msg,
-        }) catch |err| {
+        coro.io.multi(.{
+            aio.op(.send_msg, .{
+                .socket = socket,
+                .msg = &send_msg,
+            }, .unlinked),
+        } ** NUM_BUFFERS) catch |err| {
             if (err == error.SystemResources) {
                 try coro.io.single(.timeout, .{ .ns = 50 });
                 continue;

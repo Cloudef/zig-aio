@@ -29,6 +29,8 @@ const Supported = struct {
 // latency than actually using eventfd. Eventfd is simple and reliable.
 pub const EventSource = linux.EventSource;
 
+const IoUring = @This();
+
 const UringOperation = struct {
     const State = union {
         child_exit: struct {
@@ -41,6 +43,7 @@ const UringOperation = struct {
             },
         },
         timeout: std.os.linux.kernel_timespec,
+        buffer_ring: aio.BufferRingId,
 
         fn init(comptime op_type: Operation, op: Operation.map.getAssertContains(op_type)) @This() {
             return switch (op_type) {
@@ -59,6 +62,7 @@ const UringOperation = struct {
                         .nsec = @intCast(op.ns % std.time.ns_per_s),
                     },
                 },
+                .recv_msg_br => .{ .buffer_ring = op.buffer_ring },
                 else => undefined,
             };
         }
@@ -74,11 +78,23 @@ const UringOperation = struct {
     state: State,
 };
 
+const BufferRingAllocator = aio.BufferRingId.Allocator(struct {
+    /// Pointer to the memory shared by the kernel.
+    /// `buffers_count` of `io_uring_buf` structures are shared by the kernel.
+    /// First `io_uring_buf` is overlaid by `io_uring_buf_ring` struct.
+    br: *align(std.mem.page_size) std.os.linux.io_uring_buf_ring,
+    /// Application buffers
+    buffers: []const []u8,
+    /// Who wrote into the buffer?
+    writers: [*]?aio.Id,
+});
+
 const IdAllocator = aio.Id.Allocator(UringOperation);
 
 io: std.os.linux.IoUring,
 ops: IdAllocator,
 cqes: [*]std.os.linux.io_uring_cqe,
+brings: BufferRingAllocator,
 
 pub fn isSupported(op_types: []const Operation) bool {
     var ops: [Operation.map.count()]std.os.linux.IORING_OP = undefined;
@@ -93,7 +109,7 @@ pub fn isSupported(op_types: []const Operation) bool {
             .connect => std.os.linux.IORING_OP.CONNECT, // 5.5
             .recv => std.os.linux.IORING_OP.RECV, // 5.6
             .send => std.os.linux.IORING_OP.SEND, // 5.6
-            .recv_msg => std.os.linux.IORING_OP.RECVMSG, // 5.3
+            .recv_msg, .recv_msg_br => std.os.linux.IORING_OP.RECVMSG, // 5.3
             .send_msg => std.os.linux.IORING_OP.SENDMSG, // 5.3
             .shutdown => std.os.linux.IORING_OP.SHUTDOWN, // 5.11
             .open_at => std.os.linux.IORING_OP.OPENAT, // 5.15
@@ -122,14 +138,78 @@ pub fn init(allocator: std.mem.Allocator, n: u16) aio.Error!@This() {
     errdefer ops.deinit(allocator);
     const cqes = try allocator.alloc(std.os.linux.io_uring_cqe, @intCast(io.cq.cqes.len));
     errdefer allocator.free(cqes);
-    return .{ .io = io, .ops = ops, .cqes = cqes.ptr };
+    var brings = try BufferRingAllocator.init(allocator, @intCast(@max(16, io.sq.sqes.len / 2)));
+    errdefer brings.deinit(allocator);
+    return .{
+        .io = io,
+        .ops = ops,
+        .cqes = cqes.ptr,
+        .brings = brings,
+    };
 }
 
 pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
     self.io.deinit();
     self.ops.deinit(allocator);
+    self.brings.deinit(allocator);
     allocator.free(self.cqes[0..self.io.cq.cqes.len]);
     self.* = undefined;
+}
+
+pub fn acquireBufferRing(self: *@This(), buffers: []const []u8, writers: []?aio.Id) !aio.BufferRingId {
+    std.debug.assert(buffers.len == writers.len);
+    const id = self.brings.next() orelse return error.OutOfMemory;
+
+    const entries: u16 = @intCast(buffers.len);
+    const br = std.os.linux.IoUring.setup_buf_ring(self.io.fd, entries, id.slot) catch |err| return switch (err) {
+        error.PermissionDenied => error.Unexpected,
+        error.AccessDenied => error.Unexpected,
+        error.MemoryMappingNotSupported => error.Unexpected,
+        error.Unexpected => error.Unexpected,
+        error.LockedMemoryLimitExceeded => error.OutOfMemory,
+        error.OutOfMemory => error.OutOfMemory,
+        error.ProcessFdQuotaExceeded => unreachable,
+        error.SystemFdQuotaExceeded => unreachable,
+        error.ArgumentsInvalid => unreachable,
+        error.EntriesNotPowerOfTwo => unreachable,
+        error.EntriesNotInRange => unreachable,
+    };
+    std.os.linux.IoUring.buf_ring_init(br);
+
+    const mask = std.os.linux.IoUring.buf_ring_mask(entries);
+    for (buffers, 0..) |buffer, idx| {
+        const bid: u16 = @intCast(idx);
+        std.os.linux.IoUring.buf_ring_add(br, buffer, bid, mask, bid);
+    }
+    std.os.linux.IoUring.buf_ring_advance(br, entries);
+
+    @memset(writers, null);
+    self.brings.use(id, .{
+        .br = br,
+        .buffers = buffers,
+        .writers = writers.ptr,
+    }) catch unreachable;
+    return id;
+}
+
+pub fn releaseBufferRing(self: *@This(), id: aio.BufferRingId) void {
+    self.brings.lookup(id) catch unreachable;
+    const br = self.brings.getOne(.br, id);
+    const entries: u16 = @intCast(self.brings.getOne(.buffers, id).len);
+    std.os.linux.IoUring.free_buf_ring(self.io.fd, br, entries, id.slot);
+}
+
+pub fn releaseBuffer(self: *@This(), id: aio.BufferRingId, bid: u16) void {
+    self.brings.lookup(id) catch unreachable;
+    const writers = self.brings.getOne(.writers, id);
+    std.debug.assert(writers[bid] != null); // releasing a buffer that's not written
+    const buffers = self.brings.getOne(.buffers, id);
+    const mask = std.os.linux.IoUring.buf_ring_mask(@intCast(buffers.len));
+    const br = self.brings.getOne(.br, id);
+    std.os.linux.IoUring.buf_ring_add(br, buffers[bid], bid, mask, 0);
+    std.os.linux.IoUring.buf_ring_advance(br, 1);
+    @constCast(&buffers[bid]).len = 0;
+    writers[bid] = null;
 }
 
 fn queueOperation(self: *@This(), comptime tag: Operation, op: anytype, link: aio.Link) aio.Error!aio.Id {
@@ -189,9 +269,18 @@ pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode, handler: anyty
         std.debug.assert(cqe.flags & std.os.linux.IORING_CQE_F_NOTIF == 0);
 
         const id = aio.Id.init(cqe.user_data);
-        const op_type = self.ops.getOne(.type, id);
+
+        if (cqe.flags & std.os.linux.IORING_CQE_F_BUFFER != 0) {
+            const br_id = self.ops.getOne(.state, id).buffer_ring;
+            const buffers = self.brings.getOne(.buffers, br_id);
+            const writers = self.brings.getOne(.writers, br_id);
+            const bid = cqe.buffer_id() catch unreachable;
+            @constCast(&buffers[bid]).len = @intCast(cqe.res);
+            writers[bid] = id;
+        }
 
         var failed: bool = false;
+        const op_type = self.ops.getOne(.type, id);
         _ = switch (op_type) {
             .child_exit => blk: {
                 const state = self.ops.getOnePtr(.state, id);
@@ -248,6 +337,7 @@ pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode, handler: anyty
             .notify_event_source,
             .wait_event_source,
             .close_event_source,
+            .recv_msg_br,
             => |tag| blk: {
                 var op: Operation.map.getAssertContains(tag) = undefined;
                 op.out_id = self.ops.getOne(.out_id, id);
@@ -394,6 +484,12 @@ fn uring_queue(io: *std.os.linux.IoUring, comptime op_type: Operation, op: Opera
         .recv => try io.recv(user_data, op.socket, .{ .buffer = op.buffer }, 0),
         .send => try io.send(user_data, op.socket, op.buffer, 0),
         .recv_msg => try io.recvmsg(user_data, op.socket, op.out_msg, 0),
+        .recv_msg_br => blk: {
+            var sqe = try io.recvmsg(user_data, op.socket, op.out_msg, 0);
+            sqe.flags |= std.os.linux.IOSQE_BUFFER_SELECT;
+            sqe.buf_index = op.buffer_ring.slot;
+            break :blk sqe;
+        },
         .send_msg => try io.sendmsg(user_data, op.socket, op.msg, 0),
         .shutdown => try io.shutdown(user_data, op.socket, switch (op.how) {
             .recv => std.posix.SHUT.RD,
@@ -600,7 +696,7 @@ fn uring_handle_completion(comptime op_type: Operation, op: Operation.map.getAss
                 .NETDOWN => error.NetworkSubsystemFailed,
                 else => std.posix.unexpectedErrno(err),
             },
-            .recv_msg => switch (err) {
+            .recv_msg, .recv_msg_br => switch (err) {
                 .SUCCESS, .INTR, .INVAL, .FAULT, .AGAIN => unreachable,
                 .CANCELED => error.Canceled,
                 .BADF => unreachable, // always a race condition
@@ -610,6 +706,7 @@ fn uring_handle_completion(comptime op_type: Operation, op: Operation.map.getAss
                 .CONNREFUSED => error.ConnectionRefused,
                 .CONNRESET => error.ConnectionResetByPeer,
                 .TIMEDOUT => error.ConnectionTimedOut,
+                .NOBUFS => error.SystemResources,
                 else => std.posix.unexpectedErrno(err),
             },
             .send_msg => switch (err) {
@@ -829,6 +926,7 @@ fn uring_handle_completion(comptime op_type: Operation, op: Operation.map.getAss
         .accept => op.out_socket.* = cqe.res,
         .connect => {},
         .recv, .recv_msg => op.out_read.* = @intCast(cqe.res),
+        .recv_msg_br => {},
         .send, .send_msg => if (op.out_written) |w| {
             w.* = @intCast(cqe.res);
         },

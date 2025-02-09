@@ -4,6 +4,7 @@ const aio = @import("../aio.zig");
 const posix = @import("posix/posix.zig");
 
 pub const Id = @import("minilib").Id(u16, u8);
+pub const BufferRingId = @import("minilib").Id(u16, u8);
 
 pub const Link = enum {
     unlinked,
@@ -183,6 +184,17 @@ pub const RecvMsg = struct {
     socket: std.posix.socket_t,
     out_msg: *posix.msghdr,
     out_read: *usize,
+    out_id: ?*Id = null,
+    out_error: ?*Error = null,
+    userdata: usize = 0,
+};
+
+/// recvmsg(2)
+pub const RecvMsgBufferRing = struct {
+    pub const Error = RecvMsg.Error;
+    socket: std.posix.socket_t,
+    out_msg: *posix.msghdr,
+    buffer_ring: BufferRingId,
     out_id: ?*Id = null,
     out_error: ?*Error = null,
     userdata: usize = 0,
@@ -383,6 +395,7 @@ pub const Operation = enum {
     recv,
     send,
     recv_msg,
+    recv_msg_br,
     send_msg,
     shutdown,
     open_at,
@@ -414,6 +427,7 @@ pub const Operation = enum {
         .recv = Recv,
         .send = Send,
         .recv_msg = RecvMsg,
+        .recv_msg_br = RecvMsgBufferRing,
         .send_msg = SendMsg,
         .shutdown = Shutdown,
         .open_at = OpenAt,
@@ -466,6 +480,7 @@ pub const Operation = enum {
                 .wait_event_source,
                 .close_event_source,
                 .notify_event_source,
+                .recv_msg_br,
                 => undefined,
                 .read, .read_tty, .recv, .recv_msg => @ptrCast(op.out_read),
                 .write, .send, .send_msg => @ptrCast(op.out_written),
@@ -496,6 +511,7 @@ pub const Operation = enum {
                 .wait_event_source,
                 .close_event_source,
                 .notify_event_source,
+                .recv_msg_br,
                 => undefined,
                 .read, .read_tty, .recv, .recv_msg => op.out_read = self.cast(*usize),
                 .write, .send, .send_msg => op.out_written = self.cast(?*usize),

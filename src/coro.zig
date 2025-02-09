@@ -60,6 +60,37 @@ pub const io = struct {
         cpy.out_error = &err;
         if (try complete(.{aio.op(op_type, cpy, .unlinked)}) > 0) return err;
     }
+
+    /// Acquire a buffer ring from the backend
+    /// Backend can fill the buffers in zero-copy fashion avoiding context switches
+    /// If backend runs out of buffers operations will fail with `error.SystemResources`
+    pub fn acquireBufferRing(buffers: []const []u8, writers: []?aio.Id) error{ OutOfMemory, Unexpected }!aio.BufferRingId {
+        if (current()) |task| {
+            return task.frame.scheduler.io.acquireBufferRing(buffers, writers);
+        } else {
+            unreachable; // can only be called from a task
+        }
+    }
+
+    /// Release buffer ring, the id is no longer valid
+    /// It is an programming error to release a buffer ring while operations are still using it
+    pub fn releaseBufferRing(id: aio.BufferRingId) void {
+        if (current()) |task| {
+            return task.frame.scheduler.io.releaseBufferRing(id);
+        } else {
+            unreachable; // can only be called from a task
+        }
+    }
+
+    /// Release a single buffer inside a buffer ring
+    /// This notifies the backend that the buffer can be reused
+    pub fn releaseBuffer(id: aio.BufferRingId, bid: u16) void {
+        if (current()) |task| {
+            return task.frame.scheduler.io.releaseBuffer(id, bid);
+        } else {
+            unreachable; // can only be called from a task
+        }
+    }
 };
 
 test {
