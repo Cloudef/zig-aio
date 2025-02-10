@@ -27,7 +27,7 @@ pub const msghdr_const = extern struct {
     /// Size of address.
     namelen: std.posix.socklen_t,
     /// Scatter/gather array.
-    iov: [*]std.posix.iovec_const,
+    iov: [*]const std.posix.iovec_const,
     /// Number of elements in iov.
     iovlen: i32,
     /// Ancillary data.
