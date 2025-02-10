@@ -1,3 +1,4 @@
+const builtin = @import("builtin");
 const std = @import("std");
 const aio = @import("aio");
 const coro = @import("coro");
@@ -7,9 +8,18 @@ pub const std_options: std.Options = .{
     .log_level = .debug,
 };
 
+const CQES = 4096 * 2;
 const NUM_PACKETS = 1_000_000;
-const NUM_BUFFERS = 1;
-const BUFSZ = 1500;
+const NUM_BUFFERS = switch (builtin.target.os.tag) {
+    .linux => 64, // GSO/GRO
+    else => 1,
+};
+const BUFSZ = 512;
+
+const UDP_SEGMENT = 103;
+const UDP_GRO = 104;
+
+const VALIDATE: bool = false;
 
 fn server(startup: *coro.ResetEvent) !void {
     var socket: std.posix.socket_t = undefined;
@@ -21,6 +31,10 @@ fn server(startup: *coro.ResetEvent) !void {
     });
     defer coro.io.single(.close_socket, .{ .socket = socket }) catch {};
 
+    if (NUM_BUFFERS > 1) {
+        try std.posix.setsockopt(socket, std.posix.IPPROTO.UDP, UDP_GRO, std.mem.asBytes(&@as(c_int, BUFSZ)));
+    }
+
     const address = std.net.Address.initIp4(.{ 0, 0, 0, 0 }, 3232);
     try std.posix.bind(socket, &address.any, address.getOsSockLen());
 
@@ -31,13 +45,13 @@ fn server(startup: *coro.ResetEvent) !void {
     const start_time = try std.time.Instant.now();
 
     while (total_packets < NUM_PACKETS) {
-        var buf: [BUFSZ]u8 = undefined;
+        var buf: [BUFSZ * NUM_BUFFERS]u8 = undefined;
         var addr: std.posix.sockaddr.storage = undefined;
-        var recv_iovec = [_]std.posix.iovec{.{
+        var recv_iovec: [1]std.posix.iovec = .{.{
             .base = &buf,
             .len = buf.len,
         }};
-        var recv_msg = aio.posix.msghdr{
+        var recv_msg: aio.posix.msghdr = .{
             .name = @ptrCast(&addr),
             .namelen = @sizeOf(@TypeOf(addr)),
             .iov = &recv_iovec,
@@ -58,15 +72,34 @@ fn server(startup: *coro.ResetEvent) !void {
             return err;
         };
 
+        if (comptime VALIDATE) {
+            for (0..size / BUFSZ) |idx| {
+                const off = idx * BUFSZ;
+                if (buf[off + 1] != buf[off] ^ 32) {
+                    log.err("parity validation failed ({} != {})", .{ buf[off + 1], buf[off] ^ 32 });
+                    return error.ValidationFailure;
+                }
+                if (!std.mem.allEqual(u8, buf[off + 2 .. BUFSZ - 1], 'P')) {
+                    log.err("packet validation failed", .{});
+                    return error.ValidationFailure;
+                }
+            }
+        }
+
         total_received += size;
-        total_packets += 1;
+        total_packets += size / BUFSZ;
     }
 
     const end_time = try std.time.Instant.now();
 
+    if (total_received != total_packets * BUFSZ) {
+        log.err("mismatch: {} != {}", .{ total_received, total_packets * BUFSZ });
+    }
+
     const elapsed: f64 = @as(f64, @floatFromInt(end_time.since(start_time))) / 1e9;
     const bytes_s: f64 = @as(f64, @floatFromInt(total_received)) / elapsed;
     const pps: f64 = @as(f64, @floatFromInt(total_packets)) / elapsed;
+    log.info("received {} packets", .{total_packets});
     log.info("{d:.2} megabytes/s", .{bytes_s / 1e6});
     log.info("{d:.2} Mpps", .{pps / 1e6});
     log.info("{d:.2} seconds total", .{elapsed});
@@ -92,22 +125,26 @@ fn client(startup: *coro.ResetEvent, mode: ClientMode) !void {
         .remote => .{ 0, 0, 0, 0 },
     }, 0);
     try std.posix.setsockopt(socket, std.posix.SOL.SOCKET, std.posix.SO.BROADCAST, std.mem.asBytes(&@as(c_int, 1)));
+
+    if (NUM_BUFFERS > 1) {
+        try std.posix.setsockopt(socket, std.posix.IPPROTO.UDP, UDP_SEGMENT, std.mem.asBytes(&@as(c_int, BUFSZ)));
+    }
+
     try std.posix.bind(socket, &address.any, address.getOsSockLen());
 
-    var buf: [BUFSZ]u8 = undefined;
+    var buf: [BUFSZ * NUM_BUFFERS]u8 = undefined;
     @memset(&buf, 'P');
 
-    var send_iovec = [_]std.posix.iovec_const{.{
+    const send_iovec: []const std.posix.iovec_const = &.{.{
         .base = &buf,
         .len = buf.len,
     }};
 
-    // Prepare message header with destination address
     const send_addr = std.net.Address.initIp4(.{ 255, 255, 255, 255 }, 3232);
-    var send_msg = aio.posix.msghdr_const{
+    var send_msg: aio.posix.msghdr_const = .{
         .name = @ptrCast(&send_addr.any),
         .namelen = send_addr.getOsSockLen(),
-        .iov = &send_iovec,
+        .iov = send_iovec.ptr,
         .iovlen = 1,
         .control = null,
         .controllen = 0,
@@ -116,15 +153,23 @@ fn client(startup: *coro.ResetEvent, mode: ClientMode) !void {
 
     try startup.wait();
     var total_packets: u64 = 0;
+    var total_sent: u64 = 0;
+    const start_time = try std.time.Instant.now();
 
     while (total_packets < NUM_PACKETS * 2) {
-        // Send the ping
-        coro.io.multi(.{
-            aio.op(.send_msg, .{
-                .socket = socket,
-                .msg = &send_msg,
-            }, .unlinked),
-        } ** NUM_BUFFERS) catch |err| {
+        if (comptime VALIDATE) {
+            for (total_packets..total_packets + NUM_BUFFERS) |idx| {
+                const parity: u8 = @intCast(idx % 255);
+                buf[(idx - total_packets) * BUFSZ] = parity;
+                buf[(idx - total_packets) * BUFSZ + 1] = parity ^ 32;
+            }
+        }
+        var size: usize = 0;
+        coro.io.single(.send_msg, .{
+            .socket = socket,
+            .msg = &send_msg,
+            .out_written = &size,
+        }) catch |err| {
             if (err == error.SystemResources) {
                 try coro.io.single(.timeout, .{ .ns = 50 });
                 continue;
@@ -133,10 +178,23 @@ fn client(startup: *coro.ResetEvent, mode: ClientMode) !void {
                 return err;
             }
         };
-        total_packets += NUM_BUFFERS;
+        total_packets += size / BUFSZ;
+        total_sent += size;
     }
 
-    log.info("sent {} packets", .{NUM_PACKETS * 2});
+    const end_time = try std.time.Instant.now();
+
+    if (total_sent != total_packets * BUFSZ) {
+        log.err("mismatch: {} != {}", .{ total_sent, total_packets * BUFSZ });
+    }
+
+    const elapsed: f64 = @as(f64, @floatFromInt(end_time.since(start_time))) / 1e9;
+    const bytes_s: f64 = @as(f64, @floatFromInt(total_sent)) / elapsed;
+    const pps: f64 = @as(f64, @floatFromInt(total_packets)) / elapsed;
+    log.info("sent {} packets", .{total_packets});
+    log.info("{d:.2} megabytes/s", .{bytes_s / 1e6});
+    log.info("{d:.2} Mpps", .{pps / 1e6});
+    log.info("{d:.2} seconds total", .{elapsed});
 }
 
 pub fn main() !void {
@@ -154,8 +212,7 @@ pub fn main() !void {
         return error.InvalidArguments;
     }
 
-    const queue_size: u16 = 32_768;
-    var scheduler = try coro.Scheduler.init(allocator, .{ .io_queue_entries = queue_size });
+    var scheduler = try coro.Scheduler.init(allocator, .{ .io_queue_entries = CQES });
     defer scheduler.deinit();
 
     var startup: coro.ResetEvent = .{};

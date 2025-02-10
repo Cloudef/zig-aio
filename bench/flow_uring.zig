@@ -1,5 +1,6 @@
 // reference for flow.zig
 // this uses optimal (as far I know) io_uring code
+// flow.zig actually beats this because using GSO/GRO sendmsg/recvmsg is faster
 
 const std = @import("std");
 const log = std.log.scoped(.flow_uring);
@@ -8,18 +9,25 @@ pub const std_options: std.Options = .{
     .log_level = .debug,
 };
 
-const QUEUE_DEPTH = 64;
-const CQES = QUEUE_DEPTH * 16;
+// PR to zig std
+// RECVSEND_BUNDLE's don't work with recvmsg/sendmsg :(
+const IORING_RECVSEND_BUNDLE = 1 << 4;
+
+const CQES = 4096;
 const NUM_PACKETS = 1_000_000;
-const NUM_BUFFERS = CQES;
-const BUFSZ = 1500;
+const NUM_BUFFERS = 64;
+const BUFSZ = 512;
+
+const UDP_SEGMENT = 103;
+const UDP_GRO = 104; // does not work with multishot recvmsg
+
+const VALIDATE: bool = false;
 
 fn setupRecv(ring: *std.os.linux.IoUring) !void {
     const local = struct {
-        var addr: std.posix.sockaddr.storage = undefined;
         var msg: std.posix.msghdr = .{
-            .name = @ptrCast(&addr),
-            .namelen = @sizeOf(@TypeOf(addr)),
+            .name = null,
+            .namelen = 0,
             .iov = undefined,
             .iovlen = 0,
             .control = null,
@@ -35,13 +43,13 @@ fn setupRecv(ring: *std.os.linux.IoUring) !void {
 }
 
 fn server(startup: *std.Thread.ResetEvent) !void {
-    var ring = try std.os.linux.IoUring.init(QUEUE_DEPTH, std.os.linux.IORING_SETUP_SINGLE_ISSUER | std.os.linux.IORING_SETUP_COOP_TASKRUN);
+    var ring = try std.os.linux.IoUring.init(CQES, std.os.linux.IORING_SETUP_SINGLE_ISSUER | std.os.linux.IORING_SETUP_COOP_TASKRUN);
     defer ring.deinit();
 
     var mega_buffer: [NUM_BUFFERS * BUFSZ]u8 = undefined;
     var buf_ring = try std.os.linux.IoUring.BufferGroup.init(&ring, 0, &mega_buffer, BUFSZ, NUM_BUFFERS);
-
     defer buf_ring.deinit();
+
     const socket = try std.posix.socket(std.posix.AF.INET, std.posix.SOCK.DGRAM | std.posix.SOCK.CLOEXEC, std.posix.IPPROTO.UDP);
     defer std.posix.close(socket);
 
@@ -64,27 +72,48 @@ fn server(startup: *std.Thread.ResetEvent) !void {
         for (cqes[0..n]) |*cqe| {
             if (cqe.flags & std.os.linux.IORING_CQE_F_MORE == 0) {
                 if (!was_resetup) {
-                    log.err("no CQE_F_MORE", .{});
                     try setupRecv(&ring);
                     was_resetup = true;
+                    continue;
                 }
             }
             if (cqe.res < 0) {
-                log.err("cqe: {}", .{cqe.res});
+                log.err("recv cqe: {}", .{cqe.res});
                 std.posix.abort();
+            } else {
+                if (comptime VALIDATE) {
+                    const buf = buf_ring.get_cqe(cqe.*) catch unreachable;
+                    const hdr = std.mem.bytesAsValue(std.os.linux.io_uring_recvmsg_out, buf[0..]);
+                    const off = @sizeOf(std.os.linux.io_uring_recvmsg_out) + hdr.namelen + hdr.controllen;
+                    if (buf[off + 1] != buf[off] ^ 32) {
+                        log.err("parity validation failed ({} != {})", .{ buf[off + 1], buf[off] ^ 32 });
+                        return error.ValidationFailure;
+                    }
+                    if (!std.mem.allEqual(u8, buf[off + 2 .. off + hdr.payloadlen], 'P')) {
+                        log.err("packet validation failed", .{});
+                        log.warn("{x}", .{buf[off + 2 .. off + hdr.payloadlen]});
+                        return error.ValidationFailure;
+                    }
+                }
+
+                // release buffer
+                buf_ring.put(cqe.buffer_id() catch unreachable);
+                total_received += @intCast(cqe.res);
+                total_packets += 1;
             }
-            // release buffer
-            buf_ring.put(cqe.buffer_id() catch unreachable);
-            total_received += @intCast(cqe.res);
         }
-        total_packets += n;
     }
 
     const end_time = try std.time.Instant.now();
 
+    if (total_received != total_packets * BUFSZ) {
+        log.err("mismatch: {} != {}", .{ total_received, total_packets * BUFSZ });
+    }
+
     const elapsed: f64 = @as(f64, @floatFromInt(end_time.since(start_time))) / 1e9;
     const bytes_s: f64 = @as(f64, @floatFromInt(total_received)) / elapsed;
     const pps: f64 = @as(f64, @floatFromInt(total_packets)) / elapsed;
+    log.info("received {} packets", .{total_packets});
     log.info("{d:.2} megabytes/s", .{bytes_s / 1e6});
     log.info("{d:.2} Mpps", .{pps / 1e6});
     log.info("{d:.2} seconds total", .{elapsed});
@@ -96,7 +125,7 @@ const ClientMode = enum {
 };
 
 fn client(startup: *std.Thread.ResetEvent, mode: ClientMode) !void {
-    var ring = try std.os.linux.IoUring.init(QUEUE_DEPTH, std.os.linux.IORING_SETUP_SINGLE_ISSUER | std.os.linux.IORING_SETUP_COOP_TASKRUN);
+    var ring = try std.os.linux.IoUring.init(CQES, std.os.linux.IORING_SETUP_SINGLE_ISSUER | std.os.linux.IORING_SETUP_COOP_TASKRUN);
     defer ring.deinit();
 
     const socket = try std.posix.socket(std.posix.AF.INET, std.posix.SOCK.DGRAM | std.posix.SOCK.CLOEXEC, std.posix.IPPROTO.UDP);
@@ -109,50 +138,90 @@ fn client(startup: *std.Thread.ResetEvent, mode: ClientMode) !void {
         .remote => .{ 0, 0, 0, 0 },
     }, 0);
     try std.posix.setsockopt(socket, std.posix.SOL.SOCKET, std.posix.SO.BROADCAST, std.mem.asBytes(&@as(c_int, 1)));
+    try std.posix.setsockopt(socket, std.posix.IPPROTO.UDP, UDP_SEGMENT, std.mem.asBytes(&@as(c_int, BUFSZ)));
     try std.posix.bind(socket, &address.any, address.getOsSockLen());
 
-    var buf: [BUFSZ]u8 = undefined;
+    var buf: [BUFSZ * NUM_BUFFERS]u8 = undefined;
     @memset(&buf, 'P');
 
-    var send_iovec = [_]std.posix.iovec_const{.{
+    const send_iovec: []const std.posix.iovec_const = &.{.{
         .base = &buf,
         .len = buf.len,
     }};
 
-    // Prepare message header with destination address
     const send_addr = std.net.Address.initIp4(.{ 255, 255, 255, 255 }, 3232);
     var msg: std.posix.msghdr_const = .{
         .name = @ptrCast(&send_addr.any),
         .namelen = send_addr.getOsSockLen(),
-        .iov = &send_iovec,
+        .iov = send_iovec.ptr,
         .iovlen = 1,
         .control = null,
         .controllen = 0,
         .flags = 0,
     };
 
+    var msgs: [NUM_BUFFERS]std.os.linux.mmsghdr_const = @splat(.{ .hdr = msg, .len = 0 });
     startup.wait();
 
     var total_packets: u64 = 0;
+    var total_sent: u64 = 0;
     var cqes: [CQES]std.os.linux.io_uring_cqe = undefined;
+    const start_time = try std.time.Instant.now();
 
     while (total_packets < NUM_PACKETS * 2) {
-        for (0..QUEUE_DEPTH) |_| {
+        if (false) { // flip for uring vs sendmmsg
+            if (comptime VALIDATE) @compileError(":(");
+            const r = std.os.linux.sendmmsg(socket, &msgs, @intCast(msgs.len), 0);
+            switch (std.os.linux.E.init(r)) {
+                .SUCCESS => {},
+                .AGAIN, .INTR, .CONNREFUSED => continue,
+                else => |err| return std.posix.unexpectedErrno(err),
+            }
+            const n: usize = @intCast(r);
+            for (msgs[0..n]) |*rmsg| {
+                total_sent += rmsg.len;
+                rmsg.hdr.flags = 0;
+                rmsg.len = 0;
+            }
+            total_packets += n * NUM_BUFFERS;
+        } else {
+            if (comptime VALIDATE) {
+                for (total_packets..total_packets + NUM_BUFFERS) |idx| {
+                    const parity: u8 = @intCast(idx % 255);
+                    buf[(idx - total_packets) * BUFSZ] = parity;
+                    buf[(idx - total_packets) * BUFSZ + 1] = parity ^ 32;
+                }
+            }
             var sqe = try ring.sendmsg(0, 0, &msg, 0);
             sqe.flags |= std.os.linux.IOSQE_FIXED_FILE;
-        }
-        _ = try ring.submit();
-        const n = try ring.copy_cqes(&cqes, 1);
-        for (cqes[0..n]) |*cqe| {
-            if (cqe.res < 0) {
-                log.err("cqe: {}", .{cqe.res});
-                std.posix.abort();
+            _ = try ring.submit();
+            const n = try ring.copy_cqes(&cqes, 1);
+            for (cqes[0..n]) |*cqe| {
+                if (cqe.res < 0) {
+                    log.err("send cqe: {}", .{cqe.res});
+                    std.posix.abort();
+                } else {
+                    const sz: usize = @intCast(cqe.res);
+                    total_sent += sz;
+                    total_packets += sz / BUFSZ;
+                }
             }
         }
-        total_packets += n;
     }
 
-    log.info("sent {} packets", .{NUM_PACKETS * 2});
+    const end_time = try std.time.Instant.now();
+
+    if (total_sent != total_packets * BUFSZ) {
+        log.err("mismatch: {} != {}", .{ total_sent, total_packets * BUFSZ });
+    }
+
+    const elapsed: f64 = @as(f64, @floatFromInt(end_time.since(start_time))) / 1e9;
+    const bytes_s: f64 = @as(f64, @floatFromInt(total_sent)) / elapsed;
+    const pps: f64 = @as(f64, @floatFromInt(total_packets)) / elapsed;
+    log.info("sent {} packets", .{total_packets});
+    log.info("{d:.2} megabytes/s", .{bytes_s / 1e6});
+    log.info("{d:.2} Mpps", .{pps / 1e6});
+    log.info("{d:.2} seconds total", .{elapsed});
 }
 
 pub fn main() !void {
