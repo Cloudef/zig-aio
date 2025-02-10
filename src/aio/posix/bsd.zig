@@ -11,7 +11,7 @@ pub const msghdr_const = switch (builtin.target.os.tag) {
     .dragonfly => extern struct {
         name: ?*const anyopaque,
         namelen: std.posix.socklen_t,
-        iov: [*]std.posix.iovec,
+        iov: [*]const std.posix.iovec_const,
         iovlen: c_int,
         control: ?*anyopaque,
         controllen: std.posix.socklen_t,

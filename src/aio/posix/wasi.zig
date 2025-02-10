@@ -68,7 +68,7 @@ pub const socklen_t = u32;
 pub const msghdr = extern struct {
     name: *anyopaque,
     namelen: socklen_t,
-    iov: std.posix.iovec,
+    iov: [*]std.posix.iovec,
     iovlen: i32,
     control: *anyopaque,
     controllen: socklen_t,
@@ -78,7 +78,7 @@ pub const msghdr = extern struct {
 pub const msghdr_const = extern struct {
     name: *const anyopaque,
     namelen: socklen_t,
-    iov: std.posix.iovec,
+    iov: [*]const std.posix.iovec_const,
     iovlen: i32,
     control: *anyopaque,
     controllen: socklen_t,
