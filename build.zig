@@ -172,7 +172,7 @@ fn runArtifactForStep(b: *std.Build, target: std.Build.ResolvedTarget, step: *st
     return switch (target.query.os_tag orelse builtin.os.tag) {
         .wasi => blk: {
             step.max_memory = std.mem.alignForward(usize, opts.wasm_max_memory, 65536);
-            const wasmtime = b.addSystemCommand(&.{ "wasmtime", "-W", "trap-on-grow-failure=y", "--dir", "." });
+            const wasmtime = b.addSystemCommand(&.{ "wasmtime", "-W", "trap-on-grow-failure=y", "--dir", ".", "--" });
             wasmtime.addArtifactArg(step);
             break :blk wasmtime;
         },
