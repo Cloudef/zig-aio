@@ -140,7 +140,10 @@ fn client(startup: *coro.ResetEvent, mode: ClientMode) !void {
         .len = buf.len,
     }};
 
-    const send_addr = std.net.Address.initIp4(.{ 255, 255, 255, 255 }, 3232);
+    const send_addr = std.net.Address.initIp4(switch (mode) {
+        .local => .{ 127, 0, 0, 1 },
+        .remote => .{ 255, 255, 255, 255 },
+    }, 3232);
     var send_msg: aio.posix.msghdr_const = .{
         .name = @ptrCast(&send_addr.any),
         .namelen = send_addr.getOsSockLen(),
