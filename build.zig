@@ -114,6 +114,7 @@ pub fn build(b: *std.Build) void {
         .@"22",
         .@"31",
         .@"33",
+        .@"67",
         .ticker,
     }) |bug| {
         const exe = b.addExecutable(.{

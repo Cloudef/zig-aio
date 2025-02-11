@@ -339,6 +339,8 @@ pub const Socket = struct {
 };
 
 /// std.posix.close
+/// This also cancels all outstanding operations on the socket
+/// See: <https://github.com/Cloudef/zig-aio/issues/67>
 pub const CloseSocket = struct {
     pub const Error = std.posix.SocketError || SharedError;
     socket: std.posix.socket_t,
