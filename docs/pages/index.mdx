@@ -19,7 +19,9 @@ zig-aio provides io_uring like asynchronous API and coroutine powered IO tasks f
 - Timeouts
 - Comes with a runtime and scheduler for coroutines
 - Portable high precision timers compatible with `io_uring` `timeout`
-- Tightly tied into `io_uring` by providing compatible API
+- Tightly tied into `io_uring` by providing a mostly compatible API*
+
+* While goal is to support most features, some `io_uring` features may not be supported
 
 ## Support matrix
 
@@ -31,7 +33,5 @@ zig-aio provides io_uring like asynchronous API and coroutine powered IO tasks f
 | *BSD    | posix           | x86_64, aarch64 |
 | WASI    | posix           | ❌              |
 
-* io_uring AIO backend is very light wrapper, where all the code does is mostly error mapping
-* iocp also maps quite well to the io_uring style API
-* posix backend is for compatibility, it may not be very effecient
-* WASI may eventually get coro support [Stack Switching Proposal](https://github.com/WebAssembly/stack-switching/blob/main/proposals/stack-switching/Explainer.md))
+* io_uring AIO backend is a light wrapper, where most of the code is error mapping
+* WASI may eventually get coro support [Stack Switching Proposal](https://github.com/WebAssembly/stack-switching/blob/main/proposals/stack-switching/Explainer.md)
