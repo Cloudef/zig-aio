@@ -143,6 +143,13 @@ pub const CompletionResult = struct {
     num_errors: u16 = 0,
 };
 
+pub const CompletionMode = enum {
+    /// Call to `complete` will block until at least one operation completes
+    blocking,
+    /// Call to `complete` will only complete the currently ready operations if any
+    nonblocking,
+};
+
 /// Queue operations dynamically and complete them on demand
 pub const Dynamic = struct {
     io: IO,
@@ -168,13 +175,6 @@ pub const Dynamic = struct {
             return self.io.queue(.{pairs}, handler);
         }
     }
-
-    pub const CompletionMode = enum {
-        /// Call to `complete` will block until at least one operation completes
-        blocking,
-        /// Call to `complete` will only complete the currently ready operations if any
-        nonblocking,
-    };
 
     /// Complete operations
     /// Returns the number of completed operations, `0` if no operations were completed

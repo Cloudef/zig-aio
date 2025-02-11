@@ -135,7 +135,7 @@ pub fn onTimeout(self: *@This(), user_data: usize) void {
     self.uringlator.finish(self, aio.Id.init(user_data), error.Success, .thread_unsafe);
 }
 
-pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode, handler: anytype) aio.Error!aio.CompletionResult {
+pub fn complete(self: *@This(), mode: aio.CompletionMode, handler: anytype) aio.Error!aio.CompletionResult {
     if (!try self.uringlator.submit(self)) return .{};
 
     var res: aio.CompletionResult = .{};
