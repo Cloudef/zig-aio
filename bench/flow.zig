@@ -156,7 +156,9 @@ fn client(startup: *coro.ResetEvent, mode: ClientMode) !void {
     var total_sent: u64 = 0;
     const start_time = try std.time.Instant.now();
 
-    while (total_packets < NUM_PACKETS * 2) {
+    // use higher multiplier on VALIDATE as it slows down receiver and udp packets may be dropped
+    const MULTIPLIER = if (VALIDATE) 4 else 2;
+    while (total_packets < NUM_PACKETS * MULTIPLIER) {
         if (comptime VALIDATE) {
             for (total_packets..total_packets + NUM_BUFFERS) |idx| {
                 const parity: u8 = @intCast(idx % 255);
