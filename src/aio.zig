@@ -12,6 +12,8 @@ pub const options: Options = if (@hasDecl(root, "aio_options")) root.aio_options
 pub const Options = struct {
     /// Enable debug logs and tracing.
     debug: bool = build_options.debug,
+    /// Custom backend.
+    backend_override: ?type = null,
     /// Max thread count for a thread pool if a backend requires one.
     /// By default use the cpu core count.
     /// Use count 1 to disable threading in multi-threaded builds.
@@ -39,7 +41,7 @@ pub inline fn socket(domain: u32, socket_type: u32, protocol: u32) std.posix.Soc
 }
 
 /// IO backend
-const IO = switch (builtin.target.os.tag) {
+const IO = if (options.backend_override) |backend| backend else switch (builtin.target.os.tag) {
     .linux => @import("aio/linux.zig").IO,
     .windows => @import("aio/Windows.zig"),
     else => @import("aio/Posix.zig"),

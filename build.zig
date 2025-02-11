@@ -116,6 +116,7 @@ pub fn build(b: *std.Build) void {
         .@"33",
         .@"67",
         .ticker,
+        .backend_override,
     }) |bug| {
         const exe = b.addExecutable(.{
             .name = @tagName(bug),
