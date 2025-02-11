@@ -20,9 +20,7 @@ Project is tested on zig version 0.14.0-dev.3026+c225b780e
 | *BSD    | posix           | x86_64, aarch64 |
 | WASI    | posix           | ❌              |
 
-* io_uring AIO backend is very light wrapper, where all the code does is mostly error mapping
-* iocp also maps quite well to the io_uring style API
-* posix backend is for compatibility, it may not be very effecient
+* io_uring AIO backend is a light wrapper, where most of the code is error mapping
 * WASI may eventually get coro support [Stack Switching Proposal](https://github.com/WebAssembly/stack-switching/blob/main/proposals/stack-switching/Explainer.md)
 
 ## Example
@@ -124,11 +122,12 @@ pub fn main() !void {
 }
 ```
 
-## Perf
+## Syscall overhead
 
 `strace -c` output from the `examples/coro.zig` without `std.log` output and with `std.heap.FixedBufferAllocator`.
 This is using the `io_uring` backend. `posix` backend emulates `io_uring` like interface by using a traditional
-readiness event loop, thus it will have larger syscall overhead.
+readiness event loop, thus it will have larger syscall overhead. Posix backend may still be faster than io_uring
+depending on usage.
 
 ```
 % time     seconds  usecs/call     calls    errors syscall
