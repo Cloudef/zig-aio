@@ -60,7 +60,7 @@ const PosixSupport = union(enum) {
         };
     }
 
-    pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode, handler: anytype) aio.Error!aio.CompletionResult {
+    pub fn complete(self: *@This(), mode: aio.CompletionMode, handler: anytype) aio.Error!aio.CompletionResult {
         return switch (self.*) {
             inline else => |*io| io.complete(mode, handler),
         };

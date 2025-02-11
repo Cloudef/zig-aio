@@ -77,7 +77,7 @@ pub fn spawn(self: *@This(), comptime func: anytype, args: anytype, opts: SpawnO
 /// Step the scheduler by a single step.
 /// If `mode` is `.blocking` will block until there is `IO` activity or one of the frames completes.
 /// Returns the number of tasks running.
-pub fn tick(self: *@This(), mode: aio.Dynamic.CompletionMode) aio.Error!usize {
+pub fn tick(self: *@This(), mode: aio.CompletionMode) aio.Error!usize {
     if (self.state == .tear_down) return error.Unexpected;
     if (self.completed.first) |first| {
         var next: ?*Frame.List.Node = first;

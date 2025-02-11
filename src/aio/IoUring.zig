@@ -174,7 +174,7 @@ pub fn queue(self: *@This(), pairs: anytype, handler: anytype) aio.Error!void {
 }
 
 /// TODO: give options perhaps? More customization?
-pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode, handler: anytype) aio.Error!aio.CompletionResult {
+pub fn complete(self: *@This(), mode: aio.CompletionMode, handler: anytype) aio.Error!aio.CompletionResult {
     if (self.ops.empty()) return .{};
     _ = try uring_submit(&self.io);
 
