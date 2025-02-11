@@ -1,6 +1,5 @@
 // reference for flow.zig
 // this uses optimal (as far I know) io_uring code
-// flow.zig actually beats this because using GSO/GRO sendmsg/recvmsg is faster
 
 const std = @import("std");
 const log = std.log.scoped(.flow_uring);
@@ -19,7 +18,7 @@ const NUM_BUFFERS = 64;
 const BUFSZ = 512;
 
 const UDP_SEGMENT = 103;
-const UDP_GRO = 104; // does not work with multishot recvmsg
+const UDP_GRO = 104;
 
 const VALIDATE: bool = false;
 
@@ -46,12 +45,14 @@ fn server(startup: *std.Thread.ResetEvent) !void {
     var ring = try std.os.linux.IoUring.init(CQES, std.os.linux.IORING_SETUP_SINGLE_ISSUER | std.os.linux.IORING_SETUP_COOP_TASKRUN);
     defer ring.deinit();
 
-    var mega_buffer: [NUM_BUFFERS * BUFSZ]u8 = undefined;
-    var buf_ring = try std.os.linux.IoUring.BufferGroup.init(&ring, 0, &mega_buffer, BUFSZ, NUM_BUFFERS);
+    const HDR_BUFSZ = BUFSZ + @sizeOf(std.os.linux.io_uring_recvmsg_out);
+    var mega_buffer: [NUM_BUFFERS * NUM_BUFFERS * HDR_BUFSZ]u8 = undefined;
+    var buf_ring = try std.os.linux.IoUring.BufferGroup.init(&ring, 0, &mega_buffer, HDR_BUFSZ * NUM_BUFFERS, NUM_BUFFERS);
     defer buf_ring.deinit();
 
     const socket = try std.posix.socket(std.posix.AF.INET, std.posix.SOCK.DGRAM | std.posix.SOCK.CLOEXEC, std.posix.IPPROTO.UDP);
     defer std.posix.close(socket);
+    try std.posix.setsockopt(socket, std.posix.IPPROTO.UDP, UDP_GRO, std.mem.asBytes(&@as(c_int, BUFSZ)));
 
     try ring.register_files(&.{socket});
 
@@ -81,25 +82,30 @@ fn server(startup: *std.Thread.ResetEvent) !void {
                 log.err("recv cqe: {}", .{cqe.res});
                 std.posix.abort();
             } else {
+                const size: usize = @intCast(cqe.res);
+
                 if (comptime VALIDATE) {
                     const buf = buf_ring.get_cqe(cqe.*) catch unreachable;
                     const hdr = std.mem.bytesAsValue(std.os.linux.io_uring_recvmsg_out, buf[0..]);
-                    const off = @sizeOf(std.os.linux.io_uring_recvmsg_out) + hdr.namelen + hdr.controllen;
-                    if (buf[off + 1] != buf[off] ^ 32) {
-                        log.err("parity validation failed ({} != {})", .{ buf[off + 1], buf[off] ^ 32 });
-                        return error.ValidationFailure;
-                    }
-                    if (!std.mem.allEqual(u8, buf[off + 2 .. off + hdr.payloadlen], 'P')) {
-                        log.err("packet validation failed", .{});
-                        log.warn("{x}", .{buf[off + 2 .. off + hdr.payloadlen]});
-                        return error.ValidationFailure;
+                    var off = @sizeOf(std.os.linux.io_uring_recvmsg_out) + hdr.namelen + hdr.controllen;
+                    while (off < size) {
+                        if (buf[off + 1] != buf[off] ^ 32) {
+                            log.err("parity validation failed ({} != {})", .{ buf[off + 1], buf[off] ^ 32 });
+                            return error.ValidationFailure;
+                        }
+                        if (!std.mem.allEqual(u8, buf[off + 2 .. off + BUFSZ], 'P')) {
+                            log.err("packet validation failed", .{});
+                            return error.ValidationFailure;
+                        }
+                        off += BUFSZ;
                     }
                 }
 
                 // release buffer
                 buf_ring.put(cqe.buffer_id() catch unreachable);
-                total_received += @intCast(cqe.res);
-                total_packets += 1;
+                const actual_size = size - @sizeOf(std.os.linux.io_uring_recvmsg_out);
+                total_received += actual_size;
+                total_packets += actual_size / BUFSZ;
             }
         }
     }
@@ -168,7 +174,9 @@ fn client(startup: *std.Thread.ResetEvent, mode: ClientMode) !void {
     var cqes: [CQES]std.os.linux.io_uring_cqe = undefined;
     const start_time = try std.time.Instant.now();
 
-    while (total_packets < NUM_PACKETS * 2) {
+    // use higher multiplier on VALIDATE as it slows down receiver and udp packets may be dropped
+    const MULTIPLIER = if (VALIDATE) 4 else 2;
+    while (total_packets < NUM_PACKETS * MULTIPLIER) {
         if (false) { // flip for uring vs sendmmsg
             if (comptime VALIDATE) @compileError(":(");
             const r = std.os.linux.sendmmsg(socket, &msgs, @intCast(msgs.len), 0);
