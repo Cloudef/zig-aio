@@ -75,6 +75,7 @@ const UringOperation = struct {
 };
 
 const IdAllocator = aio.Id.Allocator(UringOperation);
+const special_cqe = std.math.maxInt(usize);
 
 io: std.os.linux.IoUring,
 ops: IdAllocator,
@@ -188,6 +189,15 @@ pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode, handler: anyty
         std.debug.assert(cqe.flags & std.os.linux.IORING_CQE_F_MORE == 0);
         std.debug.assert(cqe.flags & std.os.linux.IORING_CQE_F_NOTIF == 0);
 
+        if (cqe.user_data == special_cqe) {
+            // used when posting hidden sqe's which completation we don't care about
+            // unfortunately while io_uring has IOSQE_CQE_SKIP_SUCCESS
+            // there is no IOSQE_CQE_SKIP
+            // currently only used to do `cancel` on socket fds on close
+            // the cancel may fail if there are no other operations on going for the socket
+            continue;
+        }
+
         const id = aio.Id.init(cqe.user_data);
         const op_type = self.ops.getOne(.type, id);
 
@@ -261,20 +271,20 @@ pub fn complete(self: *@This(), mode: aio.Dynamic.CompletionMode, handler: anyty
 
         const userdata = self.ops.getOne(.userdata, id);
         self.ops.release(id) catch unreachable;
+        result.num_completed += 1;
 
         if (@TypeOf(handler) != void) {
             handler.aio_complete(id, userdata, failed);
         }
     }
 
-    result.num_completed = n;
     return result;
 }
 
 pub fn immediate(pairs: anytype) aio.Error!u16 {
     Supported.query();
 
-    var io = try uring_init(std.math.ceilPowerOfTwo(u16, pairs.len) catch unreachable);
+    var io = try uring_init(std.math.ceilPowerOfTwo(u16, pairs.len * 2) catch unreachable);
     defer io.deinit();
 
     var state: [pairs.len]UringOperation.State = undefined;
@@ -283,25 +293,27 @@ pub fn immediate(pairs: anytype) aio.Error!u16 {
         try uring_queue(&io, pair.tag, pair.op, pair.link, idx, &state[idx]);
     }
 
-    var num = try uring_submit(&io);
-    std.debug.assert(num == pairs.len);
+    const submitted = try uring_submit(&io);
+    std.debug.assert(submitted >= pairs.len);
 
     var num_errors: u16 = 0;
+    var num_completed: u16 = 0;
     var cqes: [pairs.len]std.os.linux.io_uring_cqe = undefined;
-    while (num > 0) {
-        const n = try uring_copy_cqes(&io, &cqes, num);
+    while (num_completed < pairs.len) {
+        const n = try uring_copy_cqes(&io, &cqes, submitted);
         for (cqes[0..n]) |*cqe| {
             // XXX: relevant to zero-copy ops, not handled yet
             std.debug.assert(cqe.flags & std.os.linux.IORING_CQE_F_MORE == 0);
             std.debug.assert(cqe.flags & std.os.linux.IORING_CQE_F_NOTIF == 0);
+            if (cqe.user_data == special_cqe) continue;
             @setEvalBranchQuota(1000 * pairs.len);
             inline for (pairs, 0..) |pair, idx| if (idx == cqe.user_data) {
                 uring_handle_completion(pair.tag, pair.op, &state[idx], cqe) catch {
                     num_errors += 1;
                 };
             };
+            num_completed += 1;
         }
-        num -= n;
     }
 
     return num_errors;
@@ -424,7 +436,12 @@ fn uring_queue(io: *std.os.linux.IoUring, comptime op_type: Operation, op: Opera
             }
         },
         .socket => try io.socket(user_data, op.domain, op.flags, op.protocol, 0),
-        .close_socket => try io.close(user_data, op.socket),
+        .close_socket => blk: {
+            var sqe = try io.cancel(special_cqe, 0, std.os.linux.IORING_ASYNC_CANCEL_ALL | std.os.linux.IORING_ASYNC_CANCEL_FD);
+            sqe.fd = op.socket;
+            sqe.flags |= std.os.linux.IOSQE_IO_HARDLINK | std.os.linux.IOSQE_CQE_SKIP_SUCCESS;
+            break :blk try io.close(user_data, op.socket);
+        },
         .notify_event_source => try io.write(user_data, op.source.native.fd, &std.mem.toBytes(@as(u64, 1)), 0),
         .wait_event_source => try io.read(user_data, op.source.native.fd, .{ .buffer = std.mem.asBytes(&Trash.u_64) }, 0),
         .close_event_source => try io.close(user_data, op.source.native.fd),
