@@ -1,7 +1,10 @@
+const builtin = @import("builtin");
 const std = @import("std");
 const aio = @import("aio");
 
 pub fn main() !void {
+    if (builtin.target.os.tag == .windows) return;
+
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
