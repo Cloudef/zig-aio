@@ -125,7 +125,7 @@ pub fn build(b: *std.Build) void {
             // TODO: hmm, investigate (fails on io_uring, prob related to gpa)
             .optimize = if (bug == .ticker) .ReleaseFast else optimize,
             .sanitize_thread = sanitize,
-            .single_threaded = if (bug == .ticker) false else single_threaded,
+            .single_threaded = single_threaded,
             .strip = false,
         });
         exe.root_module.addImport("aio", aio);
