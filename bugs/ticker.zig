@@ -1,5 +1,6 @@
 // Sanity checks the aio.EventSource for major bottlenecks / bugs
 
+const builtin = @import("builtin");
 const std = @import("std");
 const coro = @import("coro");
 const aio = @import("aio");
@@ -119,6 +120,10 @@ fn RegionScheduler(comptime num_regions: u16) type {
 }
 
 pub fn main() !void {
+    if (builtin.single_threaded) {
+        std.log.warn("ticker needs threads", .{});
+        return;
+    }
     var rs: RegionScheduler(16) = undefined;
     rs.init();
     defer rs.deinit();
