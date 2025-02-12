@@ -19,8 +19,9 @@ fn server(startup: *coro.ResetEvent) !void {
         .protocol = std.posix.IPPROTO.TCP,
         .out_socket = &socket,
     });
+    defer coro.io.single(.close_socket, .{ .socket = socket }) catch {};
 
-    const address = std.net.Address.initIp4(.{ 0, 0, 0, 0 }, 3131);
+    const address = std.net.Address.initIp4(.{ 127, 0, 0, 1 }, 3131);
     try std.posix.setsockopt(socket, std.posix.SOL.SOCKET, std.posix.SO.REUSEADDR, &std.mem.toBytes(@as(c_int, 1)));
     if (@hasDecl(std.posix.SO, "REUSEPORT")) {
         try std.posix.setsockopt(socket, std.posix.SOL.SOCKET, std.posix.SO.REUSEPORT, &std.mem.toBytes(@as(c_int, 1)));
@@ -32,6 +33,7 @@ fn server(startup: *coro.ResetEvent) !void {
 
     var client_sock: std.posix.socket_t = undefined;
     try coro.io.single(.accept, .{ .socket = socket, .out_socket = &client_sock });
+    defer coro.io.single(.close_socket, .{ .socket = client_sock }) catch {};
 
     var buf: [1024]u8 = undefined;
     var len: usize = 0;
@@ -40,11 +42,6 @@ fn server(startup: *coro.ResetEvent) !void {
         if (len == 0) break;
         try coro.io.single(.send, .{ .socket = client_sock, .buffer = buf[0..len] });
     }
-
-    try coro.io.multi(.{
-        aio.op(.close_socket, .{ .socket = client_sock }, .hard),
-        aio.op(.close_socket, .{ .socket = socket }, .unlinked),
-    });
 }
 
 fn client(startup: *coro.ResetEvent) !void {
@@ -55,6 +52,7 @@ fn client(startup: *coro.ResetEvent) !void {
         .protocol = std.posix.IPPROTO.TCP,
         .out_socket = &socket,
     });
+    defer coro.io.single(.close_socket, .{ .socket = socket }) catch {};
 
     try startup.wait();
 
@@ -70,7 +68,7 @@ fn client(startup: *coro.ResetEvent) !void {
     var state: usize = 0;
     var pongs: u64 = 0;
 
-    while (true) {
+    while (pongs < PING_PONG_COUNT) {
         var buf: [1024]u8 = undefined;
         var len: usize = 0;
         try coro.io.multi(.{
@@ -81,23 +79,16 @@ fn client(startup: *coro.ResetEvent) !void {
         state += len;
         pongs += (state / 4);
         state = (state % 4);
-
-        // If we're done then exit
-        if (pongs > PING_PONG_COUNT) {
-            break;
-        }
     }
 
     const end_time = try std.time.Instant.now();
 
-    const elapsed = @as(f64, @floatFromInt(end_time.since(start_time)));
-    log.info("{d:.2} roundtrips/s", .{@as(f64, @floatFromInt(pongs)) / (elapsed / 1e9)});
-    log.info("{d:.2} seconds total", .{elapsed / 1e9});
+    const elapsed = @as(f64, @floatFromInt(end_time.since(start_time))) / 1e9;
+    const roundtrips = @as(f64, @floatFromInt(pongs)) / elapsed;
+    log.info("{d:.2} Mroundtrips/s", .{roundtrips / 1e6});
+    log.info("{d:.2} seconds total", .{elapsed});
 
-    try coro.io.multi(.{
-        aio.op(.send, .{ .socket = socket, .buffer = "" }, .hard),
-        aio.op(.close_socket, .{ .socket = socket }, .unlinked),
-    });
+    try coro.io.single(.send, .{ .socket = socket, .buffer = "" });
 }
 
 pub fn main() !void {
