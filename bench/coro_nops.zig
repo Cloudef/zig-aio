@@ -36,6 +36,6 @@ pub fn main() !void {
 
     const elapsed: f64 = @floatFromInt(end_time.since(start_time));
     const nops_s: f64 = @as(f64, @floatFromInt(TOTAL_NOPS)) / (elapsed / 1e9);
-    log.info("{d:.2} nops/s", .{nops_s});
+    log.info("{d:.2} Mnops/s", .{nops_s / 1e6});
     log.info("{d:.2} seconds total", .{elapsed / 1e9});
 }
