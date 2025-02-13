@@ -47,7 +47,7 @@ fn server(startup: *coro.ResetEvent) !void {
     while (total_packets < NUM_PACKETS) {
         var buf: [BUFSZ * NUM_BUFFERS]u8 = undefined;
         var addr: std.posix.sockaddr.storage = undefined;
-        var recv_iovec: [1]std.posix.iovec = .{.{
+        var recv_iovec: [1]aio.posix.iovec = .{.{
             .base = &buf,
             .len = buf.len,
         }};
@@ -135,7 +135,7 @@ fn client(startup: *coro.ResetEvent, mode: ClientMode) !void {
     var buf: [BUFSZ * NUM_BUFFERS]u8 = undefined;
     @memset(&buf, 'P');
 
-    const send_iovec: []const std.posix.iovec_const = &.{.{
+    const send_iovec: []const aio.posix.iovec_const = &.{.{
         .base = &buf,
         .len = buf.len,
     }};
