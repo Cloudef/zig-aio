@@ -32,7 +32,7 @@ posix_pool: if (!single_threaded) DynamicThreadPool else void, // thread pool fo
 kludge_pool: if (needs_kludge and !builtin.single_threaded) DynamicThreadPool else void, // thread pool for performing operations which can't be polled for readiness
 pending: std.DynamicBitSetUnmanaged, // operation is pending on readiness fd (poll)
 in_flight: std.DynamicBitSetUnmanaged, // operation is executing and can't be canceled
-in_flight_threaded: if (needs_source) u16 else void = if (needs_source) 0 else {}, // threaded operations in flight
+in_flight_threaded: if (needs_source) u16 else u0 = 0, // threaded operations in flight
 source: if (needs_source) EventSource else void, // when threaded operations finish, they signal it using this event source
 signaled: bool = false, // some operations have signaled immediately, optimization to avoid running poll when not required
 uringlator: Uringlator,
