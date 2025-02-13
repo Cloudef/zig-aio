@@ -262,13 +262,48 @@ pub fn recvEx(sockfd: std.posix.socket_t, buf: [*]win_sock.WSABUF, flags: u32, o
     return .{ .transmitted = @intCast(read) };
 }
 
-pub const msghdr = win_sock.WSAMSG;
-pub const msghdr_const = win_sock.WSAMSG;
+pub const iovec = extern struct {
+    len: u32,
+    base: [*]u8,
+};
+
+pub const msghdr = extern struct {
+    name: ?*std.posix.sockaddr,
+    namelen: std.posix.socklen_t,
+    iov: [*]iovec,
+    iovlen: i32,
+    controllen: std.posix.socklen_t,
+    control: ?*anyopaque,
+    _: std.meta.Int(.unsigned, @bitSizeOf(usize) + 32 - 32) = 0, // padding
+    flags: i32,
+};
+
+pub const iovec_const = extern struct {
+    len: u32,
+    base: [*]const u8,
+};
+
+pub const msghdr_const = extern struct {
+    name: ?*const std.posix.sockaddr,
+    namelen: std.posix.socklen_t,
+    iov: [*]const iovec_const,
+    iovlen: i32,
+    controllen: std.posix.socklen_t,
+    control: ?*anyopaque,
+    _: std.meta.Int(.unsigned, @bitSizeOf(usize) + 32 - 32) = 0, // padding
+    flags: i32,
+};
+
+comptime {
+    std.debug.assert(@sizeOf(iovec) == @sizeOf(win_sock.WSABUF));
+    std.debug.assert(@sizeOf(msghdr) == @sizeOf(win_sock.WSAMSG));
+    std.debug.assert(@sizeOf(msghdr_const) == @sizeOf(win_sock.WSAMSG));
+}
 
 pub fn sendmsgEx(sockfd: std.posix.socket_t, msg: *const msghdr_const, flags: u32, overlapped: ?*io.OVERLAPPED) !PendingOrTransmitted {
     var written: u32 = 0;
     while (true) {
-        const rc = win_sock.WSASendMsg(sockfd, @constCast(msg), flags, &written, overlapped, null);
+        const rc = win_sock.WSASendMsg(sockfd, @constCast(@ptrCast(msg)), flags, &written, overlapped, null);
         if (rc == win_sock.SOCKET_ERROR) {
             switch (win_sock.WSAGetLastError()) {
                 .EWOULDBLOCK, .EINTR, .EINPROGRESS => continue,
@@ -330,7 +365,7 @@ pub fn recvmsgEx(sockfd: std.posix.socket_t, msg: *msghdr, _: u32, overlapped: ?
     if (!DumbStuff.have_fun) return error.Unexpected;
     var read: u32 = 0;
     while (true) {
-        const rc = DumbStuff.fun(sockfd, msg, &read, overlapped, null);
+        const rc = DumbStuff.fun(sockfd, @ptrCast(msg), &read, overlapped, null);
         if (rc == win_sock.SOCKET_ERROR) {
             switch (win_sock.WSAGetLastError()) {
                 .EWOULDBLOCK, .EINTR, .EINPROGRESS => continue,

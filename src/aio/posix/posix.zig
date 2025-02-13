@@ -315,11 +315,21 @@ pub const MSG = switch (builtin.target.os.tag) {
     else => std.posix.MSG,
 };
 
+pub const iovec = switch (builtin.target.os.tag) {
+    .windows => windows.iovec,
+    else => std.posix.iovec,
+};
+
 pub const msghdr = switch (builtin.target.os.tag) {
     .windows => windows.msghdr,
     .macos, .ios, .tvos, .watchos, .visionos => darwin.msghdr,
     .wasi => wasi.msghdr,
     else => std.posix.msghdr,
+};
+
+pub const iovec_const = switch (builtin.target.os.tag) {
+    .windows => windows.iovec_const,
+    else => std.posix.iovec_const,
 };
 
 pub const msghdr_const = switch (builtin.target.os.tag) {
