@@ -94,12 +94,12 @@ const DefaultImpl = struct {
 
     pub fn spawn(self: *@This(), comptime func: anytype, args: anytype) SpawnError!void {
         const Args = @TypeOf(args);
-        const Outer = @This();
+        const ThreadPool = @This();
         const Closure = struct {
             arguments: Args,
             run_node: RunQueue.Node = .{ .data = .{ .runFn = runFn } },
 
-            fn runFn(pool: *Outer, runnable: *Runnable) void {
+            fn runFn(pool: *ThreadPool, runnable: *Runnable) void {
                 const run_node: *RunQueue.Node = @fieldParentPtr("data", runnable);
                 const closure: *@This() = @alignCast(@fieldParentPtr("run_node", run_node));
                 @call(.auto, func, closure.arguments);
