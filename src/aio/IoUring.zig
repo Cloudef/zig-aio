@@ -67,7 +67,7 @@ const UringOperation = struct {
     type: Operation,
     userdata: usize,
     out_id: ?*aio.Id = null,
-    out_error: ?*anyerror = null,
+    out_error: ?*Operation.Error = null,
     out_result: *Operation.anyresult,
 
     // some pairs require mutable state
