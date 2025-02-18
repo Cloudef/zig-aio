@@ -40,6 +40,7 @@ const UringOperation = struct {
                 fd: std.posix.fd_t,
             },
         },
+        // TODO: avoid storing this
         timeout: std.os.linux.kernel_timespec,
 
         fn init(comptime op_type: Operation, op: Operation.map.getAssertContains(op_type)) @This() {
@@ -71,6 +72,7 @@ const UringOperation = struct {
     out_result: *Operation.anyresult,
 
     // some pairs require mutable state
+    // TODO: store this out of band (state is very big)
     state: State,
 };
 

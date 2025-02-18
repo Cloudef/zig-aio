@@ -155,6 +155,7 @@ const UringlatorOperation = struct {
     link: aio.Link, // link type
 
     // some operations require mutable state
+    // TODO: store some of this out of band (state is very big)
     state: State,
 };
 
