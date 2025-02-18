@@ -148,7 +148,7 @@ const UringlatorOperation = struct {
     type: Operation,
     userdata: usize,
     out_id: ?*aio.Id = null,
-    out_error: ?*anyerror = null,
+    out_error: ?*Operation.Error = null,
     out_result: *Operation.anyresult,
     next: aio.Id, // linked operation, points to self if none
     prev: aio.Id, // previous operation, points to self if none (only used for link timeouts)
