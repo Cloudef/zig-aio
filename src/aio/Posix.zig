@@ -22,7 +22,7 @@ const needs_kludge = switch (builtin.target.os.tag) {
     else => false,
 };
 
-const single_threaded = builtin.single_threaded or aio.options.max_threads == 1;
+const single_threaded = builtin.single_threaded or aio.options.max_threads == 0;
 const needs_source = !single_threaded or (needs_kludge and !builtin.single_threaded);
 
 tqueue: TimerQueue, // timer queue implementing linux -like timers

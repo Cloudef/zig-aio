@@ -57,7 +57,7 @@ const WindowsOperation = struct {
     win_state: State, // windows specific state
 };
 
-const single_threaded = builtin.single_threaded or aio.options.max_threads == 1;
+const single_threaded = builtin.single_threaded or aio.options.max_threads == 0;
 
 iocp: Iocp,
 posix_pool: if (!single_threaded) DynamicThreadPool else void, // thread pool for performing non iocp operations
