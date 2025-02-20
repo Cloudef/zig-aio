@@ -86,15 +86,10 @@ fn now(clock: Clock) !u128 {
                 break :D result;
             },
             .realtime => D: {
-                // FileTime has a granularity of 100 nanoseconds and uses the NTFS/Windows epoch,
+                // RtlGetSystemTimePrecise() has a granularity of 100 nanoseconds and uses the NTFS/Windows epoch,
                 // which is 1601-01-01.
                 const epoch_adj = std.time.epoch.windows * (std.time.ns_per_s / 100);
-                var ft: std.os.windows.FILETIME = undefined;
-                std.os.windows.kernel32.GetSystemTimeAsFileTime(&ft);
-                const ft64 = (@as(u64, ft.dwHighDateTime) << 32) | ft.dwLowDateTime;
-                const adjusted = @as(i64, @bitCast(ft64)) + epoch_adj;
-                std.debug.assert(adjusted > 0);
-                break :D @as(u128, @intCast(adjusted)) * 100;
+                break :D @intCast(@as(i128, std.os.windows.ntdll.RtlGetSystemTimePrecise() + epoch_adj) * 100);
             },
         },
         .uefi => D: {
