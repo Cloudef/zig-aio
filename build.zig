@@ -122,8 +122,11 @@ pub fn build(b: *std.Build) void {
             .name = @tagName(bug),
             .root_source_file = b.path("bugs/" ++ @tagName(bug) ++ ".zig"),
             .target = target,
-            // TODO: hmm, investigate (fails on io_uring, prob related to gpa)
-            .optimize = if (bug == .ticker) .ReleaseFast else optimize,
+            .optimize = switch (bug) {
+                // fails on io_uring if sanitize == true and optimize == debug, not sure why
+                .ticker => if (sanitize) .ReleaseFast else optimize,
+                else => optimize,
+            },
             .sanitize_thread = sanitize,
             .single_threaded = single_threaded,
             .strip = false,
