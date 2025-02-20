@@ -16,7 +16,7 @@ pub const Options = struct {
     backend_override: ?type = null,
     /// Max thread count for a thread pool if a backend requires one.
     /// By default use the cpu core count.
-    /// Use count 1 to disable threading in multi-threaded builds.
+    /// Use 0 to disable threading in multi-threaded builds.
     /// In single-threaded builds this option is ignored.
     max_threads: ?u32 = null,
     /// Operations that the main backend must support.
