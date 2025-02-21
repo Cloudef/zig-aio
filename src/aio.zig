@@ -593,19 +593,204 @@ test "ChildExit" {
     }
 }
 
-test "Socket" {
+test "Socket/TCP" {
     if (builtin.target.os.tag == .wasi) {
         return error.SkipZigTest;
     }
 
-    var sock: std.posix.socket_t = undefined;
+    var server: std.posix.socket_t = undefined;
     try single(.socket, .{
         .domain = std.posix.AF.INET,
         .flags = std.posix.SOCK.STREAM | std.posix.SOCK.CLOEXEC,
         .protocol = std.posix.IPPROTO.TCP,
-        .out_socket = &sock,
+        .out_socket = &server,
     });
-    try single(.close_socket, .{ .socket = sock });
+
+    try std.posix.setsockopt(server, std.posix.SOL.SOCKET, std.posix.SO.REUSEADDR, &std.mem.toBytes(@as(c_int, 1)));
+    if (@hasDecl(std.posix.SO, "REUSEPORT")) {
+        try std.posix.setsockopt(server, std.posix.SOL.SOCKET, std.posix.SO.REUSEPORT, &std.mem.toBytes(@as(c_int, 1)));
+    }
+
+    var client: std.posix.socket_t = undefined;
+    try single(.socket, .{
+        .domain = std.posix.AF.INET,
+        .flags = std.posix.SOCK.STREAM | std.posix.SOCK.CLOEXEC,
+        .protocol = std.posix.IPPROTO.TCP,
+        .out_socket = &client,
+    });
+
+    const address = std.net.Address.initIp4(.{ 127, 0, 0, 1 }, 3131);
+    try std.posix.bind(server, &address.any, address.getOsSockLen());
+    try std.posix.listen(server, 1);
+
+    var client_comm: std.posix.socket_t = undefined;
+    var client_addr_posix: std.posix.sockaddr align(4) = undefined;
+    var client_addr_len: posix.socklen_t = @sizeOf(std.posix.sockaddr);
+    try multi(.{
+        op(.accept, .{
+            .socket = server,
+            .out_socket = &client_comm,
+            .out_addr = &client_addr_posix,
+            .inout_addrlen = &client_addr_len,
+        }, .unlinked),
+        op(.connect, .{
+            .socket = client,
+            .addr = &address.any,
+            .addrlen = address.getOsSockLen(),
+        }, .unlinked),
+    });
+
+    const client_addr = std.net.Address.initPosix(&client_addr_posix);
+    try std.testing.expectEqual(address.in.sa.addr, client_addr.in.sa.addr);
+
+    var buf1: [32]u8 = undefined;
+    var wlen1: usize = 0;
+    var rlen1: usize = 0;
+    var buf2: [32]u8 = undefined;
+    var wlen2: usize = 0;
+    var rlen2: usize = 0;
+    try multi(.{
+        op(.send, .{ .socket = client_comm, .buffer = "PING", .out_written = &wlen1 }, .soft),
+        op(.recv, .{ .socket = client, .buffer = &buf1, .out_read = &rlen1 }, .soft),
+        op(.send, .{ .socket = client, .buffer = "PONG", .out_written = &wlen2 }, .soft),
+        op(.recv, .{ .socket = client_comm, .buffer = &buf2, .out_read = &rlen2 }, .unlinked),
+    });
+
+    try std.testing.expectEqual(wlen1, 4);
+    try std.testing.expectEqual(rlen1, 4);
+    try std.testing.expectEqual(wlen1, wlen2);
+    try std.testing.expectEqual(rlen1, rlen2);
+    try std.testing.expectEqualSlices(u8, buf1[0..rlen1], "PING");
+    try std.testing.expectEqualSlices(u8, buf2[0..rlen2], "PONG");
+
+    try single(.shutdown, .{ .socket = client, .how = .both });
+    try single(.close_socket, .{ .socket = client });
+    try single(.close_socket, .{ .socket = server });
+}
+
+test "Socket/UDP" {
+    if (builtin.target.os.tag == .wasi) {
+        return error.SkipZigTest;
+    }
+
+    var server: std.posix.socket_t = undefined;
+    try single(.socket, .{
+        .domain = std.posix.AF.INET,
+        .flags = std.posix.SOCK.DGRAM | std.posix.SOCK.CLOEXEC,
+        .protocol = std.posix.IPPROTO.UDP,
+        .out_socket = &server,
+    });
+
+    try std.posix.setsockopt(server, std.posix.SOL.SOCKET, std.posix.SO.REUSEADDR, &std.mem.toBytes(@as(c_int, 1)));
+    if (@hasDecl(std.posix.SO, "REUSEPORT")) {
+        try std.posix.setsockopt(server, std.posix.SOL.SOCKET, std.posix.SO.REUSEPORT, &std.mem.toBytes(@as(c_int, 1)));
+    }
+
+    var client: std.posix.socket_t = undefined;
+    try single(.socket, .{
+        .domain = std.posix.AF.INET,
+        .flags = std.posix.SOCK.DGRAM | std.posix.SOCK.CLOEXEC,
+        .protocol = std.posix.IPPROTO.UDP,
+        .out_socket = &client,
+    });
+
+    try std.posix.setsockopt(client, std.posix.SOL.SOCKET, std.posix.SO.REUSEADDR, &std.mem.toBytes(@as(c_int, 1)));
+    if (@hasDecl(std.posix.SO, "REUSEPORT")) {
+        try std.posix.setsockopt(client, std.posix.SOL.SOCKET, std.posix.SO.REUSEPORT, &std.mem.toBytes(@as(c_int, 1)));
+    }
+
+    const saddress = std.net.Address.initIp4(.{ 127, 0, 0, 1 }, 3131);
+    const caddress = std.net.Address.initIp4(.{ 127, 0, 0, 1 }, 3232);
+    try std.posix.bind(server, &saddress.any, saddress.getOsSockLen());
+    try std.posix.bind(client, &caddress.any, caddress.getOsSockLen());
+
+    var ping_msg: posix.msghdr_const = .{
+        .name = @ptrCast(&caddress.any),
+        .namelen = caddress.getOsSockLen(),
+        .iov = &.{
+            .{
+                .base = "PING",
+                .len = "PING".len,
+            },
+        },
+        .iovlen = 1,
+        .control = null,
+        .controllen = 0,
+        .flags = 0,
+    };
+
+    var pong_msg: posix.msghdr_const = .{
+        .name = @ptrCast(&saddress.any),
+        .namelen = saddress.getOsSockLen(),
+        .iov = &.{
+            .{
+                .base = "PONG",
+                .len = "PONG".len,
+            },
+        },
+        .iovlen = 1,
+        .control = null,
+        .controllen = 0,
+        .flags = 0,
+    };
+
+    var buf1: [32]u8 = undefined;
+    var recv_addr1: std.posix.sockaddr align(4) = undefined;
+    var recv_iovec1: [1]posix.iovec = .{.{
+        .base = &buf1,
+        .len = buf1.len,
+    }};
+    var recv_msg1: posix.msghdr = .{
+        .name = @ptrCast(&recv_addr1),
+        .namelen = @sizeOf(@TypeOf(recv_addr1)),
+        .iov = &recv_iovec1,
+        .iovlen = 1,
+        .control = null,
+        .controllen = 0,
+        .flags = 0,
+    };
+
+    var buf2: [32]u8 = undefined;
+    var recv_addr2: std.posix.sockaddr align(4) = undefined;
+    var recv_iovec2: [1]posix.iovec = .{.{
+        .base = &buf2,
+        .len = buf2.len,
+    }};
+    var recv_msg2: posix.msghdr = .{
+        .name = @ptrCast(&recv_addr2),
+        .namelen = @sizeOf(@TypeOf(recv_addr2)),
+        .iov = &recv_iovec2,
+        .iovlen = 1,
+        .control = null,
+        .controllen = 0,
+        .flags = 0,
+    };
+
+    var wlen1: usize = 0;
+    var rlen1: usize = 0;
+    var wlen2: usize = 0;
+    var rlen2: usize = 0;
+    try multi(.{
+        op(.send_msg, .{ .socket = server, .msg = &ping_msg, .out_written = &wlen1 }, .soft),
+        op(.recv_msg, .{ .socket = client, .out_msg = &recv_msg1, .out_read = &rlen1 }, .soft),
+        op(.send_msg, .{ .socket = client, .msg = &pong_msg, .out_written = &wlen2 }, .soft),
+        op(.recv_msg, .{ .socket = server, .out_msg = &recv_msg2, .out_read = &rlen2 }, .unlinked),
+    });
+
+    const addr1 = std.net.Address.initPosix(&recv_addr1);
+    std.debug.assert(addr1.eql(saddress));
+    const addr2 = std.net.Address.initPosix(&recv_addr2);
+    std.debug.assert(addr2.eql(caddress));
+
+    try std.testing.expectEqual(wlen1, 4);
+    try std.testing.expectEqual(rlen1, 4);
+    try std.testing.expectEqual(wlen1, wlen2);
+    try std.testing.expectEqual(rlen1, rlen2);
+    try std.testing.expectEqualSlices(u8, buf1[0..rlen1], "PING");
+    try std.testing.expectEqualSlices(u8, buf2[0..rlen2], "PONG");
+
+    try single(.close_socket, .{ .socket = client });
+    try single(.close_socket, .{ .socket = server });
 }
 
 test "EventSource" {
