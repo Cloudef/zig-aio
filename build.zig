@@ -1,6 +1,8 @@
 const builtin = @import("builtin");
 const std = @import("std");
 
+const WasiMode = enum { wasi, wasix };
+
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
@@ -16,11 +18,10 @@ pub fn build(b: *std.Build) void {
         const PosixMode = enum { auto, force, disable };
         const posix = b.option(PosixMode, "aio:posix", "posix mode") orelse .auto;
         aio_opts.addOption(PosixMode, "posix", posix);
-
-        const WasiMode = enum { wasi, wasix };
-        const wasi = b.option(WasiMode, "aio:wasi", "wasi mode") orelse .wasi;
-        aio_opts.addOption(WasiMode, "wasi", wasi);
     }
+
+    const wasi = b.option(WasiMode, "aio:wasi", "wasi mode") orelse .wasi;
+    aio_opts.addOption(WasiMode, "wasi", wasi);
 
     var coro_opts = b.addOptions();
     {
@@ -82,7 +83,7 @@ pub fn build(b: *std.Build) void {
         exe.root_module.addImport("coro", coro);
         const install = b.addInstallArtifact(exe, .{ .dest_dir = .{ .override = .{ .custom = "example" } } });
         b.getInstallStep().dependOn(&install.step);
-        var cmd = makeRunStep(b, target, exe, "example:" ++ @tagName(example), "Run " ++ @tagName(example) ++ " example", .{});
+        var cmd = makeRunStep(b, target, exe, "example:" ++ @tagName(example), "Run " ++ @tagName(example) ++ " example", .{ .wasi = wasi });
         run_all.dependOn(&cmd.step);
     }
 
@@ -105,7 +106,7 @@ pub fn build(b: *std.Build) void {
             .coro => addImportsFrom(tst.root_module, coro),
             else => unreachable,
         }
-        var cmd = makeRunStep(b, target, tst, "test:" ++ @tagName(mod), "Run " ++ @tagName(mod) ++ " tests", .{});
+        var cmd = makeRunStep(b, target, tst, "test:" ++ @tagName(mod), "Run " ++ @tagName(mod) ++ " tests", .{ .wasi = wasi });
         test_step.dependOn(&cmd.step);
     }
 
@@ -133,7 +134,7 @@ pub fn build(b: *std.Build) void {
         });
         exe.root_module.addImport("aio", aio);
         exe.root_module.addImport("coro", coro);
-        var cmd = makeRunStep(b, target, exe, "bug:" ++ @tagName(bug), "Check regression for #" ++ @tagName(bug), .{});
+        var cmd = makeRunStep(b, target, exe, "bug:" ++ @tagName(bug), "Check regression for #" ++ @tagName(bug), .{ .wasi = wasi });
         bug_step.dependOn(&cmd.step);
     }
 
@@ -159,7 +160,7 @@ pub fn build(b: *std.Build) void {
         exe.root_module.addImport("coro", coro);
         const install = b.addInstallArtifact(exe, .{ .dest_dir = .{ .override = .{ .custom = "bench" } } });
         b.getInstallStep().dependOn(&install.step);
-        var cmd = makeRunStep(b, target, exe, "bench:" ++ @tagName(bench), "Run " ++ @tagName(bench) ++ " benchmark", .{});
+        var cmd = makeRunStep(b, target, exe, "bench:" ++ @tagName(bench), "Run " ++ @tagName(bench) ++ " benchmark", .{ .wasi = wasi });
         bench_step.dependOn(&cmd.step);
     }
 }
@@ -171,15 +172,19 @@ fn addImportsFrom(dst: *std.Build.Module, src: *std.Build.Module) void {
 
 const RunStepOptions = struct {
     wasm_max_memory: usize = 1e+9, // 1GiB
+    wasi: WasiMode = .wasi,
 };
 
 fn runArtifactForStep(b: *std.Build, target: std.Build.ResolvedTarget, step: *std.Build.Step.Compile, opts: RunStepOptions) *std.Build.Step.Run {
     return switch (target.query.os_tag orelse builtin.os.tag) {
         .wasi => blk: {
             step.max_memory = std.mem.alignForward(usize, opts.wasm_max_memory, 65536);
-            const wasmtime = b.addSystemCommand(&.{ "wasmtime", "-W", "trap-on-grow-failure=y", "--dir", ".", "--" });
-            wasmtime.addArtifactArg(step);
-            break :blk wasmtime;
+            const cmd = switch (opts.wasi) {
+                .wasi => b.addSystemCommand(&.{ "wasmtime", "-W", "trap-on-grow-failure=y", "--dir", ".", "--" }),
+                .wasix => b.addSystemCommand(&.{ "wasmer", "run", "--mapdir", "/:.", "-vvv", "--" }),
+            };
+            cmd.addArtifactArg(step);
+            break :blk cmd;
         },
         else => b.addRunArtifact(step),
     };

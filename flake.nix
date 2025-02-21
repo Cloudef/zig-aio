@@ -111,7 +111,7 @@
 
       # nix develop
       devShells.default = env.mkShell {
-          nativeBuildInputs = with env.pkgs; [wasmtime wineWowPackages.minimal];
+          nativeBuildInputs = with env.pkgs; [wasmtime wasmer wineWowPackages.minimal];
       };
 
       # nix run .#readme
