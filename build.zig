@@ -145,6 +145,7 @@ pub fn build(b: *std.Build) void {
         .flow_uring,
         .aio_nops,
         .coro_nops,
+        .fs,
     }) |bench| {
         const exe = b.addExecutable(.{
             .name = @tagName(bench),
