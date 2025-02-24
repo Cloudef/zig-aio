@@ -146,6 +146,8 @@ pub fn build(b: *std.Build) void {
         .aio_nops,
         .coro_nops,
         .fs,
+        .spawn_managed,
+        .spawn_unmanaged,
     }) |bench| {
         const exe = b.addExecutable(.{
             .name = @tagName(bench),

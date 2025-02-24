@@ -4,6 +4,8 @@ const Frame = @import("Frame.zig");
 
 const Task = @This();
 
+pub const stack_alignment = Frame.stack_alignment;
+
 /// Private API for the curious 🏩
 frame: *Frame,
 
