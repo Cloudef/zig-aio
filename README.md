@@ -8,7 +8,7 @@ zig-aio provides io_uring like asynchronous API and coroutine powered IO tasks f
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Project is tested on zig version 0.14.0-dev.3267+59dc15fa0
+Project is tested on zig version 0.14.0-dev.3298+6fe1993d8
 
 ## Support matrix
 
