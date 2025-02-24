@@ -66,31 +66,40 @@
         tmpdir="$(mktemp -d)"
         trap 'rm -rf "$tmpdir"' EXIT
 
-        [[ "$(uname)" == "Linux" ]] && zig build -Daio:posix=disable -Dsingle-threaded=true -p "$tmpdir/new-uring"
-        zig build -Daio:posix=force -Dsingle-threaded=true -p "$tmpdir/new-posix"
+        [[ "$(uname)" == "Linux" ]] && zig build -Daio:posix=disable -p "$tmpdir/new-uring"
+        zig build -Daio:posix=force -p "$tmpdir/new-posix"
 
         git archive "''${COMMIT:-HEAD~1}" | tar x -C "$tmpdir"
         cd "$tmpdir"
 
-        [[ "$(uname)" == "Linux" ]] && zig build -Daio:posix=disable -Dsingle-threaded=true -p "$tmpdir/old-uring"
-        zig build -Daio:posix=force -Dsingle-threaded=true -p "$tmpdir/old-posix"
+        [[ "$(uname)" == "Linux" ]] && zig build -Daio:posix=disable -p "$tmpdir/old-uring"
+        zig build -Daio:posix=force -p "$tmpdir/old-posix"
 
         all=(old-posix/bench/*)
         for bench in "''${@:-''${all[@]}}"; do
           base="$(basename "$bench")"
           [[ -f "new-posix/bench/$base" ]] || continue
           if [[ "''${POOP:-0}" == 1 ]]; then
-            poop "old-uring/bench/$base" "new-uring/bench/$base"
-            poop "old-posix/bench/$base" "new-posix/bench/$base"
+            if [[ -f "old-uring/bench/$base" ]]; then
+              poop "old-uring/bench/$base" "new-uring/bench/$base"
+              poop "old-posix/bench/$base" "new-posix/bench/$base"
+            else
+              poop "new-uring/bench/$base"
+              poop "new-posix/bench/$base"
+            fi
           else
             if [[ "$(uname)" == "Linux" ]]; then
-              echo "$base: old-uring"
-              "old-uring/bench/$base"
+              if [[ -f "old-uring/bench/$base" ]]; then
+                echo "$base: old-uring"
+                "old-uring/bench/$base"
+              fi
               echo "$base: new-uring"
               "new-uring/bench/$base"
             fi
-            echo "$base: old-posix"
-            "old-posix/bench/$base"
+            if [[ -f "old-posix/bench/$base" ]]; then
+              echo "$base: old-posix"
+              "old-posix/bench/$base"
+            fi
             echo "$base: new-posix"
             "new-posix/bench/$base"
           fi
