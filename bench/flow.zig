@@ -203,6 +203,7 @@ fn client(startup: *coro.ResetEvent, mode: ClientMode) !void {
 }
 
 pub fn main() !void {
+    if (builtin.target.os.tag == .wasi) return error.UnsupportedPlatform;
     var gpa: std.heap.GeneralPurposeAllocator(.{}) = .{};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();

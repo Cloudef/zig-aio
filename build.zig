@@ -69,13 +69,14 @@ pub fn build(b: *std.Build) void {
         .coro,
         .coro_wttr,
     }) |example| {
+        const os = target.query.os_tag orelse builtin.os.tag;
         const exe = b.addExecutable(.{
             .name = @tagName(example),
             .root_source_file = b.path("examples/" ++ @tagName(example) ++ ".zig"),
             .target = target,
             .optimize = optimize,
             .sanitize_thread = sanitize,
-            .single_threaded = if (example == .coro_wttr) false else single_threaded,
+            .single_threaded = if (example == .coro_wttr and os != .wasi) false else single_threaded,
             .strip = false,
         });
         exe.root_module.addImport("aio", aio);

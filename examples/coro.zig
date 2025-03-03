@@ -1,3 +1,4 @@
+const builtin = @import("builtin");
 const std = @import("std");
 const aio = @import("aio");
 const coro = @import("coro");
@@ -81,6 +82,7 @@ fn client(startup: *coro.ResetEvent) !void {
 }
 
 pub fn main() !void {
+    if (builtin.target.os.tag == .wasi) return error.UnsupportedPlatform;
     // var mem: [4096 * 1024]u8 = undefined;
     // var fba = std.heap.FixedBufferAllocator.init(&mem);
     var gpa: std.heap.GeneralPurposeAllocator(.{}) = .{};
