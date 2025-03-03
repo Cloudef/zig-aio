@@ -1,5 +1,6 @@
 // provided by mrjbq7
 
+const builtin = @import("builtin");
 const std = @import("std");
 const aio = @import("aio");
 const coro = @import("coro");
@@ -92,6 +93,7 @@ fn client(startup: *coro.ResetEvent) !void {
 }
 
 pub fn main() !void {
+    if (builtin.target.os.tag == .wasi) return error.UnsupportedPlatform;
     var gpa: std.heap.GeneralPurposeAllocator(.{}) = .{};
     defer _ = gpa.deinit();
     var scheduler = try coro.Scheduler.init(gpa.allocator(), .{});

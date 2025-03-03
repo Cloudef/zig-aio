@@ -66,6 +66,7 @@ fn loader(completed: *std.atomic.Value(u32), max: *const u32) !void {
 }
 
 pub fn main() !void {
+    if (builtin.target.os.tag == .wasi) return error.UnsupportedPlatform;
     var gpa: std.heap.GeneralPurposeAllocator(.{}) = .{};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
