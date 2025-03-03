@@ -26,17 +26,21 @@ const builtin = @import("builtin");
 const assert = std.debug.assert;
 const Fiber = @This();
 
-pub const stack_alignment = 16;
+pub const stack_alignment = StackContext.alignment;
 pub const Stack = []align(stack_alignment) u8;
 
 pub const Error = error{
     /// The stack space provided to the fiber is not large enough to contain required metadata.
     StackTooSmall,
+    /// Not supported on the platform
+    UnsupportedPlatform,
 };
 
 /// Intrusively allocates a Fiber object (and auxiliary data) inside (specifically, and the end of) the given stack memory.
 /// Then, execution of the fiber is setup to invoke the given function with the args on the next call to `switchTo`.''
 pub fn init(stack: Stack, user_data: usize, comptime func: anytype, args: anytype) Error!*Fiber {
+    if (!is_supported) return error.UnsupportedPlatform;
+
     const Args = @TypeOf(args);
     const state = try State.init(stack, user_data, @sizeOf(Args), struct {
         fn entry() callconv(.C) noreturn {
@@ -47,7 +51,7 @@ pub fn init(stack: Stack, user_data: usize, comptime func: anytype, args: anytyp
             @call(.auto, func, args_ptr.*);
 
             // Mark the fiber as completed and do one last
-            zefi_stack_swap(&state.stack_context, &state.caller_context);
+            StackContext.swap(&state.stack_context, &state.caller_context);
             unreachable;
         }
     }.entry);
@@ -88,7 +92,7 @@ pub fn switchTo(fiber: *Fiber) void {
     tls_state = state;
     defer tls_state = old_state;
 
-    zefi_stack_swap(&state.caller_context, &state.stack_context);
+    StackContext.swap(&state.caller_context, &state.stack_context);
 }
 
 /// Switches the current thread's execution back to the most recent switchTo() called on the currently running fiber.
@@ -97,7 +101,7 @@ pub fn switchTo(fiber: *Fiber) void {
 /// to continue the fiber from this yield point.
 pub fn yield() void {
     const state = tls_state orelse unreachable;
-    zefi_stack_swap(&state.stack_context, &state.caller_context);
+    StackContext.swap(&state.stack_context, &state.caller_context);
 }
 
 const State = extern struct {
@@ -138,29 +142,47 @@ const State = extern struct {
     }
 };
 
-extern fn zefi_stack_swap(
-    noalias current_context_ptr: **anyopaque,
-    noalias new_context_ptr: **anyopaque,
-) void;
-comptime {
-    asm (StackContext.assembly);
-}
-
 const StackContext = switch (builtin.cpu.arch) {
     .x86_64 => switch (builtin.os.tag) {
         .windows => Intel_Microsoft,
         else => Intel_SysV,
     },
     .aarch64 => Arm_64,
-    else => @compileError("platform not currently supported"),
+    else => Unsupported,
+};
+
+const is_supported = switch (builtin.cpu.arch) {
+    .x86_64 => true,
+    .aarch64 => true,
+    else => false,
+};
+
+const Unsupported = struct {
+    pub const alignment = 16;
+
+    pub fn swap(
+        noalias _: **anyopaque,
+        noalias _: **anyopaque,
+    ) void {
+        @panic("unsupported platform");
+    }
 };
 
 const Intel_Microsoft = struct {
     pub const word_count = 31;
-
     pub const entry_offset = word_count - 1;
+    pub const alignment = 16;
+    pub const swap = zefi_stack_swap;
 
-    pub const assembly =
+    extern fn zefi_stack_swap(
+        noalias current_context_ptr: **anyopaque,
+        noalias new_context_ptr: **anyopaque,
+    ) void;
+    comptime {
+        asm (assembly);
+    }
+
+    const assembly =
         \\.global zefi_stack_swap
         \\zefi_stack_swap:
         \\  pushq %gs:0x10
@@ -225,10 +247,19 @@ const symbol = switch (builtin.target.os.tag) {
 
 const Intel_SysV = struct {
     pub const word_count = 7;
-
     pub const entry_offset = word_count - 1;
+    pub const alignment = 16;
+    pub const swap = zefi_stack_swap;
 
-    pub const assembly =
+    extern fn zefi_stack_swap(
+        noalias current_context_ptr: **anyopaque,
+        noalias new_context_ptr: **anyopaque,
+    ) void;
+    comptime {
+        asm (assembly);
+    }
+
+    const assembly =
         std.fmt.comptimePrint(
         \\.global {[symbol]s}
         \\{[symbol]s}:
@@ -255,10 +286,19 @@ const Intel_SysV = struct {
 
 const Arm_64 = struct {
     pub const word_count = 20;
-
     pub const entry_offset = 0;
+    pub const alignment = 16;
+    pub const swap = zefi_stack_swap;
 
-    pub const assembly =
+    extern fn zefi_stack_swap(
+        noalias current_context_ptr: **anyopaque,
+        noalias new_context_ptr: **anyopaque,
+    ) void;
+    comptime {
+        asm (assembly);
+    }
+
+    const assembly =
         std.fmt.comptimePrint(
         \\.global {[symbol]s}
         \\{[symbol]s}:
