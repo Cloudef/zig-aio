@@ -1,6 +1,7 @@
 // reference for flow.zig
 // this uses optimal (as far I know) io_uring code
 
+const builtin = @import("builtin");
 const std = @import("std");
 const log = std.log.scoped(.flow_uring);
 
@@ -233,6 +234,8 @@ fn client(startup: *std.Thread.ResetEvent, mode: ClientMode) !void {
 }
 
 pub fn main() !void {
+    if (builtin.target.os.tag != .linux) return error.UnsupportedPlatform;
+
     var gpa: std.heap.GeneralPurposeAllocator(.{}) = .{};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();

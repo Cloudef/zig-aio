@@ -1,6 +1,7 @@
 // reference for ping_pongs.zig
 // this uses optimal (as far I know) io_uring code
 
+const builtin = @import("builtin");
 const std = @import("std");
 const log = std.log.scoped(.ping_pongs_uring);
 
@@ -150,6 +151,7 @@ fn client(startup: *std.Thread.ResetEvent) !void {
 }
 
 pub fn main() !void {
+    if (builtin.target.os.tag != .linux) return error.UnsupportedPlatform;
     var startup: std.Thread.ResetEvent = .{};
     const thread = try std.Thread.spawn(.{}, server, .{&startup});
     try client(&startup);
