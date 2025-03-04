@@ -1,10 +1,11 @@
 .{
-    .name = "zig-aio",
+    .name = .zig_aio,
     .version = "0.0.0",
+    .fingerprint = 0x62d4b710d4583fbd,
     .dependencies = .{
         .zigwin32 = .{
             .url = "git+https://github.com/marlersoft/zigwin32.git#0d804dce7632d0912245b1a7aa0384a21629f453",
-            .hash = "1220fbd42a455a94ce2134c4080a16c99074fb28ca94df87dde3cfecccc5c8401ca9",
+            .hash = "zigwin32-25.0.28-preview-AAAAAC8f_AP71CpFWpTOITTECAoWyZB0-yjKlN-H3ePP",
             .lazy = true,
         },
     },
