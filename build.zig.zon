@@ -1,5 +1,5 @@
 .{
-    .name = "zig-aio",
+    .name = "aio",
     .version = "0.0.0",
     .dependencies = .{
         .zigwin32 = .{
