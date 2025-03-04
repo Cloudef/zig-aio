@@ -1,7 +1,7 @@
 .{
-    .name = .zig_aio,
+    .name = .aio,
     .version = "0.0.0",
-    .fingerprint = 0x62d4b710d4583fbd,
+    .fingerprint = 0xdf66d422DEADBEEF,
     .dependencies = .{
         .zigwin32 = .{
             .url = "git+https://github.com/marlersoft/zigwin32.git#0d804dce7632d0912245b1a7aa0384a21629f453",
