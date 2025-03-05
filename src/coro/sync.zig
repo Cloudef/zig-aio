@@ -458,3 +458,163 @@ test "RwLock.Cancel" {
 
     try std.testing.expectEqual(value, check_value);
 }
+
+/// A multi-producer, multi-consumer queue for sending data between tasks, schedulers, and threads.
+/// It supports various configurations: single-producer & multi-consumer, multi-producer & single-consumer,
+/// and single-producer & single-consumer.
+/// Only one consumer receives each sent data, regardless of the number of consumers.
+pub fn Queue(comptime T: type) type {
+    return struct {
+        const QueueList = std.DoublyLinkedList(T);
+        const MemoryPool = std.heap.MemoryPool(QueueList.Node);
+
+        pool: MemoryPool,
+        queue: QueueList = .{},
+        mutex: Mutex,
+        semaphore: aio.EventSource,
+
+        pub fn init(allocator: std.mem.Allocator, preheat_size: usize) !@This() {
+            return .{
+                .pool = try MemoryPool.initPreheated(allocator, preheat_size),
+                .mutex = try Mutex.init(),
+                .semaphore = try aio.EventSource.init(),
+            };
+        }
+
+        pub fn deinit(self: *@This()) void {
+            self.clear() catch |err| switch (err) {
+                error.Canceled => {},
+                else => unreachable,
+            };
+            self.pool.deinit();
+            self.mutex.deinit();
+            self.semaphore.deinit();
+        }
+
+        pub fn send(self: *@This(), data: T) !void {
+            try self.mutex.lock();
+            defer self.mutex.unlock();
+
+            const node = try self.pool.create();
+            errdefer self.pool.destroy(node);
+
+            node.data = data;
+
+            self.queue.prepend(node);
+
+            self.semaphore.notify();
+        }
+
+        pub fn tryRecv(self: *@This()) ?T {
+            if (self.mutex.tryLock()) {
+                defer self.mutex.unlock();
+
+                self.semaphore.waitNonBlocking() catch |err| switch (err) {
+                    error.WouldBlock => return null,
+                };
+
+                if (self.queue.pop()) |node| {
+                    const data = node.data;
+                    self.pool.destroy(node);
+                    return data;
+                }
+            }
+            return null;
+        }
+
+        pub fn recv(self: *@This()) !T {
+            try coro.io.single(.wait_event_source, .{ .source = &self.semaphore });
+
+            try self.mutex.lock();
+            defer self.mutex.unlock();
+
+            if (self.queue.pop()) |node| {
+                const data = node.data;
+                self.pool.destroy(node);
+                return data;
+            }
+
+            unreachable;
+        }
+
+        pub fn clear(self: *@This()) !void {
+            try self.mutex.lock();
+            defer self.mutex.unlock();
+
+            while (true) self.semaphore.waitNonBlocking() catch break;
+
+            while (self.queue.pop()) |node| {
+                self.pool.destroy(node);
+            }
+        }
+    };
+}
+
+test "Queue" {
+    if (builtin.single_threaded) {
+        return error.SkipZigTest;
+    }
+
+    const Test = struct {
+        fn provider_task(queue: *Queue(u32), data: u32) !void {
+            try queue.send(data);
+        }
+
+        fn provider(queue: *Queue(u32)) !void {
+            var scheduler = try coro.Scheduler.init(std.testing.allocator, .{});
+            defer scheduler.deinit();
+
+            for (0..128) |i| {
+                _ = try scheduler.spawn(provider_task, .{ queue, @as(u32, @intCast(i)) }, .{ .detached = true });
+            }
+
+            try scheduler.run(.wait);
+        }
+
+        fn consumer_task(queue: *Queue(u32)) !void {
+            _ = try queue.recv();
+        }
+
+        fn consumer(queue: *Queue(u32)) !void {
+            var scheduler = try coro.Scheduler.init(std.testing.allocator, .{});
+            defer scheduler.deinit();
+
+            for (0..128) |_| {
+                _ = try scheduler.spawn(consumer_task, .{queue}, .{ .detached = true });
+            }
+
+            try scheduler.run(.wait);
+        }
+    };
+
+    var queue = try Queue(u32).init(std.testing.allocator, 0);
+    defer queue.deinit();
+
+    // test queue order without threads/schedulers
+    try queue.send(780);
+    try queue.send(632);
+    try queue.send(1230);
+    try queue.send(6);
+
+    try std.testing.expectEqual(780, try queue.recv());
+    try std.testing.expectEqual(632, try queue.recv());
+    try std.testing.expectEqual(1230, try queue.recv());
+    try std.testing.expectEqual(6, try queue.recv());
+
+    // check if it has returned to its initial state
+    try std.testing.expectEqual(null, queue.tryRecv());
+    try std.testing.expectEqual(0, queue.queue.len);
+
+    var threads: [2]std.Thread = undefined;
+
+    threads[0] = try std.Thread.spawn(.{}, Test.consumer, .{&queue});
+    threads[1] = try std.Thread.spawn(.{}, Test.provider, .{&queue});
+
+    for (threads) |thread| {
+        thread.join();
+    }
+
+    // check if it has returned to its initial state
+    try std.testing.expectEqual(null, queue.tryRecv());
+    try std.testing.expectEqual(0, queue.queue.len);
+}
