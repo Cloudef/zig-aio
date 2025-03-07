@@ -27,6 +27,9 @@ pub const Task = @import("coro/Task.zig");
 const sync = @import("coro/sync.zig");
 pub const Semaphore = sync.Semaphore;
 pub const ResetEvent = sync.ResetEvent;
+pub const Mutex = sync.Mutex;
+pub const RwLock = sync.RwLock;
+pub const Queue = sync.Queue;
 
 // Aliases
 pub const current = Task.current;
