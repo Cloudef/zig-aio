@@ -80,7 +80,7 @@ pub const ResetEvent = struct {
 
 /// A thread-safe Mutex implemented on top of aio.EventSource
 /// When the mutex is locked other tasks can still run
-const Mutex = struct {
+pub const Mutex = struct {
     native: std.Thread.Mutex = .{},
     semaphore: aio.EventSource,
 
