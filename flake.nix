@@ -12,7 +12,7 @@
       # Check the flake.nix in zig2nix project for more options:
       # <https://github.com/Cloudef/zig2nix/blob/master/flake.nix>
       env = zig2nix.outputs.zig-env.${system} {
-        zig = zig2nix.outputs.packages.${system}.zig.master.bin;
+        zig = zig2nix.outputs.packages.${system}.zig-master;
       };
     in with builtins; with env.lib; with env.pkgs.lib; {
       # nix run .
@@ -120,7 +120,7 @@
 
       # nix develop
       devShells.default = env.mkShell {
-          nativeBuildInputs = with env.pkgs; [wasmtime wineWowPackages.minimal];
+        nativeBuildInputs = with env.pkgs; [wasmtime wineWowPackages.minimal];
       };
 
       # nix run .#readme
