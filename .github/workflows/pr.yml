@@ -17,7 +17,8 @@ jobs:
             os: [ubuntu-latest, macos-latest]
 
     steps:
-      - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - if: matrix.os == 'ubuntu-latest'
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - uses: actions/checkout@v4
       - uses: DeterminateSystems/nix-installer-action@main
         with:
