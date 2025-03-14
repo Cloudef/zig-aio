@@ -10,7 +10,7 @@ const Supported = struct {
     var waitid: bool = false;
 
     fn do_once() void {
-        waitid = uring_is_supported(&.{std.os.linux.IORING_OP.WAITID});
+        waitid = uring_is_supported(&.{.WAITID});
         if (!waitid) log.warn("aio.ChildExit: fallback with pidfd", .{});
     }
 
@@ -87,29 +87,31 @@ pub fn isSupported(op_types: []const Operation) bool {
     var ops: [Operation.map.count()]std.os.linux.IORING_OP = undefined;
     for (op_types, ops[0..op_types.len]) |op_type, *op| {
         op.* = switch (op_type) {
-            .nop => std.os.linux.IORING_OP.NOP, // 5.1
-            .fsync => std.os.linux.IORING_OP.FSYNC, // 5.1
-            .poll, .child_exit => std.os.linux.IORING_OP.POLL_ADD, // 5.1 (child_exit uses waitid if available 6.5)
-            .read_tty, .read, .wait_event_source => std.os.linux.IORING_OP.READ, // 5.6
-            .write, .notify_event_source => std.os.linux.IORING_OP.WRITE, // 5.6
-            .accept => std.os.linux.IORING_OP.ACCEPT, // 5.5
-            .connect => std.os.linux.IORING_OP.CONNECT, // 5.5
-            .recv => std.os.linux.IORING_OP.RECV, // 5.6
-            .send => std.os.linux.IORING_OP.SEND, // 5.6
-            .recv_msg => std.os.linux.IORING_OP.RECVMSG, // 5.3
-            .send_msg => std.os.linux.IORING_OP.SENDMSG, // 5.3
-            .shutdown => std.os.linux.IORING_OP.SHUTDOWN, // 5.11
-            .open_at => std.os.linux.IORING_OP.OPENAT, // 5.15
-            .close_file, .close_dir, .close_socket, .close_event_source => std.os.linux.IORING_OP.CLOSE, // 5.15
-            .timeout => std.os.linux.IORING_OP.TIMEOUT, // 5.4
-            .link_timeout => std.os.linux.IORING_OP.LINK_TIMEOUT, // 5.5
-            .cancel => std.os.linux.IORING_OP.ASYNC_CANCEL, // 5.5
-            .rename_at => std.os.linux.IORING_OP.RENAMEAT, // 5.11
-            .unlink_at => std.os.linux.IORING_OP.UNLINKAT, // 5.11
-            .mkdir_at => std.os.linux.IORING_OP.MKDIRAT, // 5.15
-            .symlink_at => std.os.linux.IORING_OP.SYMLINKAT, // 5.15
-            .socket => std.os.linux.IORING_OP.SOCKET, // 5.19
-            .splice => std.os.linux.IORING_OP.SPLICE, // 5.7
+            .nop => .NOP, // 5.1
+            .fsync => .FSYNC, // 5.1
+            .poll, .child_exit => .POLL_ADD, // 5.1 (child_exit uses waitid if available 6.5)
+            .read_tty, .read, .wait_event_source => .READ, // 5.6
+            .write, .notify_event_source => .WRITE, // 5.6
+            .accept => .ACCEPT, // 5.5
+            .connect => .CONNECT, // 5.5
+            .recv => .RECV, // 5.6
+            .send => .SEND, // 5.6
+            .recv_msg => .RECVMSG, // 5.3
+            .send_msg => .SENDMSG, // 5.3
+            .shutdown => .SHUTDOWN, // 5.11
+            .open_at => .OPENAT, // 5.15
+            .close_file, .close_dir, .close_socket, .close_event_source => .CLOSE, // 5.15
+            .timeout => .TIMEOUT, // 5.4
+            .link_timeout => .LINK_TIMEOUT, // 5.5
+            .cancel => .ASYNC_CANCEL, // 5.5
+            .rename_at => .RENAMEAT, // 5.11
+            .unlink_at => .UNLINKAT, // 5.11
+            .mkdir_at => .MKDIRAT, // 5.15
+            .symlink_at => .SYMLINKAT, // 5.15
+            .socket => .SOCKET, // 5.19
+            .splice => .SPLICE, // 5.7
+            .bind => .BIND, // 6.11
+            .listen => .LISTEN, // 6.11
         };
     }
     return uring_is_supported(ops[0..op_types.len]);
