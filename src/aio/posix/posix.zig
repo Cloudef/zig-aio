@@ -243,14 +243,14 @@ pub fn perform(comptime op_type: Operation, op: Operation.map.getAssertContains(
         },
         .accept => op.out_socket.* = try accept(op.socket, op.out_addr, op.inout_addrlen, 0),
         .connect => _ = try connect(op.socket, op.addr, op.addrlen),
-        .recv => op.out_read.* = try recv(op.socket, op.buffer, MSG.DONTWAIT),
+        .recv => op.out_read.* = try recv(op.socket, op.buffer, MSG.DONTWAIT | op.flags.toInt()),
         .send => {
-            const written = try send(op.socket, op.buffer, MSG.DONTWAIT | MSG.NOSIGNAL);
+            const written = try send(op.socket, op.buffer, MSG.DONTWAIT | MSG.NOSIGNAL | op.flags.toInt());
             if (op.out_written) |w| w.* = written;
         },
-        .recv_msg => op.out_read.* = try recvmsg(op.socket, op.out_msg, MSG.DONTWAIT),
+        .recv_msg => op.out_read.* = try recvmsg(op.socket, op.out_msg, MSG.DONTWAIT | op.flags.toInt()),
         .send_msg => {
-            const written = try sendmsg(op.socket, op.msg, MSG.DONTWAIT | MSG.NOSIGNAL);
+            const written = try sendmsg(op.socket, op.msg, MSG.DONTWAIT | MSG.NOSIGNAL | op.flags.toInt());
             if (op.out_written) |w| w.* = written;
         },
         .shutdown => try shutdown(op.socket, op.how),
@@ -309,7 +309,8 @@ pub const MSG = switch (builtin.target.os.tag) {
         pub const DONTWAIT = 0x00080;
         pub const NOSIGNAL = 0x20000;
     },
-    .windows, .wasi => struct {
+    .windows => windows.MSG,
+    .wasi => struct {
         pub const DONTWAIT = 0x0;
         pub const NOSIGNAL = 0x0;
     },

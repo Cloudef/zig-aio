@@ -262,6 +262,17 @@ pub fn recvEx(sockfd: std.posix.socket_t, buf: [*]win_sock.WSABUF, flags: u32, o
     return .{ .transmitted = @intCast(read) };
 }
 
+pub const MSG = struct {
+    pub const DONTWAIT = 0x0;
+    pub const NOSIGNAL = 0x0;
+    pub const PEEK: u32 = @bitCast(win_sock.MSG_PEEK);
+    pub const PARTIAL: u32 = @bitCast(win_sock.MSG_PARTIAL);
+    pub const DONTROUTE: u32 = @bitCast(win_sock.MSG_DONTROUTE);
+    pub const OOB: u32 = @bitCast(win_sock.MSG_OOB);
+    pub const PUSH_IMMEDIATE: u32 = @bitCast(win_sock.MSG_PUSH_IMMEDIATE);
+    pub const WAITALL: u32 = @bitCast(win_sock.WAITALL);
+};
+
 pub const iovec = extern struct {
     len: u32,
     base: [*]u8,
