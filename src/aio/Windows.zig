@@ -326,7 +326,7 @@ pub fn uringlator_start(self: *@This(), id: aio.Id, op_type: Operation) !void {
             const state = self.uringlator.ops.getOnePtr(.state, id);
             const ovl = self.uringlator.ops.getOnePtr(.ovl, id);
             self.iocp.associateSocket(id, state.recv.socket) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe);
-            switch (wposix.recvEx(state.recv.socket, &win_state.wsabuf, 0, &ovl.overlapped) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe)) {
+            switch (wposix.recvEx(state.recv.socket, &win_state.wsabuf, state.recv.flags.toInt(), &ovl.overlapped) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe)) {
                 .pending => {},
                 .transmitted => |bytes| {
                     ovl.res = bytes;
@@ -339,7 +339,7 @@ pub fn uringlator_start(self: *@This(), id: aio.Id, op_type: Operation) !void {
             const state = self.uringlator.ops.getOnePtr(.state, id);
             const ovl = self.uringlator.ops.getOnePtr(.ovl, id);
             self.iocp.associateSocket(id, state.send.socket) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe);
-            switch (wposix.sendEx(state.send.socket, &win_state.wsabuf, 0, &ovl.overlapped) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe)) {
+            switch (wposix.sendEx(state.send.socket, &win_state.wsabuf, state.send.flags.toInt(), &ovl.overlapped) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe)) {
                 .pending => {},
                 .transmitted => |bytes| {
                     ovl.res = bytes;
@@ -351,7 +351,7 @@ pub fn uringlator_start(self: *@This(), id: aio.Id, op_type: Operation) !void {
             const state = self.uringlator.ops.getOnePtr(.state, id);
             const ovl = self.uringlator.ops.getOnePtr(.ovl, id);
             self.iocp.associateSocket(id, state.recv_msg.socket) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe);
-            switch (wposix.recvmsgEx(state.recv_msg.socket, state.recv_msg.out_msg, 0, &ovl.overlapped) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe)) {
+            switch (wposix.recvmsgEx(state.recv_msg.socket, state.recv_msg.out_msg, state.recv_msg.flags.toInt(), &ovl.overlapped) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe)) {
                 .pending => {},
                 .transmitted => |bytes| {
                     ovl.res = bytes;
@@ -363,7 +363,7 @@ pub fn uringlator_start(self: *@This(), id: aio.Id, op_type: Operation) !void {
             const state = self.uringlator.ops.getOnePtr(.state, id);
             const ovl = self.uringlator.ops.getOnePtr(.ovl, id);
             self.iocp.associateSocket(id, state.send_msg.socket) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe);
-            switch (wposix.sendmsgEx(state.send_msg.socket, @constCast(state.send_msg.msg), 0, &ovl.overlapped) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe)) {
+            switch (wposix.sendmsgEx(state.send_msg.socket, @constCast(state.send_msg.msg), state.send_msg.flags.toInt(), &ovl.overlapped) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe)) {
                 .pending => {},
                 .transmitted => |bytes| {
                     ovl.res = bytes;

@@ -47,18 +47,22 @@ const UringlatorOperation = struct {
         recv: struct {
             socket: std.posix.socket_t,
             buffer: []u8,
+            flags: aio.Recv.Flags,
         },
         send: struct {
             socket: std.posix.socket_t,
             buffer: []const u8,
+            flags: aio.Send.Flags,
         },
         recv_msg: struct {
             socket: std.posix.socket_t,
             out_msg: *posix.msghdr,
+            flags: aio.Recv.Flags,
         },
         send_msg: struct {
             socket: std.posix.socket_t,
             msg: *const posix.msghdr_const,
+            flags: aio.Send.Flags,
         },
         shutdown: struct {
             socket: std.posix.socket_t,
