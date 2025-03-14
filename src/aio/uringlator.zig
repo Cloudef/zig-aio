@@ -124,6 +124,12 @@ const UringlatorOperation = struct {
         close_event_source: struct {
             source: *aio.EventSource,
         },
+        splice: struct {
+            in: aio.Splice.Fd,
+            out: aio.Splice.Fd,
+            len: usize,
+            flags: aio.Splice.Flags,
+        },
 
         fn FieldType(comptime T: type, comptime name: []const u8) type {
             return @TypeOf(@field(@as(T, undefined), name));

@@ -273,6 +273,7 @@ pub fn perform(comptime op_type: Operation, op: Operation.map.getAssertContains(
         .notify_event_source => op.source.notify(),
         .wait_event_source => try op.source.waitNonBlocking(),
         .close_event_source => op.source.deinit(),
+        .splice => @panic("fixme: implement splice for posix"),
         // these must be implemented by the backend
         .nop, .timeout, .link_timeout, .cancel, .poll => unreachable,
     }

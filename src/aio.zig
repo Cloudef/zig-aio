@@ -252,6 +252,7 @@ pub const CloseSocket = ops.CloseSocket;
 pub const NotifyEventSource = ops.NotifyEventSource;
 pub const WaitEventSource = ops.WaitEventSource;
 pub const CloseEventSource = ops.CloseEventSource;
+pub const Splice = ops.Splice;
 
 test "shared outputs" {
     var tmp = std.testing.tmpDir(.{});
@@ -800,6 +801,35 @@ test "EventSource" {
         op(.wait_event_source, .{ .source = &source }, .hard),
         op(.close_event_source, .{ .source = &source }, .unlinked),
     });
+}
+
+test "Splice" {
+    if (builtin.target.os.tag != .linux or options.posix != .disable) {
+        return error.SkipZigTest;
+    }
+
+    const out = try std.posix.memfd_create("out", 0);
+    defer std.posix.close(out);
+
+    const pfd = try std.posix.pipe();
+    defer for (pfd) |fd| std.posix.close(fd);
+
+    _ = try std.posix.write(pfd[1], "hello world");
+
+    var wlen: usize = 0;
+    try single(.splice, .{
+        .in = .{ .pipe = pfd[0] },
+        .out = .{ .other = .{ .fd = out } },
+        .len = "hello world".len,
+        .out_written = &wlen,
+    });
+
+    try std.testing.expectEqual("hello world".len, wlen);
+
+    var buf: [32]u8 = undefined;
+    const rlen = try std.posix.pread(out, &buf, 0);
+    try std.testing.expectEqual("hello world".len, rlen);
+    try std.testing.expectEqualSlices(u8, "hello world", buf[0..rlen]);
 }
 
 test {

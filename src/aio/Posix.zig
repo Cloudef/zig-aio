@@ -340,6 +340,13 @@ fn openReadiness(comptime op_type: Operation, op: Operation.map.getAssertContain
         .wait_event_source => op.source.native.waitReadiness(),
         .notify_event_source => op.source.native.notifyReadiness(),
         .close_event_source => .{},
+        .splice => .{
+            .fd = switch (op.in) {
+                .pipe => |fd| fd,
+                .other => |other| other.fd,
+            },
+            .events = .{ .in = true },
+        },
     };
 }
 
@@ -406,6 +413,7 @@ pub fn uringlator_start(self: *@This(), id: aio.Id, op_type: Operation) !void {
             .recv,
             .send_msg,
             .recv_msg,
+            .splice,
             => |tag| {
                 const state = self.uringlator.ops.getOnePtr(.state, id);
                 const result = self.uringlator.ops.getOne(.out_result, id);

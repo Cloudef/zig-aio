@@ -373,6 +373,60 @@ pub const CloseEventSource = struct {
     userdata: usize = 0,
 };
 
+/// splice(2)
+/// Either `in` or `out` must be a pipe.
+/// If `in/out` does not refer to a pipe and `off` is maxInt(u64), then `len` are read
+/// from `in/out` starting from the file offset, which is incremented by the number of bytes read.
+/// If `in/out` does not refer to a pipe and `off` is not maxInt(u64), then the starting offset of `in/out` will be `off`.
+/// This splice operation can be used to implement sendfile by splicing to an intermediate pipe first,
+/// then splice to the final destination. In fact, the implementation of sendfile in kernel uses splice internally.
+///
+/// NOTE that even if fd_in or fd_out refers to a pipe, the splice operation can still fail with EINVAL if one of the
+/// fd doesn't explicitly support splice peration, e.g. reading from terminal is unsupported from kernel 5.7 to 5.11.
+/// See https://github.com/axboe/liburing/issues/291
+pub const Splice = struct {
+    pub const Error = error{SystemResources} || SharedError;
+
+    pub const Fd = union(enum) {
+        pipe: std.posix.fd_t,
+        other: struct {
+            fd: std.posix.fd_t,
+            offset: u64 = std.math.maxInt(u64),
+        },
+    };
+
+    pub const Flags = packed struct(u32) {
+        /// Attempt to move pages instead of copying.  This is only a
+        /// hint to the kernel: pages may still be copied if the kernel
+        /// cannot move the pages from the pipe, or if the pipe buffers
+        /// don't refer to full pages.  The initial implementation of
+        /// this flag was buggy: therefore starting in Linux 2.6.21 it
+        /// is a no-op (but is still permitted in a splice() call); in
+        /// the future, a correct implementation may be restored.
+        move: bool = false,
+        /// Do not block on I/O.  This makes the splice pipe operations
+        /// nonblocking, but splice() may nevertheless block because
+        /// the file descriptors that are spliced to/from may block
+        /// (unless they have the O_NONBLOCK flag set).
+        nonblock: bool = true,
+        /// More data will be coming in a subsequent splice.  This is a
+        /// helpful hint when the fd_out refers to a socket (see also
+        /// the description of MSG_MORE in send(2), and the description
+        /// of TCP_CORK in tcp(7)).
+        more: bool = false,
+        _: u29 = 0,
+    };
+
+    in: Fd,
+    out: Fd,
+    len: usize,
+    flags: Flags = .{},
+    out_written: ?*usize = null,
+    out_id: ?*Id = null,
+    out_error: ?*Error = null,
+    userdata: usize = 0,
+};
+
 pub const Operation = enum {
     nop,
     fsync,
@@ -403,6 +457,7 @@ pub const Operation = enum {
     notify_event_source,
     wait_event_source,
     close_event_source,
+    splice,
 
     pub const map = std.enums.EnumMap(@This(), type).init(.{
         .nop = Nop,
@@ -434,6 +489,7 @@ pub const Operation = enum {
         .notify_event_source = NotifyEventSource,
         .wait_event_source = WaitEventSource,
         .close_event_source = CloseEventSource,
+        .splice = Splice,
     });
 
     pub const Error = blk: {
@@ -470,7 +526,7 @@ pub const Operation = enum {
                 .notify_event_source,
                 => undefined,
                 .read, .read_tty, .recv, .recv_msg => @ptrCast(op.out_read),
-                .write, .send, .send_msg => @ptrCast(op.out_written),
+                .write, .send, .send_msg, .splice => @ptrCast(op.out_written),
                 .socket, .accept => @ptrCast(op.out_socket),
                 .open_at => @ptrCast(op.out_file),
                 .child_exit => @ptrCast(op.out_term),
@@ -500,7 +556,7 @@ pub const Operation = enum {
                 .notify_event_source,
                 => undefined,
                 .read, .read_tty, .recv, .recv_msg => op.out_read = self.cast(*usize),
-                .write, .send, .send_msg => op.out_written = self.cast(?*usize),
+                .write, .send, .send_msg, .splice => op.out_written = self.cast(?*usize),
                 .socket, .accept => op.out_socket = self.cast(*std.posix.socket_t),
                 .open_at => op.out_file = self.cast(*std.fs.File),
                 .child_exit => op.out_term = self.cast(?*std.process.Child.Term),
