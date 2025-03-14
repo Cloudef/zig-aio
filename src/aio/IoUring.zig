@@ -840,6 +840,7 @@ fn uring_handle_completion(comptime op_type: Operation, op: Operation.map.getAss
             },
             .splice => switch (err) {
                 .SUCCESS, .INTR, .AGAIN, .INVAL, .BADF, .SPIPE => unreachable,
+                .CANCELED => error.Canceled,
                 .NOMEM => error.SystemResources,
                 else => std.posix.unexpectedErrno(err),
             },
