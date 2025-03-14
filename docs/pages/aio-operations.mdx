@@ -35,11 +35,6 @@ If there was no failure a `error.Success` will be stored in that address.
 
 Can be used to wakeup the backend, custom notifications, etc...
 
-```zig
-pub const Error = SharedError;
-ident: usize,
-```
-
 ### Fsync
 
 Synchronizes the contents of a `file` onto the disk.
@@ -187,7 +182,7 @@ Starts a timeout. Once the timeout expires the operation completes.
 The timeout uses a monotonic clock source.
 
 ```zig
-ns: i128,
+ns: u128,
 ```
 
 ### LinkTimeout
@@ -198,7 +193,7 @@ If the operation finishes before the timeout, then the timeout will be canceled.
 If the timeout finishes before the operation, then the operation will be canceled.
 
 ```zig
-ns: i128,
+ns: u128,
 ```
 
 ### Cancel
