@@ -50,14 +50,11 @@ pub fn init(allocator: std.mem.Allocator, n: u16) aio.Error!@This() {
     errdefer pid.deinit(allocator);
     var posix_pool = switch (single_threaded) {
         true => {},
-        false => DynamicThreadPool.init(allocator, .{
+        false => try DynamicThreadPool.init(allocator, .{
             .max_threads = aio.options.max_threads,
             .name = "aio:POSIX",
             .stack_size = posix.stack_size,
-        }) catch |err| return switch (err) {
-            error.TimerUnsupported => error.Unsupported,
-            else => |e| e,
-        },
+        }),
     };
     errdefer if (!single_threaded) posix_pool.deinit();
     var kludge_pool = switch (needs_kludge and !builtin.single_threaded) {
@@ -66,14 +63,11 @@ pub fn init(allocator: std.mem.Allocator, n: u16) aio.Error!@This() {
         // <https://lists.apple.com/archives/Darwin-dev/2006/Apr/msg00066.html>
         // <https://nathancraddock.com/blog/macos-dev-tty-polling/>
         // Only used on platforms that need this hack (darwin)
-        true => DynamicThreadPool.init(allocator, .{
+        true => try DynamicThreadPool.init(allocator, .{
             .max_threads = 16,
             .name = "aio:KLUDGE",
             .stack_size = posix.stack_size,
-        }) catch |err| return switch (err) {
-            error.TimerUnsupported => error.Unsupported,
-            else => |e| e,
-        },
+        }),
         false => {},
     };
     errdefer if (needs_kludge and !builtin.single_threaded) kludge_pool.deinit();

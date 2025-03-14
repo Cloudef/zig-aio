@@ -79,14 +79,11 @@ pub fn init(allocator: std.mem.Allocator, n: u16) aio.Error!@This() {
     errdefer tqueue.deinit();
     var posix_pool = switch (single_threaded) {
         true => {},
-        false => DynamicThreadPool.init(allocator, .{
+        false => try DynamicThreadPool.init(allocator, .{
             .max_threads = aio.options.max_threads,
             .name = "aio:POSIX",
             .stack_size = @import("posix/posix.zig").stack_size,
-        }) catch |err| return switch (err) {
-            error.TimerUnsupported => error.Unsupported,
-            else => |e| e,
-        },
+        }),
     };
     errdefer if (!single_threaded) posix_pool.deinit();
     var uringlator = try Uringlator.init(allocator, n);
