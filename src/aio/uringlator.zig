@@ -124,6 +124,12 @@ const UringlatorOperation = struct {
         close_event_source: struct {
             source: *aio.EventSource,
         },
+        splice: struct {
+            in: aio.Splice.Fd,
+            out: aio.Splice.Fd,
+            len: usize,
+            flags: aio.Splice.Flags,
+        },
 
         fn init(comptime op_type: Operation, op: Operation.map.getAssertContains(op_type)) @This() {
             var v: @FieldType(@This(), @tagName(op_type)) = undefined;

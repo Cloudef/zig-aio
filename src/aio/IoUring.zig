@@ -109,6 +109,7 @@ pub fn isSupported(op_types: []const Operation) bool {
             .mkdir_at => std.os.linux.IORING_OP.MKDIRAT, // 5.15
             .symlink_at => std.os.linux.IORING_OP.SYMLINKAT, // 5.15
             .socket => std.os.linux.IORING_OP.SOCKET, // 5.19
+            .splice => std.os.linux.IORING_OP.SPLICE, // 5.7
         };
     }
     return uring_is_supported(ops[0..op_types.len]);
@@ -228,7 +229,7 @@ pub fn complete(self: *@This(), mode: aio.CompletionMode, handler: anytype) aio.
                 op.out_read = self.ops.getOne(.out_result, id).cast(*usize);
                 break :blk uring_handle_completion(tag, op, undefined, cqe);
             },
-            inline .write, .send, .send_msg => |tag| blk: {
+            inline .write, .send, .send_msg, .splice => |tag| blk: {
                 var op: Operation.map.getAssertContains(tag) = undefined;
                 op.out_id = self.ops.getOne(.out_id, id);
                 op.out_error = @ptrCast(self.ops.getOne(.out_error, id));
@@ -447,6 +448,20 @@ fn uring_queue(io: *std.os.linux.IoUring, comptime op_type: Operation, op: Opera
         .notify_event_source => try io.write(user_data, op.source.native.fd, &std.mem.toBytes(@as(u64, 1)), 0),
         .wait_event_source => try io.read(user_data, op.source.native.fd, .{ .buffer = std.mem.asBytes(&Trash.u_64) }, 0),
         .close_event_source => try io.close(user_data, op.source.native.fd),
+        .splice => blk: {
+            const Fd = struct { fd: std.posix.fd_t, off: u64 };
+            const in: Fd = switch (op.in) {
+                .pipe => |fd| .{ .fd = fd, .off = std.math.maxInt(u64) },
+                .other => |other| .{ .fd = other.fd, .off = other.offset },
+            };
+            const out: Fd = switch (op.out) {
+                .pipe => |fd| .{ .fd = fd, .off = std.math.maxInt(u64) },
+                .other => |other| .{ .fd = other.fd, .off = other.offset },
+            };
+            var sqe = try io.splice(user_data, in.fd, in.off, out.fd, out.off, op.len);
+            sqe.rw_flags |= @bitCast(op.flags);
+            break :blk sqe;
+        },
     };
     switch (link) {
         .unlinked => {},
@@ -821,6 +836,11 @@ fn uring_handle_completion(comptime op_type: Operation, op: Operation.map.getAss
                 .PROTOTYPE => error.SocketTypeNotSupported,
                 else => std.posix.unexpectedErrno(err),
             },
+            .splice => switch (err) {
+                .SUCCESS, .INTR, .AGAIN, .INVAL, .BADF, .SPIPE => unreachable,
+                .NOMEM => error.SystemResources,
+                else => std.posix.unexpectedErrno(err),
+            },
         };
 
         if (op.out_error) |out_error| out_error.* = res;
@@ -841,14 +861,10 @@ fn uring_handle_completion(comptime op_type: Operation, op: Operation.map.getAss
         .nop => {},
         .fsync => {},
         .poll => {},
-        .read_tty, .read => op.out_read.* = @intCast(cqe.res),
-        .write => if (op.out_written) |w| {
-            w.* = @intCast(cqe.res);
-        },
         .accept => op.out_socket.* = cqe.res,
         .connect => {},
-        .recv, .recv_msg => op.out_read.* = @intCast(cqe.res),
-        .send, .send_msg => if (op.out_written) |w| {
+        .read_tty, .read, .recv, .recv_msg => op.out_read.* = @intCast(cqe.res),
+        .write, .send, .send_msg, .splice => if (op.out_written) |w| {
             w.* = @intCast(cqe.res);
         },
         .shutdown => {},
