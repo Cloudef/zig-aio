@@ -51,7 +51,7 @@ const WindowsOperation = struct {
     const State = union {
         event_source: EventSource.OperationContext, // links event sources to iocp completions
         wsabuf: [1]win_sock.WSABUF, // wsabuf for send/recv
-        accept: [@sizeOf(std.posix.sockaddr) * 2 + 16 * 2]u8,
+        accept: [@sizeOf(std.posix.sockaddr.storage) + 16]u8,
     };
     ovl: IoContext, // overlapped struct
     win_state: State, // windows specific state
@@ -316,7 +316,7 @@ pub fn uringlator_start(self: *@This(), id: aio.Id, op_type: Operation) !void {
             self.iocp.associateSocket(id, state.accept.socket) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe);
             out_socket.* = aio.socket(std.posix.AF.INET, 0, 0) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe);
             var read: u32 = undefined;
-            if (wtry(win_sock.AcceptEx(state.accept.socket, out_socket.*, &win_state.accept, 0, @sizeOf(std.posix.sockaddr) + 16, @sizeOf(std.posix.sockaddr) + 16, &read, &ovl.overlapped) == 1) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe)) {
+            if (wtry(win_sock.AcceptEx(state.accept.socket, out_socket.*, &win_state.accept, 0, 0, @sizeOf(std.posix.sockaddr.storage) + 16, &read, &ovl.overlapped) == 1) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe)) {
                 ovl.res = read;
                 self.uringlator.finish(self, id, error.Success, .thread_unsafe);
             }
@@ -479,9 +479,15 @@ pub fn uringlator_complete(self: *@This(), id: aio.Id, op_type: Operation, failu
         switch (op_type) {
             .accept => {
                 const state = self.uringlator.ops.getOnePtr(.state, id);
-                if (state.accept.out_addr) |a| {
+                if (state.accept.out_addr != null or state.accept.inout_addrlen != null) {
                     const win_state = self.uringlator.ops.getOnePtr(.win_state, id);
-                    @memcpy(std.mem.asBytes(a), win_state.accept[@sizeOf(std.posix.sockaddr) + 16 .. @sizeOf(std.posix.sockaddr) * 2 + 16]);
+                    var trash_ptr: *std.posix.sockaddr.storage = undefined;
+                    var trash_len: i32 = 0;
+                    var addr_ptr: *std.posix.sockaddr.storage = undefined;
+                    var addrlen: i32 = 0;
+                    win_sock.GetAcceptExSockaddrs(&win_state.accept, 0, 0, @sizeOf(std.posix.sockaddr.storage) + 16, @ptrCast(&trash_ptr), &trash_len, @ptrCast(&addr_ptr), &addrlen);
+                    if (state.accept.inout_addrlen) |al| al.* = @intCast(addrlen);
+                    if (state.accept.out_addr) |ad| @memcpy(std.mem.asBytes(ad)[0..@intCast(addrlen)], std.mem.asBytes(addr_ptr)[0..@intCast(addrlen)]);
                 }
             },
             .read, .recv, .recv_msg => {
