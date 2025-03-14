@@ -152,8 +152,28 @@ pub const Connect = struct {
 /// std.posix.recv
 pub const Recv = struct {
     pub const Error = std.posix.RecvFromError || SharedError;
+
+    pub const Flags = packed struct {
+        cmsg_cloexec: bool = true,
+        err_queue: bool = false,
+        oob: bool = false,
+        peek: bool = false,
+        trunc: bool = false,
+
+        pub fn toInt(self: @This()) u32 {
+            var flags: u32 = 0;
+            if (self.cmsg_cloexec and @hasDecl(posix.MSG, "CMSG_CLOEXEC")) flags |= posix.MSG.CMSG_CLOEXEC;
+            if (self.err_queue and @hasDecl(posix.MSG, "ERRQUEUE")) flags |= posix.MSG.ERRQUEUE;
+            if (self.oob and @hasDecl(posix.MSG, "OOB")) flags |= posix.MSG.OOB;
+            if (self.peek and @hasDecl(posix.MSG, "PEEK")) flags |= posix.MSG.PEEK;
+            if (self.trunc and @hasDecl(posix.MSG, "TRUNC")) flags |= posix.MSG.TRUNC;
+            return flags;
+        }
+    };
+
     socket: std.posix.socket_t,
     buffer: []u8,
+    flags: Flags = .{},
     out_read: *usize,
     out_id: ?*Id = null,
     out_error: ?*Error = null,
@@ -163,8 +183,32 @@ pub const Recv = struct {
 /// std.posix.send
 pub const Send = struct {
     pub const Error = std.posix.SendError || SharedError;
+
+    pub const Flags = packed struct {
+        confirm: bool = false,
+        dont_route: bool = false,
+        eor: bool = false,
+        more: bool = false,
+        oob: bool = false,
+        fast_open: bool = false,
+        zero_copy: bool = false,
+
+        pub fn toInt(self: @This()) u32 {
+            var flags: u32 = 0;
+            if (self.confirm and @hasDecl(posix.MSG, "CONFIRM")) flags |= posix.MSG.CONFIRM;
+            if (self.dont_route and @hasDecl(posix.MSG, "DONTROUTE")) flags |= posix.MSG.DONTROUTE;
+            if (self.eor and @hasDecl(posix.MSG, "EOR")) flags |= posix.MSG.EOR;
+            if (self.more and @hasDecl(posix.MSG, "MORE")) flags |= posix.MSG.MORE;
+            if (self.oob and @hasDecl(posix.MSG, "OOB")) flags |= posix.MSG.OOB;
+            if (self.fast_open and @hasDecl(posix.MSG, "FASTOPEN")) flags |= posix.MSG.FASTOPEN;
+            if (self.zero_copy and @hasDecl(posix.MSG, "ZEROCOPY")) flags |= posix.MSG.ZEROCOPY;
+            return flags;
+        }
+    };
+
     socket: std.posix.socket_t,
     buffer: []const u8,
+    flags: Flags = .{},
     out_written: ?*usize = null,
     out_id: ?*Id = null,
     out_error: ?*Error = null,
@@ -182,6 +226,7 @@ pub const RecvMsg = struct {
     } || SharedError;
     socket: std.posix.socket_t,
     out_msg: *posix.msghdr,
+    flags: Recv.Flags = .{},
     out_read: *usize,
     out_id: ?*Id = null,
     out_error: ?*Error = null,
@@ -193,6 +238,7 @@ pub const SendMsg = struct {
     pub const Error = std.posix.SendMsgError || SharedError;
     socket: std.posix.socket_t,
     msg: *const posix.msghdr_const,
+    flags: Send.Flags = .{},
     out_written: ?*usize = null,
     out_id: ?*Id = null,
     out_error: ?*Error = null,
