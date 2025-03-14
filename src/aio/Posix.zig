@@ -325,7 +325,7 @@ fn openReadiness(comptime op_type: Operation, op: Operation.map.getAssertContain
         },
         .read => .{ .fd = op.file.handle, .events = .{ .in = true } },
         .accept, .recv, .recv_msg => .{ .fd = op.socket, .events = .{ .in = true } },
-        .socket, .connect, .shutdown => .{},
+        .socket, .connect, .bind, .listen, .shutdown => .{},
         .send, .send_msg => .{ .fd = op.socket, .events = .{ .out = true } },
         .open_at, .close_file, .close_dir, .close_socket => .{},
         .timeout, .link_timeout => .{},

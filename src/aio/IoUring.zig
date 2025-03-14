@@ -84,7 +84,7 @@ ops: IdAllocator,
 cqes: [*]std.os.linux.io_uring_cqe,
 
 pub fn isSupported(op_types: []const Operation) bool {
-    var ops: [Operation.map.count()]std.os.linux.IORING_OP = undefined;
+    var ops: [Operation.map.count()]IORING_OP = undefined;
     for (op_types, ops[0..op_types.len]) |op_type, *op| {
         op.* = switch (op_type) {
             .nop => .NOP, // 5.1
@@ -249,6 +249,8 @@ pub fn complete(self: *@This(), mode: aio.CompletionMode, handler: anytype) aio.
             .fsync,
             .poll,
             .connect,
+            .bind,
+            .listen,
             .shutdown,
             .close_file,
             .close_dir,
@@ -327,7 +329,7 @@ pub fn immediate(pairs: anytype) aio.Error!u16 {
 const ProbeOpsBuffer = [@sizeOf(std.os.linux.io_uring_probe) + 256 * @sizeOf(std.os.linux.io_uring_probe_op)]u8;
 
 const ProbeOpsResult = struct {
-    last_op: std.os.linux.IORING_OP,
+    last_op: IORING_OP,
     ops: []align(1) std.os.linux.io_uring_probe_op,
 };
 
@@ -341,10 +343,10 @@ fn uring_probe_ops(mem: *ProbeOpsBuffer) !ProbeOpsResult {
     if (std.os.linux.E.init(res) != .SUCCESS) return error.Unexpected;
     const probe = std.mem.bytesAsValue(std.os.linux.io_uring_probe, pbuf[0..@sizeOf(std.os.linux.io_uring_probe)]);
     const ops = std.mem.bytesAsSlice(std.os.linux.io_uring_probe_op, pbuf[@sizeOf(std.os.linux.io_uring_probe)..]);
-    return .{ .last_op = probe.last_op, .ops = ops[0..probe.ops_len] };
+    return .{ .last_op = .fromStd(probe.last_op), .ops = ops[0..probe.ops_len] };
 }
 
-fn uring_is_supported(ops: []const std.os.linux.IORING_OP) bool {
+fn uring_is_supported(ops: []const IORING_OP) bool {
     var buf: ProbeOpsBuffer = undefined;
     const probe = uring_probe_ops(&buf) catch return false;
     for (ops) |op| {
@@ -453,6 +455,18 @@ fn uring_queue(io: *std.os.linux.IoUring, comptime op_type: Operation, op: Opera
         .write => try io.write(user_data, op.file.handle, op.buffer, op.offset),
         .accept => try io.accept(user_data, op.socket, op.out_addr, op.inout_addrlen, 0),
         .connect => try io.connect(user_data, op.socket, op.addr, op.addrlen),
+        .bind => blk: {
+            const sqe = try io.get_sqe();
+            sqe.prep_rw(IORING_OP.BIND.toStd(), op.socket, @intFromPtr(op.addr), 0, op.addrlen);
+            sqe.user_data = user_data;
+            break :blk sqe;
+        },
+        .listen => blk: {
+            const sqe = try io.get_sqe();
+            sqe.prep_rw(IORING_OP.LISTEN.toStd(), op.socket, 0, op.backlog, 0);
+            sqe.user_data = user_data;
+            break :blk sqe;
+        },
         .recv => try io.recv(user_data, op.socket, .{ .buffer = op.buffer }, 0),
         .send => try io.send(user_data, op.socket, op.buffer, 0),
         .recv_msg => try io.recvmsg(user_data, op.socket, op.out_msg, 0),
@@ -650,6 +664,36 @@ fn uring_handle_completion(comptime op_type: Operation, op: Operation.map.getAss
                 .TIMEDOUT => error.ConnectionTimedOut,
                 .NOENT => error.FileNotFound, // Returned when socket is AF.UNIX and the given path does not exist.
                 .CONNABORTED => unreachable, // Tried to reuse socket that previously received error.ConnectionRefused.
+                .OPNOTSUPP => error.OperationNotSupported,
+                else => std.posix.unexpectedErrno(err),
+            },
+            .bind => switch (err) {
+                .SUCCESS => unreachable,
+                .CANCELED => error.Canceled,
+                .ACCES, .PERM => return error.AccessDenied,
+                .ADDRINUSE => return error.AddressInUse,
+                .BADF => unreachable, // always a race condition if this error is returned
+                .INVAL => unreachable, // invalid parameters
+                .NOTSOCK => unreachable, // invalid `sockfd`
+                .AFNOSUPPORT => return error.AddressFamilyNotSupported,
+                .ADDRNOTAVAIL => return error.AddressNotAvailable,
+                .FAULT => unreachable, // invalid `addr` pointer
+                .LOOP => return error.SymLinkLoop,
+                .NAMETOOLONG => return error.NameTooLong,
+                .NOENT => return error.FileNotFound,
+                .NOMEM => return error.SystemResources,
+                .NOTDIR => return error.NotDir,
+                .ROFS => return error.ReadOnlyFileSystem,
+                .OPNOTSUPP => error.OperationNotSupported,
+                else => std.posix.unexpectedErrno(err),
+            },
+            .listen => switch (err) {
+                .SUCCESS => unreachable,
+                .INVAL => unreachable,
+                .CANCELED => error.Canceled,
+                .ADDRINUSE => return error.AddressInUse,
+                .BADF => unreachable,
+                .NOTSOCK => return error.FileDescriptorNotASocket,
                 .OPNOTSUPP => error.OperationNotSupported,
                 else => std.posix.unexpectedErrno(err),
             },
@@ -932,7 +976,7 @@ fn uring_handle_completion(comptime op_type: Operation, op: Operation.map.getAss
         .fsync => {},
         .poll => {},
         .accept => op.out_socket.* = cqe.res,
-        .connect => {},
+        .connect, .bind, .listen => {},
         .read_tty, .read, .recv, .recv_msg => op.out_read.* = @intCast(cqe.res),
         .write, .send, .send_msg, .splice => if (op.out_written) |w| {
             w.* = @intCast(cqe.res);
@@ -965,3 +1009,74 @@ fn debug(comptime fmt: []const u8, args: anytype) void {
         log.debug(fmt, args);
     }
 }
+
+// std is not in sync
+const IORING_OP = enum(u8) {
+    NOP, // 5.1
+    READV, // 5.1
+    WRITEV, // 5.1
+    FSYNC, // 5.1
+    READ_FIXED, // 5.1
+    WRITE_FIXED, // 5.1
+    POLL_ADD, // 5.1
+    POLL_REMOVE, // 5.1
+    SYNC_FILE_RANGE, // 5.2
+    SENDMSG, // 5.3
+    RECVMSG, // 5.3
+    TIMEOUT, // 5.4
+    TIMEOUT_REMOVE, // 5.4
+    ACCEPT, // 5.5
+    ASYNC_CANCEL, // 5.5
+    LINK_TIMEOUT, // 5.5
+    CONNECT, // 5.5
+    FALLOCATE, // 5.6
+    OPENAT, // 5.15
+    CLOSE, // 5.15
+    FILES_UPDATE, // 5.6
+    STATX, // 5.6
+    READ, // 5.6
+    WRITE, // 5.6
+    FADVISE, // 5.6
+    MADVISE, // 5.6
+    SEND, // 5.6
+    RECV, // 5.6
+    OPENAT2, // 5.15
+    EPOLL_CTL, // 5.6
+    SPLICE, // 5.7
+    PROVIDE_BUFFERS, // 5.7
+    REMOVE_BUFFERS, // 5.7
+    TEE, // 5.8
+    SHUTDOWN, // 5.11
+    RENAMEAT, // 5.11
+    UNLINKAT, // 5.11
+    MKDIRAT, // 5.15
+    SYMLINKAT, // 5.15
+    LINKAT, // 5.15
+    MSG_RING, // 5.18
+    FSETXATTR, // 5.19
+    SETXATTR, // 5.19
+    FGETXATTR, // 5.19
+    GETXATTR, // 5.19
+    SOCKET, // 5.19
+    URING_CMD, // 5.19
+    SEND_ZC, // 6.0
+    SENDMSG_ZC, // 6.1
+    READ_MULTISHOT, // 6.7
+    WAITID, // 6.5
+    FUTEX_WAIT, // 6.7
+    FUTEX_WAKE, // 6.7
+    FUTEX_WAITV, // 6.7
+    FIXED_FD_INSTALL, // 6.8
+    FTRUNCATE, // 6.9
+    BIND, // 6.11
+    LISTEN, // 6.11
+    _,
+
+    pub fn fromStd(op: std.os.linux.IORING_OP) @This() {
+        return @enumFromInt(@intFromEnum(op));
+    }
+
+    pub fn toStd(self: @This()) std.os.linux.IORING_OP {
+        return @enumFromInt(@intFromEnum(self));
+    }
+};
