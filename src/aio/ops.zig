@@ -17,6 +17,7 @@ const SharedError = error{
     Success,
     Canceled,
     Unexpected,
+    OperationNotSupported,
 };
 
 // TODO: Support rest of the ops from <https://unixism.net/loti/ref-iouring/io_uring_enter.html>
@@ -537,6 +538,13 @@ pub const Operation = enum {
         .close_event_source = CloseEventSource,
         .splice = Splice,
     });
+
+    pub const required: []const @This() = &.{
+        .nop,        .fsync,     .poll,         .read_tty,            .read,              .write,              .accept,   .connect,
+        .bind,       .listen,    .recv,         .send,                .recv_msg,          .send_msg,           .shutdown, .open_at,
+        .close_file, .close_dir, .timeout,      .link_timeout,        .cancel,            .rename_at,          .mkdir_at, .symlink_at,
+        .child_exit, .socket,    .close_socket, .notify_event_source, .wait_event_source, .close_event_source,
+    };
 
     pub const Error = blk: {
         var set = error{};

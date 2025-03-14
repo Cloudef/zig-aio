@@ -23,7 +23,7 @@ pub const Options = struct {
     /// If the operations are not supported by a main backend then a posix backend will be used instead.
     /// This is unused if posix backend is disabled, in that case you should check for a support manually.
     /// On windows this is never used, check for a support manually.
-    required_ops: []const Operation = std.enums.values(Operation),
+    required_ops: []const Operation = Operation.required,
     /// Choose a posix fallback mode.
     /// Posix backend is never used on windows
     posix: enum { auto, force, disable } = @enumFromInt(@intFromEnum(build_options.posix)),
