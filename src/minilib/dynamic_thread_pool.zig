@@ -47,10 +47,10 @@ const DefaultImpl = struct {
         };
     }
 
-    pub const InitError = error{OutOfMemory} || std.time.Timer.Error;
+    pub const InitError = error{ OutOfMemory, Unsupported };
 
     pub fn init(allocator: std.mem.Allocator, options: Options) InitError!@This() {
-        _ = try std.time.Timer.start(); // check that we have a timer
+        _ = std.time.Timer.start() catch return error.Unsupported; // check that we have a timer
 
         const thread_count = @max(1, options.max_threads orelse getCpuCount());
 
