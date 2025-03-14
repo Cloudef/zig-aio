@@ -563,6 +563,7 @@ fn uring_handle_completion(comptime op_type: Operation, op: Operation.map.getAss
         const res: @TypeOf(op).Error = switch (op_type) {
             .nop => switch (err) {
                 .CANCELED => error.Canceled,
+                .OPNOTSUPP => error.OperationNotSupported,
                 else => std.posix.unexpectedErrno(err),
             },
             .fsync => switch (err) {
@@ -573,6 +574,7 @@ fn uring_handle_completion(comptime op_type: Operation, op: Operation.map.getAss
                 .NOSPC => error.NoSpaceLeft,
                 .DQUOT => error.DiskQuota,
                 .PERM => error.AccessDenied,
+                .OPNOTSUPP => error.OperationNotSupported,
                 else => std.posix.unexpectedErrno(err),
             },
             .poll => switch (err) {
@@ -592,6 +594,7 @@ fn uring_handle_completion(comptime op_type: Operation, op: Operation.map.getAss
                 .NOTCONN => error.SocketNotConnected,
                 .CONNRESET => error.ConnectionResetByPeer,
                 .TIMEDOUT => error.ConnectionTimedOut,
+                .OPNOTSUPP => error.OperationNotSupported,
                 else => std.posix.unexpectedErrno(err),
             },
             .write => switch (err) {
@@ -607,6 +610,7 @@ fn uring_handle_completion(comptime op_type: Operation, op: Operation.map.getAss
                 .NOBUFS => error.SystemResources,
                 .NOMEM => error.SystemResources,
                 .CONNRESET => error.ConnectionResetByPeer,
+                .OPNOTSUPP => error.OperationNotSupported,
                 else => std.posix.unexpectedErrno(err),
             },
             .accept => switch (err) {
@@ -620,9 +624,9 @@ fn uring_handle_completion(comptime op_type: Operation, op: Operation.map.getAss
                 .NFILE => error.SystemFdQuotaExceeded,
                 .NOBUFS => error.SystemResources,
                 .NOMEM => error.SystemResources,
-                .OPNOTSUPP => unreachable,
                 .PROTO => error.ProtocolFailure,
                 .PERM => error.BlockedByFirewall,
+                .OPNOTSUPP => error.OperationNotSupported,
                 else => std.posix.unexpectedErrno(err),
             },
             .connect => switch (err) {
@@ -646,6 +650,7 @@ fn uring_handle_completion(comptime op_type: Operation, op: Operation.map.getAss
                 .TIMEDOUT => error.ConnectionTimedOut,
                 .NOENT => error.FileNotFound, // Returned when socket is AF.UNIX and the given path does not exist.
                 .CONNABORTED => unreachable, // Tried to reuse socket that previously received error.ConnectionRefused.
+                .OPNOTSUPP => error.OperationNotSupported,
                 else => std.posix.unexpectedErrno(err),
             },
             .recv => switch (err) {
@@ -658,6 +663,7 @@ fn uring_handle_completion(comptime op_type: Operation, op: Operation.map.getAss
                 .CONNREFUSED => error.ConnectionRefused,
                 .CONNRESET => error.ConnectionResetByPeer,
                 .TIMEDOUT => error.ConnectionTimedOut,
+                .OPNOTSUPP => error.OperationNotSupported,
                 else => std.posix.unexpectedErrno(err),
             },
             .send => switch (err) {
@@ -674,11 +680,11 @@ fn uring_handle_completion(comptime op_type: Operation, op: Operation.map.getAss
                 .NOBUFS => error.SystemResources,
                 .NOMEM => error.SystemResources,
                 .NOTSOCK => unreachable, // The file descriptor sockfd does not refer to a socket.
-                .OPNOTSUPP => unreachable, // Some bit in the flags argument is inappropriate for the socket type.
                 .PIPE => error.BrokenPipe,
                 .HOSTUNREACH => error.NetworkUnreachable,
                 .NETUNREACH => error.NetworkUnreachable,
                 .NETDOWN => error.NetworkSubsystemFailed,
+                .OPNOTSUPP => error.OperationNotSupported,
                 else => std.posix.unexpectedErrno(err),
             },
             .recv_msg => switch (err) {
@@ -691,6 +697,7 @@ fn uring_handle_completion(comptime op_type: Operation, op: Operation.map.getAss
                 .CONNREFUSED => error.ConnectionRefused,
                 .CONNRESET => error.ConnectionResetByPeer,
                 .TIMEDOUT => error.ConnectionTimedOut,
+                .OPNOTSUPP => error.OperationNotSupported,
                 else => std.posix.unexpectedErrno(err),
             },
             .send_msg => switch (err) {
@@ -707,11 +714,11 @@ fn uring_handle_completion(comptime op_type: Operation, op: Operation.map.getAss
                 .NOBUFS => error.SystemResources,
                 .NOMEM => error.SystemResources,
                 .NOTSOCK => unreachable, // The file descriptor sockfd does not refer to a socket.
-                .OPNOTSUPP => unreachable, // Some bit in the flags argument is inappropriate for the socket type.
                 .PIPE => error.BrokenPipe,
                 .HOSTUNREACH => error.NetworkUnreachable,
                 .NETUNREACH => error.NetworkUnreachable,
                 .NETDOWN => error.NetworkSubsystemFailed,
+                .OPNOTSUPP => error.OperationNotSupported,
                 else => std.posix.unexpectedErrno(err),
             },
             .shutdown => switch (err) {
@@ -719,6 +726,7 @@ fn uring_handle_completion(comptime op_type: Operation, op: Operation.map.getAss
                 .NOTCONN => error.SocketNotConnected,
                 .NOTSOCK => unreachable,
                 .NOBUFS => error.SystemResources,
+                .OPNOTSUPP => error.OperationNotSupported,
                 else => std.posix.unexpectedErrno(err),
             },
             .open_at => switch (err) {
@@ -741,14 +749,17 @@ fn uring_handle_completion(comptime op_type: Operation, op: Operation.map.getAss
                 .EXIST => error.PathAlreadyExists,
                 .BUSY => error.DeviceBusy,
                 .ILSEQ => error.InvalidUtf8,
+                .OPNOTSUPP => error.OperationNotSupported,
                 else => std.posix.unexpectedErrno(err),
             },
             .close_file, .close_dir, .close_socket => switch (err) {
                 .CANCELED => error.Canceled,
+                .OPNOTSUPP => error.OperationNotSupported,
                 else => std.posix.unexpectedErrno(err) catch unreachable,
             },
             .notify_event_source => switch (err) {
                 .CANCELED => error.Canceled,
+                .OPNOTSUPP => error.OperationNotSupported,
                 else => @panic("EventSource.notify failed"),
             },
             .wait_event_source => switch (err) {
@@ -757,22 +768,26 @@ fn uring_handle_completion(comptime op_type: Operation, op: Operation.map.getAss
                 //      This does not happen if EFD is not set to O_NONBLOCK
                 // <https://github.com/axboe/liburing/issues/364>
                 .AGAIN => error.Success, // ignore and hope that things are okay
+                .OPNOTSUPP => error.OperationNotSupported,
                 else => @panic("EventSource.wait failed"),
             },
             .close_event_source => switch (err) {
                 .CANCELED => error.Canceled,
+                .OPNOTSUPP => error.OperationNotSupported,
                 else => unreachable,
             },
             .timeout => switch (err) {
                 .SUCCESS, .INTR, .INVAL, .AGAIN => unreachable,
                 .TIME => error.Success,
                 .CANCELED => error.Canceled,
+                .OPNOTSUPP => error.OperationNotSupported,
                 else => std.posix.unexpectedErrno(err),
             },
             .link_timeout => switch (err) {
                 .SUCCESS, .INTR, .INVAL, .AGAIN => unreachable,
                 .TIME => error.Expired,
                 .ALREADY, .CANCELED, .NOENT => error.Canceled,
+                .OPNOTSUPP => error.OperationNotSupported,
                 else => std.posix.unexpectedErrno(err),
             },
             .cancel => switch (err) {
@@ -780,6 +795,7 @@ fn uring_handle_completion(comptime op_type: Operation, op: Operation.map.getAss
                 .ALREADY => error.InProgress,
                 .NOENT => error.NotFound,
                 .CANCELED => error.Canceled,
+                .OPNOTSUPP => error.OperationNotSupported,
                 else => std.posix.unexpectedErrno(err),
             },
             .rename_at => switch (err) {
@@ -802,6 +818,7 @@ fn uring_handle_completion(comptime op_type: Operation, op: Operation.map.getAss
                 .NOTEMPTY => error.PathAlreadyExists,
                 .ROFS => error.ReadOnlyFileSystem,
                 .XDEV => error.RenameAcrossMountPoints,
+                .OPNOTSUPP => error.OperationNotSupported,
                 else => std.posix.unexpectedErrno(err),
             },
             .unlink_at => switch (err) {
@@ -823,6 +840,7 @@ fn uring_handle_completion(comptime op_type: Operation, op: Operation.map.getAss
                 .NOTEMPTY => error.DirNotEmpty,
                 .INVAL => unreachable, // invalid flags, or pathname has . as last component
                 .BADF => unreachable, // always a race condition
+                .OPNOTSUPP => error.OperationNotSupported,
                 else => std.posix.unexpectedErrno(err),
             },
             .mkdir_at => switch (err) {
@@ -844,6 +862,7 @@ fn uring_handle_completion(comptime op_type: Operation, op: Operation.map.getAss
                 .ROFS => error.ReadOnlyFileSystem,
                 // dragonfly: when dir_fd is unlinked from filesystem
                 .NOTCONN => error.FileNotFound,
+                .OPNOTSUPP => error.OperationNotSupported,
                 else => std.posix.unexpectedErrno(err),
             },
             .symlink_at => switch (err) {
@@ -861,6 +880,7 @@ fn uring_handle_completion(comptime op_type: Operation, op: Operation.map.getAss
                 .NOMEM => error.SystemResources,
                 .NOSPC => error.NoSpaceLeft,
                 .ROFS => error.ReadOnlyFileSystem,
+                .OPNOTSUPP => error.OperationNotSupported,
                 else => std.posix.unexpectedErrno(err),
             },
             .child_exit => switch (err) {
@@ -881,12 +901,14 @@ fn uring_handle_completion(comptime op_type: Operation, op: Operation.map.getAss
                 .NOMEM => error.SystemResources,
                 .PROTONOSUPPORT => error.ProtocolNotSupported,
                 .PROTOTYPE => error.SocketTypeNotSupported,
+                .OPNOTSUPP => error.OperationNotSupported,
                 else => std.posix.unexpectedErrno(err),
             },
             .splice => switch (err) {
                 .SUCCESS, .INTR, .AGAIN, .INVAL, .BADF, .SPIPE => unreachable,
                 .CANCELED => error.Canceled,
                 .NOMEM => error.SystemResources,
+                .OPNOTSUPP => error.OperationNotSupported,
                 else => std.posix.unexpectedErrno(err),
             },
         };

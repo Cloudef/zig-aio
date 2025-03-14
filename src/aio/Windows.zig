@@ -256,7 +256,6 @@ fn getHandleAccessInfo(handle: HANDLE) !fs.FILE_ACCESS_FLAGS {
 
 pub fn uringlator_queue(_: *@This(), _: aio.Id, comptime op_type: Operation, op: Operation.map.getAssertContains(op_type)) aio.Error!WindowsOperation {
     switch (op_type) {
-        .poll => return aio.Error.Unsupported,
         .accept => op.out_socket.* = INVALID_SOCKET,
         else => {},
     }
@@ -275,7 +274,7 @@ pub fn uringlator_dequeue(_: *@This(), _: aio.Id, comptime op_type: Operation, _
 
 pub fn uringlator_start(self: *@This(), id: aio.Id, op_type: Operation) !void {
     switch (op_type) {
-        .poll => unreachable,
+        .poll => self.uringlator.finish(self, id, error.OperationNotSupported, .thread_unsafe),
         .read => {
             const state = self.uringlator.ops.getOnePtr(.state, id);
             const ovl = self.uringlator.ops.getOnePtr(.ovl, id);
