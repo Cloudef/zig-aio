@@ -150,6 +150,27 @@ pub const Connect = struct {
     userdata: usize = 0,
 };
 
+/// std.posix.bind
+pub const Bind = struct {
+    pub const Error = std.posix.BindError || SharedError;
+    socket: std.posix.socket_t,
+    addr: *const posix.sockaddr,
+    addrlen: posix.socklen_t,
+    out_id: ?*Id = null,
+    out_error: ?*Error = null,
+    userdata: usize = 0,
+};
+
+/// std.posix.listen
+pub const Listen = struct {
+    pub const Error = std.posix.ListenError || SharedError;
+    socket: std.posix.socket_t,
+    backlog: u31,
+    out_id: ?*Id = null,
+    out_error: ?*Error = null,
+    userdata: usize = 0,
+};
+
 /// std.posix.recv
 pub const Recv = struct {
     pub const Error = std.posix.RecvFromError || SharedError;
@@ -483,6 +504,8 @@ pub const Operation = enum {
     write,
     accept,
     connect,
+    bind,
+    listen,
     recv,
     send,
     recv_msg,
@@ -515,6 +538,8 @@ pub const Operation = enum {
         .write = Write,
         .accept = Accept,
         .connect = Connect,
+        .bind = Bind,
+        .listen = Listen,
         .recv = Recv,
         .send = Send,
         .recv_msg = RecvMsg,
@@ -563,6 +588,8 @@ pub const Operation = enum {
                 .nop,
                 .poll,
                 .connect,
+                .bind,
+                .listen,
                 .shutdown,
                 .fsync,
                 .cancel,
@@ -593,6 +620,8 @@ pub const Operation = enum {
                 .nop,
                 .poll,
                 .connect,
+                .bind,
+                .listen,
                 .shutdown,
                 .fsync,
                 .cancel,

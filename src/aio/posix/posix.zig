@@ -243,6 +243,8 @@ pub fn perform(comptime op_type: Operation, op: Operation.map.getAssertContains(
         },
         .accept => op.out_socket.* = try accept(op.socket, op.out_addr, op.inout_addrlen, 0),
         .connect => _ = try connect(op.socket, op.addr, op.addrlen),
+        .bind => _ = try bind(op.socket, op.addr, op.addrlen),
+        .listen => _ = try listen(op.socket, op.backlog),
         .recv => op.out_read.* = try recv(op.socket, op.buffer, MSG.DONTWAIT | op.flags.toInt()),
         .send => {
             const written = try send(op.socket, op.buffer, MSG.DONTWAIT | MSG.NOSIGNAL | op.flags.toInt());
@@ -459,6 +461,16 @@ pub const accept = switch (builtin.target.os.tag) {
 pub const connect = switch (builtin.target.os.tag) {
     .wasi => wasi.connect,
     else => std.posix.connect,
+};
+
+pub const bind = switch (builtin.target.os.tag) {
+    .wasi => wasi.bind,
+    else => std.posix.bind,
+};
+
+pub const listen = switch (builtin.target.os.tag) {
+    .wasi => wasi.listen,
+    else => std.posix.listen,
 };
 
 pub const recv = switch (builtin.target.os.tag) {
