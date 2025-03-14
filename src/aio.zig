@@ -625,13 +625,13 @@ test "Socket/TCP" {
     try std.posix.listen(server, 1);
 
     var client_comm: std.posix.socket_t = undefined;
-    var client_addr_posix: std.posix.sockaddr align(4) = undefined;
-    var client_addr_len: posix.socklen_t = @sizeOf(std.posix.sockaddr);
+    var client_addr: std.net.Address = undefined;
+    var client_addr_len: posix.socklen_t = address.getOsSockLen();
     try multi(.{
         op(.accept, .{
             .socket = server,
             .out_socket = &client_comm,
-            .out_addr = &client_addr_posix,
+            .out_addr = &client_addr.any,
             .inout_addrlen = &client_addr_len,
         }, .unlinked),
         op(.connect, .{
@@ -641,7 +641,7 @@ test "Socket/TCP" {
         }, .unlinked),
     });
 
-    const client_addr = std.net.Address.initPosix(&client_addr_posix);
+    try std.testing.expectEqual(client_addr.getOsSockLen(), client_addr_len);
     try std.testing.expectEqual(address.in.sa.addr, client_addr.in.sa.addr);
 
     var buf1: [32]u8 = undefined;
@@ -736,14 +736,14 @@ test "Socket/UDP" {
     };
 
     var buf1: [32]u8 = undefined;
-    var recv_addr1: std.posix.sockaddr align(4) = undefined;
+    var recv_addr1: std.net.Address = undefined;
     var recv_iovec1: [1]posix.iovec = .{.{
         .base = &buf1,
         .len = buf1.len,
     }};
     var recv_msg1: posix.msghdr = .{
-        .name = @ptrCast(&recv_addr1),
-        .namelen = @sizeOf(@TypeOf(recv_addr1)),
+        .name = &recv_addr1.any,
+        .namelen = caddress.getOsSockLen(),
         .iov = &recv_iovec1,
         .iovlen = 1,
         .control = null,
@@ -752,14 +752,14 @@ test "Socket/UDP" {
     };
 
     var buf2: [32]u8 = undefined;
-    var recv_addr2: std.posix.sockaddr align(4) = undefined;
+    var recv_addr2: std.net.Address = undefined;
     var recv_iovec2: [1]posix.iovec = .{.{
         .base = &buf2,
         .len = buf2.len,
     }};
     var recv_msg2: posix.msghdr = .{
-        .name = @ptrCast(&recv_addr2),
-        .namelen = @sizeOf(@TypeOf(recv_addr2)),
+        .name = &recv_addr2.any,
+        .namelen = saddress.getOsSockLen(),
         .iov = &recv_iovec2,
         .iovlen = 1,
         .control = null,
@@ -778,10 +778,8 @@ test "Socket/UDP" {
         op(.recv_msg, .{ .socket = server, .out_msg = &recv_msg2, .out_read = &rlen2 }, .unlinked),
     });
 
-    const addr1 = std.net.Address.initPosix(&recv_addr1);
-    std.debug.assert(addr1.eql(saddress));
-    const addr2 = std.net.Address.initPosix(&recv_addr2);
-    std.debug.assert(addr2.eql(caddress));
+    try std.testing.expect(recv_addr1.eql(saddress));
+    try std.testing.expect(recv_addr2.eql(caddress));
 
     try std.testing.expectEqual(wlen1, 4);
     try std.testing.expectEqual(rlen1, 4);
