@@ -621,8 +621,22 @@ test "Socket/TCP" {
     });
 
     const address = std.net.Address.initIp4(.{ 127, 0, 0, 1 }, 3131);
-    try std.posix.bind(server, &address.any, address.getOsSockLen());
-    try std.posix.listen(server, 1);
+    if (isSupported(&.{ .bind, .listen })) {
+        try multi(.{
+            op(.bind, .{
+                .socket = server,
+                .addr = &address.any,
+                .addrlen = address.getOsSockLen(),
+            }, .soft),
+            op(.listen, .{
+                .socket = server,
+                .backlog = 1,
+            }, .unlinked),
+        });
+    } else {
+        try std.posix.bind(server, &address.any, address.getOsSockLen());
+        try std.posix.listen(server, 1);
+    }
 
     var client_comm: std.posix.socket_t = undefined;
     var client_addr: std.net.Address = undefined;
@@ -702,8 +716,23 @@ test "Socket/UDP" {
 
     const saddress = std.net.Address.initIp4(.{ 127, 0, 0, 1 }, 3131);
     const caddress = std.net.Address.initIp4(.{ 127, 0, 0, 1 }, 3232);
-    try std.posix.bind(server, &saddress.any, saddress.getOsSockLen());
-    try std.posix.bind(client, &caddress.any, caddress.getOsSockLen());
+    if (isSupported(&.{.bind})) {
+        try multi(.{
+            op(.bind, .{
+                .socket = server,
+                .addr = &saddress.any,
+                .addrlen = saddress.getOsSockLen(),
+            }, .unlinked),
+            op(.bind, .{
+                .socket = client,
+                .addr = &caddress.any,
+                .addrlen = caddress.getOsSockLen(),
+            }, .unlinked),
+        });
+    } else {
+        try std.posix.bind(server, &saddress.any, saddress.getOsSockLen());
+        try std.posix.bind(client, &caddress.any, caddress.getOsSockLen());
+    }
 
     var ping_msg: posix.msghdr_const = .{
         .name = @ptrCast(&caddress.any),

@@ -44,6 +44,15 @@ const UringlatorOperation = struct {
             addr: *const posix.sockaddr,
             addrlen: posix.socklen_t,
         },
+        bind: struct {
+            socket: std.posix.socket_t,
+            addr: *const posix.sockaddr,
+            addrlen: posix.socklen_t,
+        },
+        listen: struct {
+            socket: std.posix.socket_t,
+            backlog: u31,
+        },
         recv: struct {
             socket: std.posix.socket_t,
             buffer: []u8,

@@ -105,6 +105,14 @@ pub fn connect(_: std.posix.socket_t, _: *const sockaddr, _: socklen_t) std.posi
     @panic("fixme");
 }
 
+pub fn bind(_: std.posix.socket_t, _: *const sockaddr, _: socklen_t) std.posix.BindError!void {
+    @panic("fixme");
+}
+
+pub fn listen(_: std.posix.socket_t, _: u32) std.posix.ListenError!void {
+    @panic("fixme");
+}
+
 pub fn recv(_: std.posix.socket_t, _: []u8, _: u32) std.posix.RecvFromError!usize {
     @panic("fixme");
 }
