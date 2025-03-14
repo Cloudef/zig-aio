@@ -361,8 +361,33 @@ fn uring_is_supported(ops: []const std.os.linux.IORING_OP) bool {
     return true;
 }
 
+const Features = packed struct(u32) {
+    single_mmap: bool,
+    nodrop: bool,
+    submit_stable: bool,
+    rw_cur_pos: bool,
+    cur_personality: bool,
+    fast_poll: bool,
+    poll_32bits: bool,
+    sqpoll_nonfixed: bool,
+    ext_arg: bool,
+    native_workers: bool,
+    rsrc_tags: bool,
+    cqe_skip: bool,
+    linked_file: bool,
+    reg_reg_ring: bool,
+    recvsend_bundle: bool,
+    min_timeout: bool,
+    rw_attr: bool,
+    _: u15 = 0,
+};
+
 fn uring_init_inner(n: u16, flags: u32) !std.os.linux.IoUring {
-    return std.os.linux.IoUring.init(n, flags) catch |err| switch (err) {
+    var params = std.mem.zeroInit(std.os.linux.io_uring_params, .{
+        .flags = flags,
+        .sq_thread_idle = 1000,
+    });
+    const ret = std.os.linux.IoUring.init_params(n, &params) catch |err| switch (err) {
         error.PermissionDenied,
         error.SystemResources,
         error.SystemOutdated,
@@ -372,6 +397,26 @@ fn uring_init_inner(n: u16, flags: u32) !std.os.linux.IoUring {
         error.ArgumentsInvalid => error.ArgumentsInvalid,
         else => error.Unexpected,
     };
+
+    const wanted_features: []const std.meta.FieldEnum(Features) = &.{
+        .nodrop,
+        .submit_stable,
+        .rw_cur_pos,
+        .fast_poll,
+        .sqpoll_nonfixed,
+        .cqe_skip,
+        .linked_file,
+    };
+
+    const feat: Features = @bitCast(params.features);
+    inline for (wanted_features) |tag| {
+        if (!@field(feat, @tagName(tag))) {
+            log.warn("missing feature: {s}", .{@tagName(tag)});
+            return error.SystemOutdated;
+        }
+    }
+
+    return ret;
 }
 
 fn uring_init(n: u16) aio.Error!std.os.linux.IoUring {
