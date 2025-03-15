@@ -368,8 +368,7 @@ test "Write" {
         defer f.close();
         try single(.write, .{ .file = f, .buffer = "foobar", .offset = 0, .out_written = &len });
         try std.testing.expectEqual("foobar".len, len);
-        try f.seekTo(0); // required for windows
-        const read = try f.readAll(&buf);
+        const read = try f.preadAll(&buf, 0);
         try std.testing.expectEqualSlices(u8, "foobar", buf[0..read]);
     }
     {
@@ -378,6 +377,75 @@ test "Write" {
         try std.testing.expectError(
             error.NotOpenForWriting,
             single(.write, .{ .file = f, .buffer = "foobar", .offset = 0, .out_written = &len }),
+        );
+    }
+}
+
+test "Writev" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [64]u8 = undefined;
+    var len: usize = undefined;
+    {
+        var f = try tmp.dir.createFile("test", .{ .read = true });
+        defer f.close();
+        try single(.writev, .{ .file = f, .iov = &.{
+            .{ .base = "foo", .len = "foo".len },
+            .{ .base = "bar", .len = "bar".len },
+        }, .offset = 0, .out_written = &len });
+        if (len < "foobar".len) {
+            try std.testing.expectEqual("foo".len, len);
+            const read = try f.preadAll(&buf, 0);
+            try std.testing.expectEqualSlices(u8, "foo", buf[0..read]);
+        } else {
+            try std.testing.expectEqual("foobar".len, len);
+            const read = try f.preadAll(&buf, 0);
+            try std.testing.expectEqualSlices(u8, "foobar", buf[0..read]);
+        }
+    }
+    {
+        var f = try tmp.dir.openFile("test", .{});
+        defer f.close();
+        try std.testing.expectError(
+            error.NotOpenForWriting,
+            single(.writev, .{ .file = f, .iov = &.{
+                .{ .base = "foo", .len = "foo".len },
+                .{ .base = "bar", .len = "bar".len },
+            }, .offset = 0, .out_written = &len }),
+        );
+    }
+}
+
+test "Readv" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [64]u8 = undefined;
+    var len: usize = undefined;
+    {
+        var f = try tmp.dir.createFile("test", .{ .read = true });
+        defer f.close();
+        try f.writeAll("foobar");
+        try single(.readv, .{ .file = f, .iov = &.{
+            .{ .base = buf[0..].ptr, .len = "foo".len },
+            .{ .base = buf["foo".len..].ptr, .len = "bar".len },
+        }, .offset = 0, .out_read = &len });
+        if (len < "foobar".len) {
+            try std.testing.expectEqual("foo".len, len);
+            try std.testing.expectEqualSlices(u8, "foo", buf[0..len]);
+        } else {
+            try std.testing.expectEqual("foobar".len, len);
+            try std.testing.expectEqualSlices(u8, "foobar", buf[0..len]);
+        }
+    }
+    {
+        var f = try tmp.dir.createFile("test", .{});
+        defer f.close();
+        try std.testing.expectError(
+            error.NotOpenForReading,
+            single(.readv, .{ .file = f, .iov = &.{
+                .{ .base = buf[0..].ptr, .len = "foo".len },
+                .{ .base = buf["foo".len..].ptr, .len = "bar".len },
+            }, .offset = 0, .out_read = &len }),
         );
     }
 }

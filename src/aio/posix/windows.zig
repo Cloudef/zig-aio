@@ -278,6 +278,27 @@ pub const iovec = extern struct {
     base: [*]u8,
 };
 
+pub const iovec_const = extern struct {
+    len: u32,
+    base: [*]const u8,
+};
+
+pub fn readv(fd: std.posix.fd_t, iov: []const iovec) std.posix.ReadError!usize {
+    return std.posix.readv(fd, @ptrCast(iov));
+}
+
+pub fn preadv(fd: std.posix.fd_t, iov: []const iovec, off: usize) std.posix.PReadError!usize {
+    return std.posix.preadv(fd, @ptrCast(iov), off);
+}
+
+pub fn writev(fd: std.posix.fd_t, iov: []const iovec_const) std.posix.WriteError!usize {
+    return std.posix.writev(fd, @ptrCast(iov));
+}
+
+pub fn pwritev(fd: std.posix.fd_t, iov: []const iovec_const, off: usize) std.posix.PWriteError!usize {
+    return std.posix.pwritev(fd, @ptrCast(iov), off);
+}
+
 pub const msghdr = extern struct {
     name: ?*std.posix.sockaddr,
     namelen: std.posix.socklen_t,
@@ -287,11 +308,6 @@ pub const msghdr = extern struct {
     control: ?*anyopaque,
     _: std.meta.Int(.unsigned, @bitSizeOf(usize) + 32 - 32) = 0, // padding
     flags: i32,
-};
-
-pub const iovec_const = extern struct {
-    len: u32,
-    base: [*]const u8,
 };
 
 pub const msghdr_const = extern struct {
