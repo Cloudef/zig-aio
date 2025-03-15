@@ -343,7 +343,7 @@ fn uring_probe_ops(mem: *ProbeOpsBuffer) !ProbeOpsResult {
     if (std.os.linux.E.init(res) != .SUCCESS) return error.Unexpected;
     const probe = std.mem.bytesAsValue(std.os.linux.io_uring_probe, pbuf[0..@sizeOf(std.os.linux.io_uring_probe)]);
     const ops = std.mem.bytesAsSlice(std.os.linux.io_uring_probe_op, pbuf[@sizeOf(std.os.linux.io_uring_probe)..]);
-    return .{ .last_op = .fromStd(probe.last_op), .ops = ops[0..probe.ops_len] };
+    return .{ .last_op = IORING_OP.fromStd(probe.last_op), .ops = ops[0..probe.ops_len] };
 }
 
 fn uring_is_supported(ops: []const IORING_OP) bool {
