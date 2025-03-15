@@ -190,6 +190,42 @@ pub fn writeUring(fd: std.posix.fd_t, buf: []const u8, off: usize) ops.Write.Err
     };
 }
 
+pub fn readvUring(fd: std.posix.fd_t, iov: []const iovec, off: usize) ops.Readv.Error!usize {
+    const res = blk: {
+        if (off == ops.OFFSET_CURRENT_POS) {
+            break :blk readv(fd, iov);
+        } else {
+            break :blk preadv(fd, iov, off) catch |err| switch (err) {
+                // matches io_uring behaviour
+                error.Unseekable => |e| if (off == 0) readv(fd, iov) else e,
+                else => |e| return e,
+            };
+        }
+    };
+    return res catch |err| switch (err) {
+        error.Unexpected => |e| if (builtin.target.os.tag == .windows) error.NotOpenForReading else e,
+        else => |e| e,
+    };
+}
+
+pub fn writevUring(fd: std.posix.fd_t, iov: []const iovec_const, off: usize) ops.Writev.Error!usize {
+    const res = blk: {
+        if (off == ops.OFFSET_CURRENT_POS) {
+            break :blk writev(fd, iov);
+        } else {
+            break :blk pwritev(fd, iov, off) catch |err| switch (err) {
+                // matches io_uring behaviour
+                error.Unseekable => |e| if (off == 0) writev(fd, iov) else e,
+                else => |e| e,
+            };
+        }
+    };
+    return res catch |err| switch (err) {
+        error.Unexpected => |e| if (builtin.target.os.tag == .windows) error.NotOpenForWriting else e,
+        else => |e| e,
+    };
+}
+
 pub fn openAtUring(dir: std.fs.Dir, path: [*:0]const u8, flags: std.fs.File.OpenFlags) ops.OpenAt.Error!std.fs.File {
     if (builtin.target.os.tag == .windows or builtin.target.os.tag == .wasi) {
         return dir.openFileZ(path, flags);
@@ -239,6 +275,11 @@ pub fn perform(comptime op_type: Operation, op: Operation.map.getAssertContains(
         .read => op.out_read.* = try readUring(op.file.handle, op.buffer, @intCast(op.offset)),
         .write => {
             const written = try writeUring(op.file.handle, op.buffer, @intCast(op.offset));
+            if (op.out_written) |w| w.* = written;
+        },
+        .readv => op.out_read.* = try readvUring(op.file.handle, op.iov, @intCast(op.offset)),
+        .writev => {
+            const written = try writevUring(op.file.handle, op.iov, @intCast(op.offset));
             if (op.out_written) |w| w.* = written;
         },
         .accept => op.out_socket.* = try accept(op.socket, op.out_addr, op.inout_addrlen, 0),
@@ -324,16 +365,36 @@ pub const iovec = switch (builtin.target.os.tag) {
     else => std.posix.iovec,
 };
 
+pub const iovec_const = switch (builtin.target.os.tag) {
+    .windows => windows.iovec_const,
+    else => std.posix.iovec_const,
+};
+
+pub const readv = switch (builtin.target.os.tag) {
+    .windows => windows.readv,
+    else => std.posix.readv,
+};
+
+pub const preadv = switch (builtin.target.os.tag) {
+    .windows => windows.preadv,
+    else => std.posix.preadv,
+};
+
+pub const writev = switch (builtin.target.os.tag) {
+    .windows => windows.writev,
+    else => std.posix.writev,
+};
+
+pub const pwritev = switch (builtin.target.os.tag) {
+    .windows => windows.pwritev,
+    else => std.posix.pwritev,
+};
+
 pub const msghdr = switch (builtin.target.os.tag) {
     .windows => windows.msghdr,
     .macos, .ios, .tvos, .watchos, .visionos => darwin.msghdr,
     .wasi => wasi.msghdr,
     else => std.posix.msghdr,
-};
-
-pub const iovec_const = switch (builtin.target.os.tag) {
-    .windows => windows.iovec_const,
-    else => std.posix.iovec_const,
 };
 
 pub const msghdr_const = switch (builtin.target.os.tag) {

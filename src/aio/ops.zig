@@ -127,6 +127,30 @@ pub const Write = struct {
     userdata: usize = 0,
 };
 
+/// std.fs.File.readv
+pub const Readv = struct {
+    pub const Error = std.posix.PReadError || SharedError;
+    file: std.fs.File,
+    iov: []const posix.iovec,
+    offset: u64 = OFFSET_CURRENT_POS,
+    out_read: *usize,
+    out_id: ?*Id = null,
+    out_error: ?*Error = null,
+    userdata: usize = 0,
+};
+
+/// std.fs.File.writev
+pub const Writev = struct {
+    pub const Error = std.posix.PWriteError || SharedError;
+    file: std.fs.File,
+    iov: []const posix.iovec_const,
+    offset: u64 = OFFSET_CURRENT_POS,
+    out_written: ?*usize = null,
+    out_id: ?*Id = null,
+    out_error: ?*Error = null,
+    userdata: usize = 0,
+};
+
 /// std.posix.accept
 pub const Accept = struct {
     pub const Error = std.posix.AcceptError || SharedError;
@@ -502,6 +526,8 @@ pub const Operation = enum {
     read_tty,
     read,
     write,
+    readv,
+    writev,
     accept,
     connect,
     bind,
@@ -536,6 +562,8 @@ pub const Operation = enum {
         .read_tty = ReadTty,
         .read = Read,
         .write = Write,
+        .readv = Readv,
+        .writev = Writev,
         .accept = Accept,
         .connect = Connect,
         .bind = Bind,
@@ -565,10 +593,10 @@ pub const Operation = enum {
     });
 
     pub const required: []const @This() = &.{
-        .nop,        .fsync,     .poll,         .read_tty,            .read,              .write,              .accept,   .connect,
-        .bind,       .listen,    .recv,         .send,                .recv_msg,          .send_msg,           .shutdown, .open_at,
-        .close_file, .close_dir, .timeout,      .link_timeout,        .cancel,            .rename_at,          .mkdir_at, .symlink_at,
-        .child_exit, .socket,    .close_socket, .notify_event_source, .wait_event_source, .close_event_source,
+        .nop,               .fsync,              .poll,   .read_tty,  .read,     .write,      .readv,      .writev,  .accept,       .connect,
+        .bind,              .listen,             .recv,   .send,      .recv_msg, .send_msg,   .shutdown,   .open_at, .close_file,   .close_dir,
+        .timeout,           .link_timeout,       .cancel, .rename_at, .mkdir_at, .symlink_at, .child_exit, .socket,  .close_socket, .notify_event_source,
+        .wait_event_source, .close_event_source,
     };
 
     pub const Error = blk: {
@@ -606,8 +634,8 @@ pub const Operation = enum {
                 .close_event_source,
                 .notify_event_source,
                 => undefined,
-                .read, .read_tty, .recv, .recv_msg => @ptrCast(op.out_read),
-                .write, .send, .send_msg, .splice => @ptrCast(op.out_written),
+                .read, .readv, .read_tty, .recv, .recv_msg => @ptrCast(op.out_read),
+                .write, .writev, .send, .send_msg, .splice => @ptrCast(op.out_written),
                 .socket, .accept => @ptrCast(op.out_socket),
                 .open_at => @ptrCast(op.out_file),
                 .child_exit => @ptrCast(op.out_term),
@@ -638,8 +666,8 @@ pub const Operation = enum {
                 .close_event_source,
                 .notify_event_source,
                 => undefined,
-                .read, .read_tty, .recv, .recv_msg => op.out_read = self.cast(*usize),
-                .write, .send, .send_msg, .splice => op.out_written = self.cast(?*usize),
+                .read, .readv, .read_tty, .recv, .recv_msg => op.out_read = self.cast(*usize),
+                .write, .writev, .send, .send_msg, .splice => op.out_written = self.cast(?*usize),
                 .socket, .accept => op.out_socket = self.cast(*std.posix.socket_t),
                 .open_at => op.out_file = self.cast(*std.fs.File),
                 .child_exit => op.out_term = self.cast(?*std.process.Child.Term),
