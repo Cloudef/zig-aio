@@ -592,6 +592,11 @@ pub const Operation = enum {
         .splice = Splice,
     });
 
+    pub fn Type(self: @This()) type {
+        @setEvalBranchQuota(std.meta.fields(@This()).len * 1_000);
+        return map.getAssertContains(self);
+    }
+
     pub const required: []const @This() = &.{
         .nop,               .fsync,              .poll,   .read_tty,  .read,     .write,      .readv,      .writev,  .accept,       .connect,
         .bind,              .listen,             .recv,   .send,      .recv_msg, .send_msg,   .shutdown,   .open_at, .close_file,   .close_dir,
@@ -610,7 +615,7 @@ pub const Operation = enum {
             return @alignCast(@ptrCast(self));
         }
 
-        pub fn init(comptime op_type: Operation, op: map.getAssertContains(op_type)) *@This() {
+        pub fn init(comptime op_type: Operation, op: op_type.Type()) *@This() {
             @setRuntimeSafety(false);
             return switch (op_type) {
                 .nop,

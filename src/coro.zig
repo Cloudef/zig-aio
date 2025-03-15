@@ -57,7 +57,7 @@ pub const io = struct {
 
     /// Completes a single operation immediately, blocks the coroutine until complete
     /// The IO operation can be cancelled by calling `wakeupFromIo`, or doing `aio.Cancel`
-    pub inline fn single(comptime op_type: Operation, values: Operation.map.getAssertContains(op_type)) (Error || @TypeOf(values).Error)!void {
+    pub inline fn single(comptime op_type: Operation, values: op_type.Type()) (Error || op_type.Type().Error)!void {
         var cpy: @TypeOf(values) = values;
         var err: @TypeOf(values).Error = error.Success;
         cpy.out_error = &err;
