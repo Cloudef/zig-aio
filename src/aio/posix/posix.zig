@@ -268,7 +268,7 @@ pub fn symlinkAtUring(target: [*:0]const u8, dir: std.fs.Dir, link_path: [*:0]co
     };
 }
 
-pub fn perform(comptime op_type: Operation, op: Operation.map.getAssertContains(op_type), readiness: Readiness) Operation.Error!void {
+pub fn perform(comptime op_type: Operation, op: op_type.Type(), readiness: Readiness) Operation.Error!void {
     switch (op_type) {
         .fsync => _ = try fsync(op.file.handle),
         .read_tty => op.out_read.* = try readTty(op.tty.handle, op.buffer, op.mode),

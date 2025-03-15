@@ -217,7 +217,7 @@ pub fn immediate(pairs: anytype) aio.Error!u16 {
     return num_errors;
 }
 
-fn blockingPosixExecutor(self: *@This(), comptime op_type: Operation, op: Operation.map.getAssertContains(op_type), id: aio.Id, comptime safety: Uringlator.Safety) void {
+fn blockingPosixExecutor(self: *@This(), comptime op_type: Operation, op: op_type.Type(), id: aio.Id, comptime safety: Uringlator.Safety) void {
     const posix = @import("posix/posix.zig");
     var failure: Operation.Error = error.Success;
     while (true) {
@@ -251,7 +251,7 @@ fn getHandleAccessInfo(handle: HANDLE) !fs.FILE_ACCESS_FLAGS {
     return @bitCast(access.AccessFlags);
 }
 
-pub fn uringlator_queue(_: *@This(), _: aio.Id, comptime op_type: Operation, op: Operation.map.getAssertContains(op_type)) aio.Error!WindowsOperation {
+pub fn uringlator_queue(_: *@This(), _: aio.Id, comptime op_type: Operation, op: op_type.Type()) aio.Error!WindowsOperation {
     switch (op_type) {
         .accept => op.out_socket.* = INVALID_SOCKET,
         else => {},
@@ -267,7 +267,7 @@ pub fn uringlator_queue(_: *@This(), _: aio.Id, comptime op_type: Operation, op:
     };
 }
 
-pub fn uringlator_dequeue(_: *@This(), _: aio.Id, comptime op_type: Operation, _: Operation.map.getAssertContains(op_type)) void {}
+pub fn uringlator_dequeue(_: *@This(), _: aio.Id, comptime op_type: Operation, _: op_type.Type()) void {}
 
 pub fn uringlator_start(self: *@This(), id: aio.Id, op_type: Operation) !void {
     switch (op_type) {

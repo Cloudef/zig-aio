@@ -43,7 +43,7 @@ const UringOperation = struct {
         // TODO: avoid storing this
         timeout: std.os.linux.kernel_timespec,
 
-        fn init(comptime op_type: Operation, op: Operation.map.getAssertContains(op_type)) @This() {
+        fn init(comptime op_type: Operation, op: op_type.Type()) @This() {
             return switch (op_type) {
                 .child_exit => .{
                     .child_exit = .{
@@ -220,28 +220,28 @@ pub fn complete(self: *@This(), mode: aio.CompletionMode, handler: anytype) aio.
                 }, state, cqe);
             },
             inline .socket, .accept => |tag| blk: {
-                var op: Operation.map.getAssertContains(tag) = undefined;
+                var op: tag.Type() = undefined;
                 op.out_id = self.ops.getOne(.out_id, id);
                 op.out_error = @ptrCast(self.ops.getOne(.out_error, id));
                 op.out_socket = self.ops.getOne(.out_result, id).cast(*std.posix.socket_t);
                 break :blk uring_handle_completion(tag, op, undefined, cqe);
             },
             inline .read, .readv, .read_tty, .recv, .recv_msg => |tag| blk: {
-                var op: Operation.map.getAssertContains(tag) = undefined;
+                var op: tag.Type() = undefined;
                 op.out_id = self.ops.getOne(.out_id, id);
                 op.out_error = @ptrCast(self.ops.getOne(.out_error, id));
                 op.out_read = self.ops.getOne(.out_result, id).cast(*usize);
                 break :blk uring_handle_completion(tag, op, undefined, cqe);
             },
             inline .write, .writev, .send, .send_msg, .splice => |tag| blk: {
-                var op: Operation.map.getAssertContains(tag) = undefined;
+                var op: tag.Type() = undefined;
                 op.out_id = self.ops.getOne(.out_id, id);
                 op.out_error = @ptrCast(self.ops.getOne(.out_error, id));
                 op.out_written = self.ops.getOne(.out_result, id).cast(?*usize);
                 break :blk uring_handle_completion(tag, op, undefined, cqe);
             },
             inline .open_at => |tag| blk: {
-                var op: Operation.map.getAssertContains(tag) = undefined;
+                var op: tag.Type() = undefined;
                 op.out_id = self.ops.getOne(.out_id, id);
                 op.out_error = @ptrCast(self.ops.getOne(.out_error, id));
                 op.out_file = self.ops.getOne(.out_result, id).cast(*std.fs.File);
@@ -268,7 +268,7 @@ pub fn complete(self: *@This(), mode: aio.CompletionMode, handler: anytype) aio.
             .wait_event_source,
             .close_event_source,
             => |tag| blk: {
-                var op: Operation.map.getAssertContains(tag) = undefined;
+                var op: tag.Type() = undefined;
                 op.out_id = self.ops.getOne(.out_id, id);
                 op.out_error = @ptrCast(self.ops.getOne(.out_error, id));
                 break :blk uring_handle_completion(tag, op, undefined, cqe);
@@ -443,7 +443,7 @@ fn uring_init(n: u16) aio.Error!std.os.linux.IoUring {
     return error.SystemOutdated;
 }
 
-fn uring_queue(io: *std.os.linux.IoUring, comptime op_type: Operation, op: Operation.map.getAssertContains(op_type), link: aio.Link, user_data: u64, state: *UringOperation.State) aio.Error!void {
+fn uring_queue(io: *std.os.linux.IoUring, comptime op_type: Operation, op: op_type.Type(), link: aio.Link, user_data: u64, state: *UringOperation.State) aio.Error!void {
     debug("queue: {}: {}", .{ aio.Id.init(user_data), op_type });
     const Trash = struct {
         var u_64: u64 align(1) = undefined;
@@ -575,7 +575,7 @@ fn uring_copy_cqes(io: *std.os.linux.IoUring, cqes: []std.os.linux.io_uring_cqe,
     unreachable;
 }
 
-fn uring_handle_completion(comptime op_type: Operation, op: Operation.map.getAssertContains(op_type), state: *UringOperation.State, cqe: *std.os.linux.io_uring_cqe) !void {
+fn uring_handle_completion(comptime op_type: Operation, op: op_type.Type(), state: *UringOperation.State, cqe: *std.os.linux.io_uring_cqe) !void {
     defer if (op_type == .child_exit and !Supported.waitid) {
         var watcher: posix.ChildWatcher = .{ .id = op.child, .fd = state.child_exit.state.fd };
         watcher.deinit();

@@ -183,7 +183,7 @@ pub fn complete(self: *@This(), mode: aio.CompletionMode, handler: anytype) aio.
                         if (pfd.revents & std.posix.POLL.ERR != 0) {
                             switch (op_type) {
                                 inline else => |tag| {
-                                    if (hasField(Operation.map.getAssertContains(tag).Error, "BrokenPipe")) {
+                                    if (hasField(tag.Type().Error, "BrokenPipe")) {
                                         Uringlator.debug("poll: {}: {} => ERR (BrokenPipe)", .{ id, op_type });
                                         self.uringlator.finish(self, id, error.BrokenPipe, .thread_unsafe);
                                     } else {
@@ -248,7 +248,7 @@ pub fn immediate(pairs: anytype) aio.Error!u16 {
     return num_errors;
 }
 
-fn blockingPosixExecutor(self: *@This(), comptime op_type: Operation, op: Operation.map.getAssertContains(op_type), id: aio.Id, readiness: posix.Readiness, comptime safety: Uringlator.Safety) void {
+fn blockingPosixExecutor(self: *@This(), comptime op_type: Operation, op: op_type.Type(), id: aio.Id, readiness: posix.Readiness, comptime safety: Uringlator.Safety) void {
     var failure: Operation.Error = error.Success;
     while (true) {
         posix.perform(op_type, op, readiness) catch |err| {
@@ -260,7 +260,7 @@ fn blockingPosixExecutor(self: *@This(), comptime op_type: Operation, op: Operat
     self.uringlator.finish(self, id, failure, safety);
 }
 
-fn posixPerform(self: *@This(), comptime op_type: Operation, op: Operation.map.getAssertContains(op_type), id: aio.Id, readiness: posix.Readiness, kludge: enum { kludge, normal }) !void {
+fn posixPerform(self: *@This(), comptime op_type: Operation, op: op_type.Type(), id: aio.Id, readiness: posix.Readiness, kludge: enum { kludge, normal }) !void {
     if (needs_kludge and !builtin.single_threaded and kludge == .kludge) {
         if (self.in_flight_threaded == 0) {
             self.pfd.add(.{ .fd = self.source.fd, .events = std.posix.POLL.IN, .revents = 0 }) catch unreachable;
@@ -280,7 +280,7 @@ fn posixPerform(self: *@This(), comptime op_type: Operation, op: Operation.map.g
     }
 }
 
-fn nonBlockingPosixExecutor(self: *@This(), comptime op_type: Operation, op: Operation.map.getAssertContains(op_type), id: aio.Id, readiness: posix.Readiness) error{WouldBlock}!void {
+fn nonBlockingPosixExecutor(self: *@This(), comptime op_type: Operation, op: op_type.Type(), id: aio.Id, readiness: posix.Readiness) error{WouldBlock}!void {
     var failure: Operation.Error = error.Success;
     posix.perform(op_type, op, readiness) catch |err| {
         if (err == error.WouldBlock) return error.WouldBlock;
@@ -289,7 +289,7 @@ fn nonBlockingPosixExecutor(self: *@This(), comptime op_type: Operation, op: Ope
     self.uringlator.finish(self, id, failure, .thread_unsafe);
 }
 
-fn nonBlockingPosixExecutorFcntl(self: *@This(), comptime op_type: Operation, op: Operation.map.getAssertContains(op_type), id: aio.Id, readiness: posix.Readiness) error{ WouldBlock, FcntlFailed }!void {
+fn nonBlockingPosixExecutorFcntl(self: *@This(), comptime op_type: Operation, op: op_type.Type(), id: aio.Id, readiness: posix.Readiness) error{ WouldBlock, FcntlFailed }!void {
     const NONBLOCK = 1 << @bitOffsetOf(std.posix.O, "NONBLOCK");
     const old: struct { usize, bool } = blk: {
         if (readiness.fd != posix.invalid_fd) {
@@ -313,7 +313,7 @@ fn nonBlockingPosixExecutorFcntl(self: *@This(), comptime op_type: Operation, op
     self.uringlator.finish(self, id, failure, .thread_unsafe);
 }
 
-fn openReadiness(comptime op_type: Operation, op: Operation.map.getAssertContains(op_type)) !posix.Readiness {
+fn openReadiness(comptime op_type: Operation, op: op_type.Type()) !posix.Readiness {
     return switch (op_type) {
         .nop => .{},
         .fsync => .{},
@@ -344,7 +344,7 @@ fn openReadiness(comptime op_type: Operation, op: Operation.map.getAssertContain
     };
 }
 
-pub fn uringlator_queue(self: *@This(), id: aio.Id, comptime op_type: Operation, op: Operation.map.getAssertContains(op_type)) aio.Error!PosixOperation {
+pub fn uringlator_queue(self: *@This(), id: aio.Id, comptime op_type: Operation, op: op_type.Type()) aio.Error!PosixOperation {
     comptime {
         if (needs_kludge and builtin.single_threaded and op_type == .read_tty) {
             @compileError(
@@ -374,7 +374,7 @@ pub fn uringlator_queue(self: *@This(), id: aio.Id, comptime op_type: Operation,
     return .{ .readiness = readiness };
 }
 
-pub fn uringlator_dequeue(self: *@This(), id: aio.Id, comptime op_type: Operation, op: Operation.map.getAssertContains(op_type)) void {
+pub fn uringlator_dequeue(self: *@This(), id: aio.Id, comptime op_type: Operation, op: op_type.Type()) void {
     switch (op_type) {
         .child_exit => {
             const readiness = self.uringlator.ops.getOne(.readiness, id);
