@@ -158,14 +158,14 @@ const UringlatorOperation = struct {
             return @TypeOf(@field(@as(T, undefined), name));
         }
 
-        fn init(comptime op_type: Operation, op: Operation.map.getAssertContains(op_type)) @This() {
+        fn init(comptime op_type: Operation, op: op_type.Type()) @This() {
             var v: FieldType(@This(), @tagName(op_type)) = undefined;
             inline for (std.meta.fields(@TypeOf(v))) |field| @field(v, field.name) = @field(op, field.name);
             return @unionInit(@This(), @tagName(op_type), v);
         }
 
-        pub fn toOp(self: @This(), comptime op_type: Operation, result: *Operation.anyresult) Operation.map.getAssertContains(op_type) {
-            var op: Operation.map.getAssertContains(op_type) = undefined;
+        pub fn toOp(self: @This(), comptime op_type: Operation, result: *Operation.anyresult) op_type.Type() {
+            var op: op_type.Type() = undefined;
             inline for (std.meta.fields(FieldType(@This(), @tagName(op_type)))) |field| {
                 @field(op, field.name) = @field(@field(self, @tagName(op_type)), field.name);
             }

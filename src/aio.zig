@@ -85,7 +85,7 @@ pub const EventSource = struct {
 };
 
 /// Initialize a single operation for a IO function
-pub fn op(comptime op_type: Operation, values: Operation.map.getAssertContains(op_type), comptime link: Link) struct {
+pub fn op(comptime op_type: Operation, values: op_type.Type(), comptime link: Link) struct {
     op: @TypeOf(values),
     comptime tag: Operation = op_type,
     comptime link: Link = link,
@@ -212,7 +212,7 @@ pub inline fn multi(pairs: anytype) (Error || error{SomeOperationFailed})!void {
 }
 
 /// Completes a single operation immediately, blocks until complete
-pub inline fn single(comptime op_type: Operation, values: Operation.map.getAssertContains(op_type)) (Error || @TypeOf(values).Error)!void {
+pub inline fn single(comptime op_type: Operation, values: op_type.Type()) (Error || op_type.Type().Error)!void {
     var cpy: @TypeOf(values) = values;
     var err: @TypeOf(values).Error = error.Success;
     cpy.out_error = &err;
