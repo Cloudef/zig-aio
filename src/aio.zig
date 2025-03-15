@@ -220,6 +220,7 @@ pub inline fn single(comptime op_type: Operation, values: Operation.map.getAsser
 }
 
 const ops = @import("aio/ops.zig");
+pub const OFFSET_CURRENT_POS = ops.OFFSET_CURRENT_POS;
 pub const Operation = ops.Operation;
 pub const Id = ops.Id;
 pub const Link = ops.Link;
@@ -343,7 +344,7 @@ test "Read" {
         var f = try tmp.dir.createFile("test", .{ .read = true });
         defer f.close();
         try f.writeAll("foobar");
-        try single(.read, .{ .file = f, .buffer = &buf, .out_read = &len });
+        try single(.read, .{ .file = f, .buffer = &buf, .offset = 0, .out_read = &len });
         try std.testing.expectEqual("foobar".len, len);
         try std.testing.expectEqualSlices(u8, "foobar", buf[0..len]);
     }
@@ -352,7 +353,7 @@ test "Read" {
         defer f.close();
         try std.testing.expectError(
             error.NotOpenForReading,
-            single(.read, .{ .file = f, .buffer = &buf, .out_read = &len }),
+            single(.read, .{ .file = f, .buffer = &buf, .offset = 0, .out_read = &len }),
         );
     }
 }
@@ -365,7 +366,7 @@ test "Write" {
     {
         var f = try tmp.dir.createFile("test", .{ .read = true });
         defer f.close();
-        try single(.write, .{ .file = f, .buffer = "foobar", .out_written = &len });
+        try single(.write, .{ .file = f, .buffer = "foobar", .offset = 0, .out_written = &len });
         try std.testing.expectEqual("foobar".len, len);
         try f.seekTo(0); // required for windows
         const read = try f.readAll(&buf);
@@ -376,7 +377,7 @@ test "Write" {
         defer f.close();
         try std.testing.expectError(
             error.NotOpenForWriting,
-            single(.write, .{ .file = f, .buffer = "foobar", .out_written = &len }),
+            single(.write, .{ .file = f, .buffer = "foobar", .offset = 0, .out_written = &len }),
         );
     }
 }

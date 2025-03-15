@@ -108,7 +108,7 @@ pub const Read = struct {
     pub const Error = std.posix.PReadError || SharedError;
     file: std.fs.File,
     buffer: []u8,
-    offset: u64 = 0,
+    offset: u64 = OFFSET_CURRENT_POS,
     out_read: *usize,
     out_id: ?*Id = null,
     out_error: ?*Error = null,
@@ -120,7 +120,7 @@ pub const Write = struct {
     pub const Error = std.posix.PWriteError || SharedError;
     file: std.fs.File,
     buffer: []const u8,
-    offset: u64 = 0,
+    offset: u64 = OFFSET_CURRENT_POS,
     out_written: ?*usize = null,
     out_id: ?*Id = null,
     out_error: ?*Error = null,
@@ -443,9 +443,9 @@ pub const CloseEventSource = struct {
 
 /// splice(2)
 /// Either `in` or `out` must be a pipe.
-/// If `in/out` does not refer to a pipe and `off` is maxInt(u64), then `len` are read
+/// If `in/out` does not refer to a pipe and `off` is `OFFSET_CURRENT_POS`, then `len` are read
 /// from `in/out` starting from the file offset, which is incremented by the number of bytes read.
-/// If `in/out` does not refer to a pipe and `off` is not maxInt(u64), then the starting offset of `in/out` will be `off`.
+/// If `in/out` does not refer to a pipe and `off` is not `OFFSET_CURRENT_POS`, then the starting offset of `in/out` will be `off`.
 /// This splice operation can be used to implement sendfile by splicing to an intermediate pipe first,
 /// then splice to the final destination. In fact, the implementation of sendfile in kernel uses splice internally.
 ///
@@ -459,7 +459,7 @@ pub const Splice = struct {
         pipe: std.posix.fd_t,
         other: struct {
             fd: std.posix.fd_t,
-            offset: u64 = std.math.maxInt(u64),
+            offset: u64 = OFFSET_CURRENT_POS,
         },
     };
 
