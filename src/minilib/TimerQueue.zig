@@ -191,7 +191,7 @@ fn now(clock: Clock) !u128 {
         },
         .uefi => D: {
             var value: std.os.uefi.Time = undefined;
-            std.debug.assert(std.os.uefi.system_table.runtime_services.getTime(&value, null) == .Success);
+            if (std.os.uefi.system_table.runtime_services.getTime(&value, null) != .Success) return error.Unsupported;
             break :D value.toEpoch();
         },
         .wasi => D: {
