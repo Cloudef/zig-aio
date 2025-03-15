@@ -34,6 +34,16 @@ const UringlatorOperation = struct {
             buffer: []const u8,
             offset: u64,
         },
+        readv: struct {
+            file: std.fs.File,
+            iov: []const posix.iovec,
+            offset: u64,
+        },
+        writev: struct {
+            file: std.fs.File,
+            iov: []const posix.iovec_const,
+            offset: u64,
+        },
         accept: struct {
             socket: std.posix.socket_t,
             out_addr: ?*posix.sockaddr,

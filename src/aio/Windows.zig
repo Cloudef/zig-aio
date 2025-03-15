@@ -288,6 +288,26 @@ pub fn uringlator_start(self: *@This(), id: aio.Id, op_type: Operation) !void {
                 self.uringlator.finish(self, id, error.Success, .thread_unsafe);
             }
         },
+        .readv => {
+            const state = self.uringlator.ops.getOnePtr(.state, id);
+            const ovl = self.uringlator.ops.getOnePtr(.ovl, id);
+            if (state.readv.iov.len == 0) {
+                ovl.res = 0;
+                return self.uringlator.finish(self, id, error.Success, .thread_unsafe);
+            }
+            const flags = try getHandleAccessInfo(state.readv.file.handle);
+            if (flags.FILE_READ_DATA != 1) return self.uringlator.finish(self, id, error.NotOpenForReading, .thread_unsafe);
+            const h = fs.ReOpenFile(state.readv.file.handle, flags, .{ .READ = 1, .WRITE = 1 }, fs.FILE_FLAG_OVERLAPPED);
+            _ = wtry(h != null and h.? != INVALID_HANDLE) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe);
+            self.iocp.associateHandle(id, h.?) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe);
+            ovl.* = .{ .overlapped = ovlOff(state.readv.offset), .owned = .{ .handle = h.? } };
+            var read: u32 = undefined;
+            const ret = wtry(fs.ReadFile(h.?, state.readv.iov[0].base, @intCast(state.readv.iov[0].len), &read, &ovl.overlapped)) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe);
+            if (ret != 0) {
+                ovl.res = read;
+                self.uringlator.finish(self, id, error.Success, .thread_unsafe);
+            }
+        },
         .write => {
             const state = self.uringlator.ops.getOnePtr(.state, id);
             const ovl = self.uringlator.ops.getOnePtr(.ovl, id);
@@ -299,6 +319,26 @@ pub fn uringlator_start(self: *@This(), id: aio.Id, op_type: Operation) !void {
             ovl.* = .{ .overlapped = ovlOff(state.write.offset), .owned = .{ .handle = h.? } };
             var written: u32 = undefined;
             const ret = wtry(fs.WriteFile(h.?, state.write.buffer.ptr, @intCast(state.write.buffer.len), &written, &ovl.overlapped)) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe);
+            if (ret != 0) {
+                ovl.res = written;
+                self.uringlator.finish(self, id, error.Success, .thread_unsafe);
+            }
+        },
+        .writev => {
+            const state = self.uringlator.ops.getOnePtr(.state, id);
+            const ovl = self.uringlator.ops.getOnePtr(.ovl, id);
+            if (state.writev.iov.len == 0) {
+                ovl.res = 0;
+                return self.uringlator.finish(self, id, error.Success, .thread_unsafe);
+            }
+            const flags = try getHandleAccessInfo(state.writev.file.handle);
+            if (flags.FILE_WRITE_DATA != 1) return self.uringlator.finish(self, id, error.NotOpenForWriting, .thread_unsafe);
+            const h = fs.ReOpenFile(state.writev.file.handle, flags, .{ .READ = 1, .WRITE = 1 }, fs.FILE_FLAG_OVERLAPPED);
+            _ = wtry(h != null and h.? != INVALID_HANDLE) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe);
+            self.iocp.associateHandle(id, h.?) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe);
+            ovl.* = .{ .overlapped = ovlOff(state.writev.offset), .owned = .{ .handle = h.? } };
+            var written: u32 = undefined;
+            const ret = wtry(fs.WriteFile(h.?, state.writev.iov[0].base, @intCast(state.writev.iov[0].len), &written, &ovl.overlapped)) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe);
             if (ret != 0) {
                 ovl.res = written;
                 self.uringlator.finish(self, id, error.Success, .thread_unsafe);
@@ -427,7 +467,7 @@ pub fn uringlator_start(self: *@This(), id: aio.Id, op_type: Operation) !void {
 
 pub fn uringlator_cancel(self: *@This(), id: aio.Id, op_type: Operation, err: Operation.Error) bool {
     switch (op_type) {
-        .read, .write => {
+        .read, .write, .readv, .writev => {
             const ovl = self.uringlator.ops.getOnePtr(.ovl, id);
             if (io.CancelIoEx(ovl.owned.handle, &ovl.overlapped) != 0) {
                 self.uringlator.finish(self, id, err, .thread_unsafe);
@@ -486,11 +526,11 @@ pub fn uringlator_complete(self: *@This(), id: aio.Id, op_type: Operation, failu
                     if (state.accept.out_addr) |ad| @memcpy(std.mem.asBytes(ad)[0..@intCast(addrlen)], std.mem.asBytes(addr_ptr)[0..@intCast(addrlen)]);
                 }
             },
-            .read, .recv, .recv_msg => {
+            .read, .readv, .recv, .recv_msg => {
                 const out_read = self.uringlator.ops.getOne(.out_result, id).cast(*usize);
                 out_read.* = ovl.res;
             },
-            .write, .send, .send_msg => {
+            .write, .writev, .send, .send_msg => {
                 const out_written = self.uringlator.ops.getOne(.out_result, id).cast(?*usize);
                 if (out_written) |w| w.* = ovl.res;
             },

@@ -318,12 +318,12 @@ fn openReadiness(comptime op_type: Operation, op: Operation.map.getAssertContain
         .nop => .{},
         .fsync => .{},
         .poll => .{ .fd = op.fd, .events = op.events },
-        .write => .{ .fd = op.file.handle, .events = .{ .out = true } },
+        .write, .writev => .{ .fd = op.file.handle, .events = .{ .out = true } },
         .read_tty => switch (builtin.target.os.tag) {
             .macos, .ios, .watchos, .visionos, .tvos => .{},
             else => .{ .fd = op.tty.handle, .events = .{ .in = true } },
         },
-        .read => .{ .fd = op.file.handle, .events = .{ .in = true } },
+        .read, .readv => .{ .fd = op.file.handle, .events = .{ .in = true } },
         .accept, .recv, .recv_msg => .{ .fd = op.socket, .events = .{ .in = true } },
         .socket, .connect, .bind, .listen, .shutdown => .{},
         .send, .send_msg => .{ .fd = op.socket, .events = .{ .out = true } },
@@ -470,18 +470,26 @@ pub fn uringlator_start(self: *@This(), id: aio.Id, op_type: Operation) !void {
 
         if (comptime builtin.target.os.tag == .wasi) {
             switch (op_type) {
-                .read => {
+                inline .read, .readv => |tag| {
                     var stat: std.os.wasi.fdstat_t = undefined;
                     const state = self.uringlator.ops.getOnePtr(.state, id);
-                    std.debug.assert(std.os.wasi.fd_fdstat_get(state.read.file.handle, &stat) == .SUCCESS);
+                    switch (tag) {
+                        .read => if (std.os.wasi.fd_fdstat_get(state.read.file.handle, &stat) != .SUCCESS) unreachable, // should not happen
+                        .readv => if (std.os.wasi.fd_fdstat_get(state.readv.file.handle, &stat) != .SUCCESS) unreachable, // should not happen
+                        else => unreachable,
+                    }
                     if (!stat.fs_rights_base.FD_READ) {
                         return self.uringlator.finish(self, id, error.NotOpenForReading, .thread_unsafe);
                     }
                 },
-                .write => {
+                inline .write, .writev => |tag| {
                     var stat: std.os.wasi.fdstat_t = undefined;
                     const state = self.uringlator.ops.getOnePtr(.state, id);
-                    std.debug.assert(std.os.wasi.fd_fdstat_get(state.write.file.handle, &stat) == .SUCCESS);
+                    switch (tag) {
+                        .write => if (std.os.wasi.fd_fdstat_get(state.write.file.handle, &stat) != .SUCCESS) unreachable, // should not happen
+                        .writev => if (std.os.wasi.fd_fdstat_get(state.writev.file.handle, &stat) != .SUCCESS) unreachable, // should not happen
+                        else => unreachable,
+                    }
                     if (!stat.fs_rights_base.FD_WRITE) {
                         return self.uringlator.finish(self, id, error.NotOpenForWriting, .thread_unsafe);
                     }

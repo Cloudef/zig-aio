@@ -92,6 +92,8 @@ pub fn isSupported(op_types: []const Operation) bool {
             .poll, .child_exit => .POLL_ADD, // 5.1 (child_exit uses waitid if available 6.5)
             .read_tty, .read, .wait_event_source => .READ, // 5.6
             .write, .notify_event_source => .WRITE, // 5.6
+            .readv => .READV, // 5.6
+            .writev => .WRITEV, // 5.6
             .accept => .ACCEPT, // 5.5
             .connect => .CONNECT, // 5.5
             .recv => .RECV, // 5.6
@@ -224,14 +226,14 @@ pub fn complete(self: *@This(), mode: aio.CompletionMode, handler: anytype) aio.
                 op.out_socket = self.ops.getOne(.out_result, id).cast(*std.posix.socket_t);
                 break :blk uring_handle_completion(tag, op, undefined, cqe);
             },
-            inline .read, .read_tty, .recv, .recv_msg => |tag| blk: {
+            inline .read, .readv, .read_tty, .recv, .recv_msg => |tag| blk: {
                 var op: Operation.map.getAssertContains(tag) = undefined;
                 op.out_id = self.ops.getOne(.out_id, id);
                 op.out_error = @ptrCast(self.ops.getOne(.out_error, id));
                 op.out_read = self.ops.getOne(.out_result, id).cast(*usize);
                 break :blk uring_handle_completion(tag, op, undefined, cqe);
             },
-            inline .write, .send, .send_msg, .splice => |tag| blk: {
+            inline .write, .writev, .send, .send_msg, .splice => |tag| blk: {
                 var op: Operation.map.getAssertContains(tag) = undefined;
                 op.out_id = self.ops.getOne(.out_id, id);
                 op.out_error = @ptrCast(self.ops.getOne(.out_error, id));
@@ -453,6 +455,13 @@ fn uring_queue(io: *std.os.linux.IoUring, comptime op_type: Operation, op: Opera
         .read_tty => try io.read(user_data, op.tty.handle, .{ .buffer = op.buffer }, 0),
         .read => try io.read(user_data, op.file.handle, .{ .buffer = op.buffer }, op.offset),
         .write => try io.write(user_data, op.file.handle, op.buffer, op.offset),
+        .readv => blk: {
+            const sqe = try io.get_sqe();
+            sqe.prep_readv(op.file.handle, op.iov, op.offset);
+            sqe.user_data = user_data;
+            break :blk sqe;
+        },
+        .writev => try io.writev(user_data, op.file.handle, op.iov, op.offset),
         .accept => try io.accept(user_data, op.socket, op.out_addr, op.inout_addrlen, 0),
         .connect => try io.connect(user_data, op.socket, op.addr, op.addrlen),
         .bind => blk: {
@@ -596,7 +605,7 @@ fn uring_handle_completion(comptime op_type: Operation, op: Operation.map.getAss
                 .CANCELED => error.Canceled,
                 else => std.posix.unexpectedErrno(err),
             },
-            .read_tty, .read => switch (err) {
+            .read_tty, .read, .readv => switch (err) {
                 .SUCCESS, .INTR, .INVAL, .FAULT, .AGAIN, .ISDIR => unreachable,
                 .CANCELED => error.Canceled,
                 .BADF => error.NotOpenForReading,
@@ -611,7 +620,7 @@ fn uring_handle_completion(comptime op_type: Operation, op: Operation.map.getAss
                 .OPNOTSUPP => error.OperationNotSupported,
                 else => std.posix.unexpectedErrno(err),
             },
-            .write => switch (err) {
+            .write, .writev => switch (err) {
                 .SUCCESS, .INTR, .INVAL, .FAULT, .AGAIN, .DESTADDRREQ => unreachable,
                 .CANCELED => error.Canceled,
                 .DQUOT => error.DiskQuota,
@@ -977,8 +986,8 @@ fn uring_handle_completion(comptime op_type: Operation, op: Operation.map.getAss
         .poll => {},
         .accept => op.out_socket.* = cqe.res,
         .connect, .bind, .listen => {},
-        .read_tty, .read, .recv, .recv_msg => op.out_read.* = @intCast(cqe.res),
-        .write, .send, .send_msg, .splice => if (op.out_written) |w| {
+        .read_tty, .read, .readv, .recv, .recv_msg => op.out_read.* = @intCast(cqe.res),
+        .write, .writev, .send, .send_msg, .splice => if (op.out_written) |w| {
             w.* = @intCast(cqe.res);
         },
         .shutdown => {},
