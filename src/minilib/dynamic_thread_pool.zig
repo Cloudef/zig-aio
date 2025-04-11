@@ -15,7 +15,7 @@ const DefaultImpl = struct {
     mutex: std.Thread.Mutex = .{},
     cond: std.Thread.Condition = .{},
     threads: []DynamicThread = &.{},
-    run_queue: RunQueue = .{},
+    run_queue: std.SinglyLinkedList = .{},
     idling_threads: u32 = 0,
     active_threads: u32 = 0,
     timeout: u64,
@@ -24,8 +24,10 @@ const DefaultImpl = struct {
     name: ?[]const u8,
     stack_size: usize,
 
-    const RunQueue = std.SinglyLinkedList(Runnable);
-    const Runnable = struct { runFn: RunProto };
+    const Runnable = struct {
+        runFn: RunProto,
+        node: std.SinglyLinkedList.Node = .{},
+    };
     const RunProto = *const fn (*@This(), *Runnable) void;
 
     pub const Options = struct {
@@ -97,11 +99,10 @@ const DefaultImpl = struct {
         const ThreadPool = @This();
         const Closure = struct {
             arguments: Args,
-            run_node: RunQueue.Node = .{ .data = .{ .runFn = runFn } },
+            runnable: Runnable = .{ .runFn = runFn },
 
             fn runFn(pool: *ThreadPool, runnable: *Runnable) void {
-                const run_node: *RunQueue.Node = @fieldParentPtr("data", runnable);
-                const closure: *@This() = @alignCast(@fieldParentPtr("run_node", run_node));
+                const closure: *@This() = @alignCast(@fieldParentPtr("runnable", runnable));
                 @call(.auto, func, closure.arguments);
                 // The thread pool's allocator is protected by the mutex.
                 pool.mutex.lock();
@@ -136,7 +137,7 @@ const DefaultImpl = struct {
             //       Closures are often same size, so they can be bucketed and reused
             const closure = try self.arena.allocator().create(Closure);
             closure.* = .{ .arguments = args };
-            self.run_queue.prepend(&closure.run_node);
+            self.run_queue.prepend(&closure.runnable.node);
         }
 
         // Notify waiting threads outside the lock to try and keep the critical section small.
@@ -192,8 +193,8 @@ const DefaultImpl = struct {
                     if (self.run_queue.popFirst()) |run_node| {
                         self.mutex.unlock();
                         defer self.mutex.lock();
-                        const runFn = run_node.data.runFn;
-                        runFn(self, &run_node.data);
+                        const runnable: *Runnable = @fieldParentPtr("node", run_node);
+                        runnable.runFn(self, runnable);
                         timer.reset();
                     } else break;
                 }

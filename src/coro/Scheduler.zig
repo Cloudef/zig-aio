@@ -27,10 +27,11 @@ pub fn deinit(self: *@This()) void {
     var next = self.completed.first;
     while (next) |node| {
         next = node.next;
-        node.data.cast().deinit();
+        const frame: *Frame = @fieldParentPtr("link", node);
+        frame.deinit();
     }
     while (self.running.popFirst()) |node| {
-        var frame = node.data.cast();
+        const frame: *Frame = @fieldParentPtr("link", node);
         frame.status = .completed;
         self.completed.append(&frame.link);
         frame.deinit();
@@ -83,7 +84,7 @@ pub fn tick(self: *@This(), mode: aio.CompletionMode) aio.Error!usize {
         var next: ?*Frame.List.Node = first;
         while (next) |node| {
             next = node.next;
-            var frame = node.data.cast();
+            const frame: *Frame = @fieldParentPtr("link", node);
             if (frame.detached) {
                 std.debug.assert(frame.completer == null);
                 frame.deinit();
@@ -93,7 +94,7 @@ pub fn tick(self: *@This(), mode: aio.CompletionMode) aio.Error!usize {
         }
     }
     _ = try self.io.complete(mode, self);
-    return self.running.len;
+    return self.running.len();
 }
 
 pub const CompleteMode = Frame.CompleteMode;
@@ -104,7 +105,8 @@ pub fn run(self: *@This(), mode: CompleteMode) aio.Error!void {
         // start canceling tasks starting from the most recent one
         while (self.running.last) |node| {
             if (self.state == .tear_down) return error.Unexpected;
-            node.data.cast().complete(.cancel, void);
+            const frame: *Frame = @fieldParentPtr("link", node);
+            frame.complete(.cancel, void);
         }
     } else {
         while (self.state != .tear_down) {
