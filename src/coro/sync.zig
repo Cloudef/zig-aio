@@ -8,7 +8,8 @@ fn wakeupWaiters(list: *Frame.WaitList, status: anytype) void {
     var next = list.first;
     while (next) |node| {
         next = node.next;
-        node.data.cast().wakeup(status);
+        const frame: *Frame = @fieldParentPtr("wait_link", node);
+        frame.wakeup(status);
     }
 }
 
@@ -465,13 +466,18 @@ test "RwLock.Cancel" {
 /// Only one consumer receives each sent data, regardless of the number of consumers.
 pub fn Queue(comptime T: type) type {
     return struct {
-        const QueueList = std.DoublyLinkedList(T);
-        const MemoryPool = std.heap.MemoryPool(QueueList.Node);
+        const QueueList = std.DoublyLinkedList;
+        const MemoryPool = std.heap.MemoryPool(QueueNode);
 
         pool: MemoryPool,
         queue: QueueList = .{},
         mutex: Mutex,
         semaphore: aio.EventSource,
+
+        const QueueNode = struct {
+            data: T,
+            node: QueueList.Node = .{},
+        };
 
         pub fn init(allocator: std.mem.Allocator, preheat_size: usize) !@This() {
             return .{
@@ -495,12 +501,11 @@ pub fn Queue(comptime T: type) type {
             try self.mutex.lock();
             defer self.mutex.unlock();
 
-            const node = try self.pool.create();
-            errdefer self.pool.destroy(node);
+            const queue_node = try self.pool.create();
+            errdefer self.pool.destroy(queue_node);
 
-            node.data = data;
-
-            self.queue.prepend(node);
+            queue_node.* = .{ .data = data };
+            self.queue.append(&queue_node.node);
 
             self.semaphore.notify();
         }
@@ -513,9 +518,10 @@ pub fn Queue(comptime T: type) type {
                     error.WouldBlock => return null,
                 };
 
-                if (self.queue.pop()) |node| {
-                    const data = node.data;
-                    self.pool.destroy(node);
+                if (self.queue.popFirst()) |node| {
+                    const queue_node: *QueueNode = @fieldParentPtr("node", node);
+                    const data = queue_node.data;
+                    self.pool.destroy(queue_node);
                     return data;
                 }
             }
@@ -528,9 +534,10 @@ pub fn Queue(comptime T: type) type {
             try self.mutex.lock();
             defer self.mutex.unlock();
 
-            if (self.queue.pop()) |node| {
-                const data = node.data;
-                self.pool.destroy(node);
+            if (self.queue.popFirst()) |node| {
+                const queue_node: *QueueNode = @fieldParentPtr("node", node);
+                const data = queue_node.data;
+                self.pool.destroy(queue_node);
                 return data;
             }
 
@@ -543,8 +550,9 @@ pub fn Queue(comptime T: type) type {
 
             while (true) self.semaphore.waitNonBlocking() catch break;
 
-            while (self.queue.pop()) |node| {
-                self.pool.destroy(node);
+            while (self.queue.popFirst()) |node| {
+                const queue_node: *QueueNode = @fieldParentPtr("node", node);
+                self.pool.destroy(queue_node);
             }
         }
     };
@@ -603,7 +611,7 @@ test "Queue" {
 
     // check if it has returned to its initial state
     try std.testing.expectEqual(null, queue.tryRecv());
-    try std.testing.expectEqual(0, queue.queue.len);
+    try std.testing.expectEqual(0, queue.queue.len());
 
     var threads: [2]std.Thread = undefined;
 
@@ -616,5 +624,5 @@ test "Queue" {
 
     // check if it has returned to its initial state
     try std.testing.expectEqual(null, queue.tryRecv());
-    try std.testing.expectEqual(0, queue.queue.len);
+    try std.testing.expectEqual(0, queue.queue.len());
 }

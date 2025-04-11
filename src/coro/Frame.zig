@@ -4,7 +4,7 @@ const Scheduler = @import("Scheduler.zig");
 const Link = @import("minilib").Link;
 const log = std.log.scoped(.coro);
 
-pub const List = std.DoublyLinkedList(Link(@This(), "link", .double));
+pub const List = std.DoublyLinkedList;
 pub const stack_alignment = Fiber.stack_alignment;
 pub const Stack = Fiber.Stack;
 
@@ -23,7 +23,7 @@ pub const Status = enum(u8) {
     }
 };
 
-pub const WaitList = std.SinglyLinkedList(Link(@This(), "wait_link", .single));
+pub const WaitList = std.SinglyLinkedList;
 
 fiber: *Fiber,
 stack: ?Fiber.Stack = null,
@@ -34,8 +34,8 @@ canceled: bool = false,
 cancelable: bool = true,
 status: Status = .active,
 yield_state: u8 = 0,
-link: List.Node = .{ .data = .{} },
-wait_link: WaitList.Node = .{ .data = .{} },
+link: List.Node = .{},
+wait_link: WaitList.Node = .{},
 completer: ?*@This() = null,
 
 pub fn current() ?*@This() {
