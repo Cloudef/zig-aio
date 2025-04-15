@@ -15,8 +15,8 @@ zig fetch --save git+https://github.com/Cloudef/zig-aio.git
 In `build.zig` file add the following for whichever modules `zig-aio` is required.
 
 ```zig
-// get the "zig-aio" dependency from "build.zig.zon"
-const zig_aio = b.dependency("zig-aio", .{});
+// get the "aio" dependency from "build.zig.zon"
+const zig_aio = b.dependency("aio", .{});
 // for exe, lib, tests, etc.
 exe.root_module.addImport("aio", zig_aio.module("aio"));
 // for coroutines api
