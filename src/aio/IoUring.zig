@@ -945,7 +945,7 @@ fn uring_handle_completion(comptime op_type: Operation, op: op_type.Type(), stat
             .socket => switch (err) {
                 .SUCCESS, .INTR, .AGAIN, .FAULT => unreachable,
                 .CANCELED => error.Canceled,
-                .ACCES => error.PermissionDenied,
+                .ACCES => error.AccessDenied,
                 .AFNOSUPPORT => error.AddressFamilyNotSupported,
                 .INVAL => error.ProtocolFamilyNotAvailable,
                 .MFILE => error.ProcessFdQuotaExceeded,

@@ -5,7 +5,7 @@ const Link = @import("minilib").Link;
 const log = std.log.scoped(.coro);
 
 pub const List = std.DoublyLinkedList;
-pub const stack_alignment = Fiber.stack_alignment;
+pub const stack_alignment: std.mem.Alignment = .fromByteUnits(Fiber.stack_alignment);
 pub const Stack = Fiber.Stack;
 
 pub const Status = enum(u8) {
