@@ -328,34 +328,39 @@ pub fn immediate(pairs: anytype) aio.Error!u16 {
     return num_errors;
 }
 
-const ProbeOpsBuffer = [@sizeOf(std.os.linux.io_uring_probe) + 256 * @sizeOf(std.os.linux.io_uring_probe_op)]u8;
-
 const ProbeOpsResult = struct {
     last_op: IORING_OP,
     ops: []align(1) std.os.linux.io_uring_probe_op,
 };
 
-fn uring_probe_ops(mem: *ProbeOpsBuffer) !ProbeOpsResult {
+const io_uring_probe = extern struct {
+    /// Last opcode supported
+    last_op: IORING_OP,
+    /// Length of ops[] array below
+    ops_len: u8,
+    resv: u16,
+    resv2: [3]u32,
+    ops: [256]std.os.linux.io_uring_probe_op,
+
+    const empty = std.mem.zeroInit(@This(), .{});
+};
+
+fn uring_probe_ops(probe: *io_uring_probe) !ProbeOpsResult {
     var io = try uring_init(2);
     defer io.deinit();
-    var fba = std.heap.FixedBufferAllocator.init(mem);
-    var pbuf = fba.allocator().alloc(u8, @sizeOf(std.os.linux.io_uring_probe) + 256 * @sizeOf(std.os.linux.io_uring_probe_op)) catch unreachable;
-    @memset(pbuf, 0);
-    const res = std.os.linux.io_uring_register(io.fd, .REGISTER_PROBE, pbuf.ptr, 256);
+    const res = std.os.linux.io_uring_register(io.fd, .REGISTER_PROBE, probe, probe.ops.len);
     if (std.os.linux.E.init(res) != .SUCCESS) return error.Unexpected;
-    const probe = std.mem.bytesAsValue(std.os.linux.io_uring_probe, pbuf[0..@sizeOf(std.os.linux.io_uring_probe)]);
-    const ops = std.mem.bytesAsSlice(std.os.linux.io_uring_probe_op, pbuf[@sizeOf(std.os.linux.io_uring_probe)..]);
-    return .{ .last_op = .fromStd(probe.last_op), .ops = ops[0..probe.ops_len] };
+    return .{ .last_op = probe.last_op, .ops = probe.ops[0..probe.ops_len] };
 }
 
 fn uring_is_supported(ops: []const IORING_OP) bool {
-    var buf: ProbeOpsBuffer = undefined;
+    var buf = io_uring_probe.empty;
     const probe = uring_probe_ops(&buf) catch return false;
     for (ops) |op| {
         const supported = blk: {
             if (@intFromEnum(op) > @intFromEnum(probe.last_op)) break :blk false;
-            if (probe.ops[@intFromEnum(op)].flags & std.os.linux.IO_URING_OP_SUPPORTED == 0) break :blk false;
-            break :blk true;
+            if (@intFromEnum(op) > probe.ops.len) break :blk false;
+            break :blk probe.ops[@intFromEnum(op)].flags & std.os.linux.IO_URING_OP_SUPPORTED != 0;
         };
         if (!supported) {
             log.warn("unsupported OP: {s}", .{@tagName(op)});
