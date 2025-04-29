@@ -36,6 +36,8 @@
           zig build test bug -Daio:posix=force -Dsingle-threaded=true
           echo "zig build test:aio test:minilib -Dtarget=wasm32-wasi-none"
           zig build -Doptimize=ReleaseSafe test:aio test:minilib -Dtarget=wasm32-wasi-none
+          echo "zig build -Dtarget=x86_64-windows"
+          zig build -Dtarget=x86_64-windows
         elif [[ "$(uname)" == "Darwin" ]]; then
           echo "zig build test bug"
           zig build test bug
