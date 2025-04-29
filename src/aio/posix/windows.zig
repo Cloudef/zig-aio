@@ -104,10 +104,10 @@ pub const EventSource = struct {
     pub const OperationContext = struct {
         id: ops.Id,
         iocp: *Iocp,
-        link: WaitList.Node = .{ .data = .{} },
+        link: WaitList.Node = .{},
     };
 
-    pub const WaitList = std.SinglyLinkedList(Link(OperationContext, "link", .single));
+    pub const WaitList = std.SinglyLinkedList;
 
     waiters: WaitList = .{},
     semaphore: std.Thread.Semaphore = .{},
@@ -126,7 +126,8 @@ pub const EventSource = struct {
             self.semaphore.mutex.lock();
             defer self.semaphore.mutex.unlock();
             if (self.waiters.popFirst()) |w| {
-                w.data.cast().iocp.notify(.{ .type = .event_source, .id = w.data.cast().id }, self);
+                const ctx: *OperationContext = @fieldParentPtr("link", w);
+                ctx.iocp.notify(.{ .type = .event_source, .id = ctx.id }, self);
                 break :blk true;
             }
             break :blk false;
@@ -164,7 +165,7 @@ pub const EventSource = struct {
                 current_elm.next = node.next;
             }
         }
-        node.* = .{ .data = .{} };
+        node.* = .{};
     }
 };
 
