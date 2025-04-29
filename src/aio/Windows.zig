@@ -280,7 +280,8 @@ pub fn uringlator_start(self: *@This(), id: aio.Id, op_type: Operation) !void {
             const h = fs.ReOpenFile(state.read.file.handle, flags, .{ .READ = 1, .WRITE = 1 }, fs.FILE_FLAG_OVERLAPPED);
             _ = wtry(h != null and h.? != INVALID_HANDLE) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe);
             self.iocp.associateHandle(id, h.?) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe);
-            ovl.* = .{ .overlapped = ovlOff(state.read.offset), .owned = .{ .handle = h.? } };
+            const off = if (state.read.offset == aio.OFFSET_CURRENT_POS) state.read.file.getPos() catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe) else state.read.offset;
+            ovl.* = .{ .overlapped = ovlOff(off), .owned = .{ .handle = h.? } };
             var read: u32 = undefined;
             const ret = wtry(fs.ReadFile(h.?, state.read.buffer.ptr, @intCast(state.read.buffer.len), &read, &ovl.overlapped)) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe);
             if (ret != 0) {
@@ -300,7 +301,8 @@ pub fn uringlator_start(self: *@This(), id: aio.Id, op_type: Operation) !void {
             const h = fs.ReOpenFile(state.readv.file.handle, flags, .{ .READ = 1, .WRITE = 1 }, fs.FILE_FLAG_OVERLAPPED);
             _ = wtry(h != null and h.? != INVALID_HANDLE) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe);
             self.iocp.associateHandle(id, h.?) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe);
-            ovl.* = .{ .overlapped = ovlOff(state.readv.offset), .owned = .{ .handle = h.? } };
+            const off = if (state.readv.offset == aio.OFFSET_CURRENT_POS) state.readv.file.getPos() catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe) else state.readv.offset;
+            ovl.* = .{ .overlapped = ovlOff(off), .owned = .{ .handle = h.? } };
             var read: u32 = undefined;
             const ret = wtry(fs.ReadFile(h.?, state.readv.iov[0].base, @intCast(state.readv.iov[0].len), &read, &ovl.overlapped)) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe);
             if (ret != 0) {
@@ -316,7 +318,8 @@ pub fn uringlator_start(self: *@This(), id: aio.Id, op_type: Operation) !void {
             const h = fs.ReOpenFile(state.write.file.handle, flags, .{ .READ = 1, .WRITE = 1 }, fs.FILE_FLAG_OVERLAPPED);
             _ = wtry(h != null and h.? != INVALID_HANDLE) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe);
             self.iocp.associateHandle(id, h.?) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe);
-            ovl.* = .{ .overlapped = ovlOff(state.write.offset), .owned = .{ .handle = h.? } };
+            const off = if (state.write.offset == aio.OFFSET_CURRENT_POS) state.write.file.getPos() catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe) else state.write.offset;
+            ovl.* = .{ .overlapped = ovlOff(off), .owned = .{ .handle = h.? } };
             var written: u32 = undefined;
             const ret = wtry(fs.WriteFile(h.?, state.write.buffer.ptr, @intCast(state.write.buffer.len), &written, &ovl.overlapped)) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe);
             if (ret != 0) {
@@ -336,7 +339,8 @@ pub fn uringlator_start(self: *@This(), id: aio.Id, op_type: Operation) !void {
             const h = fs.ReOpenFile(state.writev.file.handle, flags, .{ .READ = 1, .WRITE = 1 }, fs.FILE_FLAG_OVERLAPPED);
             _ = wtry(h != null and h.? != INVALID_HANDLE) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe);
             self.iocp.associateHandle(id, h.?) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe);
-            ovl.* = .{ .overlapped = ovlOff(state.writev.offset), .owned = .{ .handle = h.? } };
+            const off = if (state.writev.offset == aio.OFFSET_CURRENT_POS) state.writev.file.getPos() catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe) else state.writev.offset;
+            ovl.* = .{ .overlapped = ovlOff(off), .owned = .{ .handle = h.? } };
             var written: u32 = undefined;
             const ret = wtry(fs.WriteFile(h.?, state.writev.iov[0].base, @intCast(state.writev.iov[0].len), &written, &ovl.overlapped)) catch |err| return self.uringlator.finish(self, id, err, .thread_unsafe);
             if (ret != 0) {
