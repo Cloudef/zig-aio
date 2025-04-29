@@ -29,9 +29,8 @@ fn server(startup: *std.Thread.ResetEvent) !void {
     var ring = try std.os.linux.IoUring.init(CQES, std.os.linux.IORING_SETUP_SINGLE_ISSUER | std.os.linux.IORING_SETUP_COOP_TASKRUN);
     defer ring.deinit();
 
-    var recv_mega_buffer: [NUM_BUFFERS * BUFSZ]u8 = undefined;
-    var recv_buf_ring = try std.os.linux.IoUring.BufferGroup.init(&ring, 0, &recv_mega_buffer, BUFSZ, NUM_BUFFERS);
-    defer recv_buf_ring.deinit();
+    var recv_buf_ring = try std.os.linux.IoUring.BufferGroup.init(&ring, std.heap.smp_allocator, 0, BUFSZ * NUM_BUFFERS, NUM_BUFFERS);
+    defer recv_buf_ring.deinit(std.heap.smp_allocator);
 
     const socket = try std.posix.socket(std.posix.AF.INET, std.posix.SOCK.STREAM | std.posix.SOCK.CLOEXEC, std.posix.IPPROTO.TCP);
     defer std.posix.close(socket);
@@ -72,12 +71,11 @@ fn server(startup: *std.Thread.ResetEvent) !void {
             } else {
                 if (cqe.res == 1) break :main;
                 const size: usize = @intCast(cqe.res);
-                const off: u16 = cqe.buffer_id() catch unreachable;
-                for (0..size / BUFSZ) |idx| {
-                    recv_buf_ring.put(@intCast(off + idx));
+                for (0..size / BUFSZ) |_| {
                     var sqe = try ring.send(1, 0, "PONG", 0);
                     sqe.flags |= std.os.linux.IOSQE_FIXED_FILE | std.os.linux.IOSQE_CQE_SKIP_SUCCESS;
                 }
+                try recv_buf_ring.put(cqe.*);
             }
         }
     }
@@ -92,9 +90,8 @@ fn client(startup: *std.Thread.ResetEvent) !void {
 
     try ring.register_files(&.{socket});
 
-    var recv_mega_buffer: [NUM_BUFFERS * BUFSZ]u8 = undefined;
-    var recv_buf_ring = try std.os.linux.IoUring.BufferGroup.init(&ring, 0, &recv_mega_buffer, BUFSZ, NUM_BUFFERS);
-    defer recv_buf_ring.deinit();
+    var recv_buf_ring = try std.os.linux.IoUring.BufferGroup.init(&ring, std.heap.smp_allocator, 0, BUFSZ * NUM_BUFFERS, NUM_BUFFERS);
+    defer recv_buf_ring.deinit(std.heap.smp_allocator);
 
     startup.wait();
 
@@ -129,13 +126,12 @@ fn client(startup: *std.Thread.ResetEvent) !void {
                 std.posix.abort();
             } else {
                 const size: usize = @intCast(cqe.res);
-                const off: u16 = cqe.buffer_id() catch unreachable;
-                for (0..size / BUFSZ) |idx| {
-                    recv_buf_ring.put(@intCast(off + idx));
+                for (0..size / BUFSZ) |_| {
                     pongs += 1;
                     var sqe = try ring.send(1, 0, "PING", 0);
                     sqe.flags |= std.os.linux.IOSQE_FIXED_FILE | std.os.linux.IOSQE_CQE_SKIP_SUCCESS;
                 }
+                try recv_buf_ring.put(cqe.*);
             }
         }
     }

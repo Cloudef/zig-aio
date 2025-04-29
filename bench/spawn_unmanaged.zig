@@ -34,7 +34,7 @@ pub fn main() !void {
     const start_time = try std.time.Instant.now();
 
     var tasks: [TASK_COUNT]coro.Task.Generic2(work) = undefined;
-    var stacks: [TASK_COUNT][512]u8 align(coro.Task.stack_alignment) = undefined;
+    var stacks: [TASK_COUNT][512]u8 align(@intCast(comptime coro.Task.stack_alignment.toByteUnits())) = undefined;
     for (&tasks, &stacks) |*task, *stack| task.* = try scheduler.spawn(work, .{}, .{ .stack = .{ .unmanaged = stack } });
     for (&tasks) |*task| {
         task.wakeupIf(Yield.wake_me_up);
