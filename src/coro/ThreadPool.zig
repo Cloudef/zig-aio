@@ -81,7 +81,7 @@ pub fn yieldForCompletion(self: *@This(), func: anytype, args: anytype) MixError
 
 /// Spawn a new coroutine which will immediately call `yieldForCompletion` for later collection of the result
 pub fn spawnAnyForCompletion(self: *@This(), scheduler: *Scheduler, Result: type, func: anytype, args: anytype) Scheduler.SpawnError!Task {
-    return scheduler.spawnAny(Result, yieldForCompletion, .{ self, func, args }, .{ .stack = .{ .managed = 1024 * 24 } });
+    return scheduler.spawnAny(Result, yieldForCompletion, .{ self, func, args }, .{ .stack = .{ .managed = 1024 * 24 }, .name = "coro.ThreadPool" });
 }
 
 /// Helper for getting the Task.Generic when using spawnForCompletion tasks.
