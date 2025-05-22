@@ -25,6 +25,7 @@ pub const Status = enum(u8) {
 
 pub const WaitList = std.SinglyLinkedList;
 
+name: []const u8,
 fiber: *Fiber,
 stack: ?Fiber.Stack = null,
 result: *anyopaque,
@@ -47,12 +48,13 @@ pub fn current() ?*@This() {
 }
 
 pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-    try writer.print("{x}:{}", .{ @intFromPtr(self.fiber), self.status });
+    try writer.print("{s}:{x}:{}", .{ self.name, @intFromPtr(self.fiber), self.status });
 }
 
 pub const Error = error{OutOfMemory} || Fiber.Error;
 
 fn entrypoint(
+    name: []const u8,
     scheduler: *Scheduler,
     stack: ?Fiber.Stack,
     Result: type,
@@ -62,6 +64,7 @@ fn entrypoint(
 ) void {
     var res: Result = undefined;
     var frame: @This() = .{
+        .name = name,
         .fiber = Fiber.current().?,
         .stack = stack,
         .scheduler = scheduler,
@@ -88,6 +91,7 @@ fn entrypoint(
 }
 
 pub fn init(
+    name: []const u8,
     scheduler: *Scheduler,
     stack: Stack,
     managed_stack: bool,
@@ -97,6 +101,7 @@ pub fn init(
 ) Error!*@This() {
     var frame: *@This() = undefined;
     var fiber = try Fiber.init(stack, 0, entrypoint, .{
+        name,
         scheduler,
         if (managed_stack) stack else null,
         Result,

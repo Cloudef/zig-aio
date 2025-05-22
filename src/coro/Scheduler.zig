@@ -42,6 +42,7 @@ pub fn deinit(self: *@This()) void {
 pub const SpawnError = Frame.Error || error{Unexpected};
 
 pub const SpawnOptions = struct {
+    name: []const u8 = "anonymous",
     stack: union(enum) {
         unmanaged: Frame.Stack,
         managed: usize,
@@ -61,7 +62,7 @@ pub fn spawnAny(self: *@This(), Result: type, comptime func: anytype, args: anyt
     };
 
     errdefer if (opts.stack == .managed) self.allocator.free(stack);
-    const frame = try Frame.init(self, stack, opts.stack == .managed, Result, func, args);
+    const frame = try Frame.init(opts.name, self, stack, opts.stack == .managed, Result, func, args);
     if (opts.detached) frame.detach();
     return .{ .frame = frame };
 }
