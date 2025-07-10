@@ -43,7 +43,7 @@ pub fn init(stack: Stack, user_data: usize, comptime func: anytype, args: anytyp
 
     const Args = @TypeOf(args);
     const state = try State.init(stack, user_data, @sizeOf(Args), struct {
-        fn entry() callconv(.C) noreturn {
+        fn entry() callconv(.c) noreturn {
             const state = tls_state orelse unreachable;
 
             // Call the functions with the args.
@@ -109,7 +109,7 @@ const State = extern struct {
     stack_context: *anyopaque,
     user_data: usize,
 
-    fn init(stack: Stack, user_data: usize, args_size: usize, entry_point: *const fn () callconv(.C) noreturn) Error!*State {
+    fn init(stack: Stack, user_data: usize, args_size: usize, entry_point: *const fn () callconv(.c) noreturn) Error!*State {
         const stack_base = @intFromPtr(stack.ptr);
         const stack_end = @intFromPtr(stack.ptr + stack.len);
 

@@ -70,14 +70,17 @@ pub fn build(b: *std.Build) void {
         .coro_wttr,
     }) |example| {
         const os = target.query.os_tag orelse builtin.os.tag;
-        const exe = b.addExecutable(.{
-            .name = @tagName(example),
+        const module = b.createModule(.{
             .root_source_file = b.path("examples/" ++ @tagName(example) ++ ".zig"),
             .target = target,
             .optimize = optimize,
             .sanitize_thread = sanitize,
             .single_threaded = if (example == .coro_wttr and os != .wasi) false else single_threaded,
             .strip = false,
+        });
+        const exe = b.addExecutable(.{
+            .name = @tagName(example),
+            .root_module = module,
         });
         exe.root_module.addImport("aio", aio);
         exe.root_module.addImport("coro", coro);
@@ -90,15 +93,18 @@ pub fn build(b: *std.Build) void {
     const test_filter = b.option([]const u8, "test-filter", "Skip tests that do not match any filter") orelse "";
     const test_step = b.step("test", "Run unit tests");
     inline for (.{ .minilib, .aio, .coro }) |mod| {
-        const tst = b.addTest(.{
+        const module = b.createModule(.{
             .root_source_file = b.path("src/" ++ @tagName(mod) ++ ".zig"),
             .target = target,
             .optimize = optimize,
-            .filters = &.{test_filter},
             .link_libc = aio.link_libc,
             .sanitize_thread = sanitize,
             .single_threaded = single_threaded,
             .strip = false,
+        });
+        const tst = b.addTest(.{
+            .root_module = module,
+            .filters = &.{test_filter},
         });
         switch (mod) {
             .minilib => addImportsFrom(tst.root_module, minilib),
@@ -119,8 +125,7 @@ pub fn build(b: *std.Build) void {
         .ticker,
         .backend_override,
     }) |bug| {
-        const exe = b.addExecutable(.{
-            .name = @tagName(bug),
+        const module = b.createModule(.{
             .root_source_file = b.path("bugs/" ++ @tagName(bug) ++ ".zig"),
             .target = target,
             .optimize = switch (bug) {
@@ -131,6 +136,10 @@ pub fn build(b: *std.Build) void {
             .sanitize_thread = sanitize,
             .single_threaded = single_threaded,
             .strip = false,
+        });
+        const exe = b.addExecutable(.{
+            .name = @tagName(bug),
+            .root_module = module,
         });
         exe.root_module.addImport("aio", aio);
         exe.root_module.addImport("coro", coro);
@@ -150,14 +159,17 @@ pub fn build(b: *std.Build) void {
         .spawn_managed,
         .spawn_unmanaged,
     }) |bench| {
-        const exe = b.addExecutable(.{
-            .name = @tagName(bench),
+        const module = b.createModule(.{
             .root_source_file = b.path("bench/" ++ @tagName(bench) ++ ".zig"),
             .target = target,
             .optimize = .ReleaseFast,
             .sanitize_thread = sanitize,
             .single_threaded = single_threaded,
             .strip = false,
+        });
+        const exe = b.addExecutable(.{
+            .name = @tagName(bench),
+            .root_module = module,
         });
         exe.root_module.addImport("aio", aio);
         exe.root_module.addImport("coro", coro);
