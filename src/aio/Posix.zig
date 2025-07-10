@@ -184,17 +184,17 @@ pub fn complete(self: *@This(), mode: aio.CompletionMode, handler: anytype) aio.
                             switch (op_type) {
                                 inline else => |tag| {
                                     if (hasField(tag.Type().Error, "BrokenPipe")) {
-                                        Uringlator.debug("poll: {}: {} => ERR (BrokenPipe)", .{ id, op_type });
+                                        Uringlator.debug("poll: {f}: {any} => ERR (BrokenPipe)", .{ id, op_type });
                                         self.uringlator.finish(self, id, error.BrokenPipe, .thread_unsafe);
                                     } else {
-                                        Uringlator.debug("poll: {}: {} => ERR (Unexpected)", .{ id, op_type });
+                                        Uringlator.debug("poll: {f}: {any} => ERR (Unexpected)", .{ id, op_type });
                                         self.uringlator.finish(self, id, error.Unexpected, .thread_unsafe);
                                     }
                                     continue :again;
                                 },
                             }
                         } else {
-                            Uringlator.debug("poll: {}: {} => NVAL (Unexpected)", .{ id, op_type });
+                            Uringlator.debug("poll: {f}: {any} => NVAL (Unexpected)", .{ id, op_type });
                             self.uringlator.finish(self, id, error.Unexpected, .thread_unsafe);
                             continue :again;
                         }
@@ -202,9 +202,9 @@ pub fn complete(self: *@This(), mode: aio.CompletionMode, handler: anytype) aio.
 
                     // start it for real this time
                     if (self.uringlator.ops.getOne(.next, id) != id) {
-                        Uringlator.debug("ready: {}: {} => {}", .{ id, op_type, self.uringlator.ops.getOne(.next, id) });
+                        Uringlator.debug("ready: {f}: {any} => {f}", .{ id, op_type, self.uringlator.ops.getOne(.next, id) });
                     } else {
-                        Uringlator.debug("ready: {}: {}", .{ id, op_type });
+                        Uringlator.debug("ready: {f}: {any}", .{ id, op_type });
                     }
 
                     try self.uringlator_start(id, op_type);
@@ -500,9 +500,9 @@ pub fn uringlator_start(self: *@This(), id: aio.Id, op_type: Operation) !void {
 
         // pending for readiness, perform the operation later
         if (self.uringlator.ops.getOne(.next, id) != id) {
-            Uringlator.debug("pending: {}: {} => {}", .{ id, op_type, self.uringlator.ops.getOne(.next, id) });
+            Uringlator.debug("pending: {f}: {any} => {f}", .{ id, op_type, self.uringlator.ops.getOne(.next, id) });
         } else {
-            Uringlator.debug("pending: {}: {}", .{ id, op_type });
+            Uringlator.debug("pending: {f}: {any}", .{ id, op_type });
         }
 
         const readiness = self.uringlator.ops.getOne(.readiness, id);

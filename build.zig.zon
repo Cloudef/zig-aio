@@ -4,8 +4,8 @@
     .fingerprint = 0xdf66d422DEADBEEF,
     .dependencies = .{
         .zigwin32 = .{
-            .url = "git+https://github.com/marlersoft/zigwin32.git#0d804dce7632d0912245b1a7aa0384a21629f453",
-            .hash = "zigwin32-25.0.28-preview-AAAAAC8f_AP71CpFWpTOITTECAoWyZB0-yjKlN-H3ePP",
+            .url = "git+https://github.com/marlersoft/zigwin32.git#9d399c0895de4746c1fcab366841e2ab031b0429",
+            .hash = "zigwin32-25.0.28-preview-AAAAANd_5APbcon3QqoYfLKnJ13fiBGJSGq9YrVZsfI-",
             .lazy = true,
         },
     },

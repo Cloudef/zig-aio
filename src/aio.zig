@@ -278,13 +278,13 @@ test "shared outputs" {
     try std.testing.expect(id1 != id2);
     try std.testing.expect(id1 != id3);
     try std.testing.expect(id2 != id3);
-    std.debug.print("{}\n", .{id1});
-    std.debug.print("{}\n", .{id2});
-    std.debug.print("{}\n", .{id3});
+    std.debug.print("{f}\n", .{id1});
+    std.debug.print("{f}\n", .{id2});
+    std.debug.print("{f}\n", .{id3});
     _ = try dynamic.completeAll({});
-    std.debug.print("{}\n", .{id1});
-    std.debug.print("{}\n", .{id2});
-    std.debug.print("{}\n", .{id3});
+    std.debug.print("{f}\n", .{id1});
+    std.debug.print("{f}\n", .{id2});
+    std.debug.print("{f}\n", .{id3});
 }
 
 test "Nop" {
@@ -644,7 +644,7 @@ test "ChildExit" {
         .linux, .freebsd, .openbsd, .dragonfly, .netbsd, .macos, .ios, .watchos, .visionos, .tvos => blk: {
             const pid = try std.posix.fork();
             if (pid == 0) {
-                std.time.sleep(1 * std.time.ns_per_s);
+                std.Thread.sleep(1 * std.time.ns_per_s);
                 std.posix.exit(69);
             }
             break :blk pid;

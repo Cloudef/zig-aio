@@ -23,11 +23,15 @@ fn protection(comptime func: anytype, args: anytype) void {
 }
 
 pub fn logInfo(comptime format: []const u8, args: anytype) void {
-    std.io.getStdOut().writer().print(format, args) catch return;
+    var buf: [4096]u8 = undefined;
+    var writer = std.fs.File.stdout().writerStreaming(&buf);
+    writer.interface.print(format, args) catch return;
 }
 
 pub fn logErr(comptime format: []const u8, args: anytype) void {
-    std.io.getStdErr().writer().print(format, args) catch return;
+    var buf: [4096]u8 = undefined;
+    var writer = std.fs.File.stderr().writerStreaming(&buf);
+    writer.interface.print(format, args) catch return;
 }
 
 pub fn delay(ns: u128) !void {

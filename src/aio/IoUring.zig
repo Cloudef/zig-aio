@@ -161,7 +161,7 @@ pub fn queue(self: *@This(), pairs: anytype, handler: anytype) aio.Error!void {
     if (comptime pairs.len > 1) {
         var ids: std.BoundedArray(aio.Id, pairs.len) = .{};
         errdefer inline for (ids.constSlice(), pairs) |id, pair| {
-            debug("dequeue: {}: {}, {s}", .{ id, pair.tag, @tagName(pair.link) });
+            debug("dequeue: {f}: {any}, {s}", .{ id, pair.tag, @tagName(pair.link) });
             self.ops.release(id) catch unreachable;
         };
         inline for (pairs) |pair| ids.append(try self.queueOperation(pair.tag, pair.op, pair.link)) catch unreachable;
@@ -449,7 +449,7 @@ fn uring_init(n: u16) aio.Error!std.os.linux.IoUring {
 }
 
 fn uring_queue(io: *std.os.linux.IoUring, comptime op_type: Operation, op: op_type.Type(), link: aio.Link, user_data: u64, state: *UringOperation.State) aio.Error!void {
-    debug("queue: {}: {}", .{ aio.Id.init(user_data), op_type });
+    debug("queue: {f}: {}", .{ aio.Id.init(user_data), op_type });
     const Trash = struct {
         var u_64: u64 align(1) = undefined;
     };
@@ -977,13 +977,13 @@ fn uring_handle_completion(comptime op_type: Operation, op: op_type.Type(), stat
             if (op_type == .link_timeout and res == error.Canceled) {
                 // special case
             } else {
-                debug("complete: {}: {} [FAIL] {}", .{ aio.Id.init(cqe.user_data), op_type, res });
+                debug("complete: {f}: {} [FAIL] {}", .{ aio.Id.init(cqe.user_data), op_type, res });
                 return error.OperationFailed;
             }
         }
     }
 
-    debug("complete: {}: {} [OK]", .{ aio.Id.init(cqe.user_data), op_type });
+    debug("complete: {f}: {} [OK]", .{ aio.Id.init(cqe.user_data), op_type });
 
     switch (op_type) {
         .nop => {},
