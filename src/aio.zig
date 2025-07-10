@@ -274,13 +274,13 @@ test "shared outputs" {
     try std.testing.expect(id1 != id2);
     try std.testing.expect(id1 != id3);
     try std.testing.expect(id2 != id3);
-    std.debug.print("{}\n", .{id1});
-    std.debug.print("{}\n", .{id2});
-    std.debug.print("{}\n", .{id3});
+    std.debug.print("{f}\n", .{id1});
+    std.debug.print("{f}\n", .{id2});
+    std.debug.print("{f}\n", .{id3});
     _ = try dynamic.completeAll({});
-    std.debug.print("{}\n", .{id1});
-    std.debug.print("{}\n", .{id2});
-    std.debug.print("{}\n", .{id3});
+    std.debug.print("{f}\n", .{id1});
+    std.debug.print("{f}\n", .{id2});
+    std.debug.print("{f}\n", .{id3});
 }
 
 test "Nop" {

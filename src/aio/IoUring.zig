@@ -161,7 +161,7 @@ pub fn queue(self: *@This(), pairs: anytype, handler: anytype) aio.Error!void {
     if (comptime pairs.len > 1) {
         var ids: std.BoundedArray(aio.Id, pairs.len) = .{};
         errdefer inline for (ids.constSlice(), pairs) |id, pair| {
-            debug("dequeue: {}: {}, {s}", .{ id, pair.tag, @tagName(pair.link) });
+            debug("dequeue: {f}: {any}, {s}", .{ id, pair.tag, @tagName(pair.link) });
             self.ops.release(id) catch unreachable;
         };
         inline for (pairs) |pair| ids.append(try self.queueOperation(pair.tag, pair.op, pair.link)) catch unreachable;

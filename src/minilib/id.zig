@@ -15,7 +15,7 @@ pub fn Id(IndexBits: type, EntropyBits: type) type {
             return @intCast(@as(BackingInt, @bitCast(self)));
         }
 
-        pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(self: @This(), writer: anytype) !void {
             return writer.print("{}!{}", .{ self.slot, self.generation });
         }
 
