@@ -244,7 +244,7 @@ pub fn Uringlator(BackendOperation: type) type {
 
         fn queueOperation(self: *@This(), comptime tag: Operation, op: anytype, link: aio.Link, backend: anytype) aio.Error!aio.Id {
             const id = self.ops.next() orelse return error.OutOfMemory;
-            debug("queue: {}: {}, {s} ({?})", .{ id, tag, @tagName(link), self.prev_id });
+            debug("queue: {f}: {any}, {s} ({?f})", .{ id, tag, @tagName(link), self.prev_id });
 
             const uop: UringlatorOperation = .{
                 .type = tag,
@@ -285,7 +285,7 @@ pub fn Uringlator(BackendOperation: type) type {
             if (comptime pairs.len > 1) {
                 var ids: std.BoundedArray(aio.Id, pairs.len) = .{};
                 errdefer inline for (ids.constSlice(), pairs) |id, pair| {
-                    debug("dequeue: {}: {}, {s} ({?})", .{ id, pair.tag, @tagName(pair.link), self.prev_id });
+                    debug("dequeue: {f}: {any}, {s} ({?f})", .{ id, pair.tag, @tagName(pair.link), self.prev_id });
                     backend.uringlator_dequeue(id, pair.tag, pair.op);
                     self.ops.release(id) catch unreachable;
                 };
@@ -347,9 +347,9 @@ pub fn Uringlator(BackendOperation: type) type {
 
         fn start(self: *@This(), op_type: Operation, id: aio.Id, backend: anytype) aio.Error!void {
             if (self.ops.getOne(.next, id) != id) {
-                debug("perform: {}: {} => {}", .{ id, op_type, self.ops.getOne(.next, id) });
+                debug("perform: {f}: {any} => {f}", .{ id, op_type, self.ops.getOne(.next, id) });
             } else {
-                debug("perform: {}: {}", .{ id, op_type });
+                debug("perform: {f}: {any}", .{ id, op_type });
             }
             std.debug.assert(!self.started.isSet(id.slot));
             self.started.set(id.slot);
@@ -425,9 +425,9 @@ pub fn Uringlator(BackendOperation: type) type {
                 };
 
                 if (failed) {
-                    debug("complete: {}: {} [FAIL] {}", .{ res.id, op_type, failure });
+                    debug("complete: {f}: {any} [FAIL] {any}", .{ res.id, op_type, failure });
                 } else {
-                    debug("complete: {}: {} [OK]", .{ res.id, op_type });
+                    debug("complete: {f}: {any} [OK]", .{ res.id, op_type });
                 }
 
                 num_errors += @intFromBool(failed);
@@ -497,7 +497,7 @@ pub fn Uringlator(BackendOperation: type) type {
         };
 
         pub fn finish(self: *@This(), backend: anytype, id: aio.Id, failure: Operation.Error, comptime safety: Safety) void {
-            debug("finish: {} {}", .{ id, failure });
+            debug("finish: {f} {any}", .{ id, failure });
             if (safety == .thread_unsafe) self.ops.lookup(id) catch unreachable; // trying to finish nonexistant id
             self.finished.add(.{ .id = id, .failure = failure }) catch unreachable;
             backend.uringlator_notify(safety);

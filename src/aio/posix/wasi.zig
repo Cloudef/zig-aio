@@ -1,5 +1,6 @@
 const std = @import("std");
 const posix = @import("posix.zig");
+const BoundedArray = @import("minilib").BoundedArray;
 const options = @import("../../aio.zig").options;
 const log = std.log.scoped(.aio_wasi);
 
@@ -207,7 +208,7 @@ fn clock(userdata: usize, timeout: i32) std.os.wasi.subscription_t {
 pub fn poll(fds: []std.posix.pollfd, timeout: i32) std.posix.PollError!usize {
     // TODO: maybe use thread local arena instead?
     const MAX_POLL_FDS = 4096;
-    var subs: std.BoundedArray(std.os.wasi.subscription_t, MAX_POLL_FDS) = .{};
+    var subs: BoundedArray(std.os.wasi.subscription_t, MAX_POLL_FDS) = .{};
     for (fds) |*pfd| {
         pfd.revents = 0;
         if (pfd.events & std.posix.POLL.IN != 0) {

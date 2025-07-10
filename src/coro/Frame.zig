@@ -18,7 +18,7 @@ pub const Status = enum(u8) {
     reset_event, // waiting on a reset_event
     yield, // yielded by a user code
 
-    pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(self: @This(), writer: anytype) !void {
         try writer.writeAll(@tagName(self));
     }
 };
@@ -47,8 +47,8 @@ pub fn current() ?*@This() {
     }
 }
 
-pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-    try writer.print("{s}:{x}:{}", .{ self.name, @intFromPtr(self.fiber), self.status });
+pub fn format(self: @This(), writer: anytype) !void {
+    try writer.print("{s}:{x}:{f}", .{ self.name, @intFromPtr(self.fiber), self.status });
 }
 
 pub const Error = error{OutOfMemory} || Fiber.Error;
@@ -74,12 +74,12 @@ fn entrypoint(
     scheduler.running.append(&frame.link);
     out_frame.* = &frame;
 
-    debug("spawned: {}", .{frame});
+    debug("spawned: {f}", .{frame});
     res = @call(.always_inline, func, args);
 
     if (comptime @typeInfo(Result) == .error_union) {
         if (res) |_| {} else |err| {
-            debug("error: {}: {}", .{ frame, err });
+            debug("error: {f}: {any}", .{ frame, err });
         }
     }
 
@@ -114,7 +114,7 @@ pub fn init(
 }
 
 pub fn deinit(self: *@This()) void {
-    debug("deinit: {}", .{self});
+    debug("deinit: {f}", .{self});
     std.debug.assert(self.status == .completed);
     self.scheduler.completed.remove(&self.link);
     if (self.stack) |stack| self.scheduler.allocator.free(stack);
@@ -130,7 +130,7 @@ pub fn signal(self: *@This()) void {
 
 pub fn wakeup(self: *@This(), expected_status: Status) void {
     std.debug.assert(self.status == expected_status);
-    debug("waking up: {}", .{self});
+    debug("waking up: {f}", .{self});
     self.status = .active;
     self.fiber.switchTo();
 }
@@ -139,7 +139,7 @@ pub fn yield(status: Status) void {
     if (current()) |frame| {
         std.debug.assert(frame.status == .active);
         frame.status = status;
-        debug("yielding: {}", .{frame});
+        debug("yielding: {f}", .{frame});
         Fiber.yield();
     } else {
         unreachable; // yield can only be used from a frame
@@ -150,7 +150,7 @@ pub const CompleteMode = enum { wait, cancel };
 
 pub fn complete(self: *@This(), mode: CompleteMode, comptime Result: type) Result {
     std.debug.assert(!self.canceled);
-    debug("complete: {}, {s}", .{ self, @tagName(mode) });
+    debug("complete: {f}, {t}", .{ self, mode });
     self.detached = false;
 
     if (current()) |frame| {
@@ -181,7 +181,7 @@ pub fn complete(self: *@This(), mode: CompleteMode, comptime Result: type) Resul
                 error.SystemOutdated => unreachable,
                 error.PermissionDenied => unreachable,
                 else => |e| {
-                    log.err("error: {}", .{e});
+                    log.err("error: {any}", .{e});
                     log.err("tick failed in a critical section, tearing down the scheduler by a force", .{});
                     self.scheduler.state = .tear_down;
                     break;
@@ -208,27 +208,27 @@ fn tryCancel(self: *@This()) bool {
         switch (self.status) {
             .active => {},
             .io => |status| {
-                debug("cancel... pending on io: {}", .{self});
+                debug("cancel... pending on io: {f}", .{self});
                 self.wakeup(status); // cancel io
             },
             .io_cancel => {
-                debug("cancel... pending on cancel: {}", .{self});
+                debug("cancel... pending on cancel: {f}", .{self});
                 // can't cancel
             },
             .waiting_frame => {
-                debug("cancel... pending for another frame to complete: {}", .{self});
+                debug("cancel... pending for another frame to complete: {f}", .{self});
                 // can't cancel
             },
             .reset_event => |status| {
-                debug("cancel... reset event: {}", .{self});
+                debug("cancel... reset event: {f}", .{self});
                 self.wakeup(status);
             },
             .semaphore => |status| {
-                debug("cancel... semaphore: {}", .{self});
+                debug("cancel... semaphore: {f}", .{self});
                 self.wakeup(status);
             },
             .yield => |status| {
-                debug("cancel... yield: {}", .{self});
+                debug("cancel... yield: {f}", .{self});
                 self.wakeup(status);
             },
             .completed => unreachable,
@@ -239,7 +239,7 @@ fn tryCancel(self: *@This()) bool {
 
 pub fn detach(self: *@This()) void {
     std.debug.assert(!self.canceled);
-    debug("detach: {}", .{self});
+    debug("detach: {f}", .{self});
     self.detached = true;
 }
 
