@@ -640,7 +640,7 @@ test "ChildExit" {
         .linux, .freebsd, .openbsd, .dragonfly, .netbsd, .macos, .ios, .watchos, .visionos, .tvos => blk: {
             const pid = try std.posix.fork();
             if (pid == 0) {
-                std.time.sleep(1 * std.time.ns_per_s);
+                std.Thread.sleep(1 * std.time.ns_per_s);
                 std.posix.exit(69);
             }
             break :blk pid;
