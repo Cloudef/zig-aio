@@ -4,6 +4,7 @@ const Operation = @import("ops.zig").Operation;
 const posix = @import("posix/posix.zig");
 const linux = @import("posix/linux.zig");
 const log = std.log.scoped(.aio_io_uring);
+const BoundedArray = @import("bounded_array").BoundedArray;
 
 const Supported = struct {
     var once = std.once(do_once);
@@ -159,12 +160,12 @@ pub fn queue(self: *@This(), pairs: anytype, handler: anytype) aio.Error!void {
     const saved_sq = self.io.sq;
     errdefer self.io.sq = saved_sq;
     if (comptime pairs.len > 1) {
-        var ids: std.BoundedArray(aio.Id, pairs.len) = .{};
+        var ids: BoundedArray(aio.Id, pairs.len) = .{};
         errdefer inline for (ids.constSlice(), pairs) |id, pair| {
             debug("dequeue: {f}: {any}, {s}", .{ id, pair.tag, @tagName(pair.link) });
             self.ops.release(id) catch unreachable;
         };
-        inline for (pairs) |pair| ids.append(try self.queueOperation(pair.tag, pair.op, pair.link)) catch unreachable;
+        inline for (pairs) |pair| ids.appendBounded(try self.queueOperation(pair.tag, pair.op, pair.link)) catch unreachable;
         if (@TypeOf(handler) != void) {
             inline for (ids.constSlice(), pairs) |id, pair| {
                 handler.aio_queue(id, pair.op.userdata);

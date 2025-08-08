@@ -7,6 +7,7 @@ const DoubleBufferedFixedArrayList = @import("minilib").DoubleBufferedFixedArray
 const FixedArrayList = @import("minilib").FixedArrayList;
 const posix = @import("posix/posix.zig");
 const log = std.log.scoped(.aio_uringlator);
+const BoundedArray = @import("bounded_array.zig").BoundedArray;
 
 const Result = struct {
     failure: Operation.Error,
@@ -283,7 +284,7 @@ pub fn Uringlator(BackendOperation: type) type {
 
         pub fn queue(self: *@This(), pairs: anytype, backend: anytype, handler: anytype) aio.Error!void {
             if (comptime pairs.len > 1) {
-                var ids: std.BoundedArray(aio.Id, pairs.len) = .{};
+                var ids: BoundedArray(aio.Id, pairs.len) = .{};
                 errdefer inline for (ids.constSlice(), pairs) |id, pair| {
                     debug("dequeue: {f}: {any}, {s} ({?f})", .{ id, pair.tag, @tagName(pair.link), self.prev_id });
                     backend.uringlator_dequeue(id, pair.tag, pair.op);
