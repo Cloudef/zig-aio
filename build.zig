@@ -81,6 +81,7 @@ pub fn build(b: *std.Build) void {
         const exe = b.addExecutable(.{
             .name = @tagName(example),
             .root_module = module,
+            .use_llvm = true,
         });
         exe.root_module.addImport("aio", aio);
         exe.root_module.addImport("coro", coro);
@@ -105,6 +106,7 @@ pub fn build(b: *std.Build) void {
         const tst = b.addTest(.{
             .root_module = module,
             .filters = &.{test_filter},
+            .use_llvm = true,
         });
         switch (mod) {
             .minilib => addImportsFrom(tst.root_module, minilib),
@@ -140,6 +142,7 @@ pub fn build(b: *std.Build) void {
         const exe = b.addExecutable(.{
             .name = @tagName(bug),
             .root_module = module,
+            .use_llvm = true,
         });
         exe.root_module.addImport("aio", aio);
         exe.root_module.addImport("coro", coro);
@@ -170,6 +173,7 @@ pub fn build(b: *std.Build) void {
         const exe = b.addExecutable(.{
             .name = @tagName(bench),
             .root_module = module,
+            .use_llvm = true,
         });
         exe.root_module.addImport("aio", aio);
         exe.root_module.addImport("coro", coro);
