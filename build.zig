@@ -72,12 +72,14 @@ pub fn build(b: *std.Build) void {
         const os = target.query.os_tag orelse builtin.os.tag;
         const exe = b.addExecutable(.{
             .name = @tagName(example),
-            .root_source_file = b.path("examples/" ++ @tagName(example) ++ ".zig"),
-            .target = target,
-            .optimize = optimize,
-            .sanitize_thread = sanitize,
-            .single_threaded = if (example == .coro_wttr and os != .wasi) false else single_threaded,
-            .strip = false,
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("examples/" ++ @tagName(example) ++ ".zig"),
+                .target = target,
+                .optimize = optimize,
+                .sanitize_thread = sanitize,
+                .single_threaded = if (example == .coro_wttr and os != .wasi) false else single_threaded,
+                .strip = false,
+            }),
         });
         exe.root_module.addImport("aio", aio);
         exe.root_module.addImport("coro", coro);
@@ -91,14 +93,16 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run unit tests");
     inline for (.{ .minilib, .aio, .coro }) |mod| {
         const tst = b.addTest(.{
-            .root_source_file = b.path("src/" ++ @tagName(mod) ++ ".zig"),
-            .target = target,
-            .optimize = optimize,
             .filters = &.{test_filter},
-            .link_libc = aio.link_libc,
-            .sanitize_thread = sanitize,
-            .single_threaded = single_threaded,
-            .strip = false,
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("src/" ++ @tagName(mod) ++ ".zig"),
+                .target = target,
+                .optimize = optimize,
+                .link_libc = aio.link_libc,
+                .sanitize_thread = sanitize,
+                .single_threaded = single_threaded,
+                .strip = false,
+            }),
         });
         switch (mod) {
             .minilib => addImportsFrom(tst.root_module, minilib),
@@ -121,16 +125,18 @@ pub fn build(b: *std.Build) void {
     }) |bug| {
         const exe = b.addExecutable(.{
             .name = @tagName(bug),
-            .root_source_file = b.path("bugs/" ++ @tagName(bug) ++ ".zig"),
-            .target = target,
-            .optimize = switch (bug) {
-                // fails on io_uring if sanitize == true and optimize == debug, not sure why
-                .ticker => if (sanitize) .ReleaseFast else optimize,
-                else => optimize,
-            },
-            .sanitize_thread = sanitize,
-            .single_threaded = single_threaded,
-            .strip = false,
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("bugs/" ++ @tagName(bug) ++ ".zig"),
+                .target = target,
+                .optimize = switch (bug) {
+                    // fails on io_uring if sanitize == true and optimize == debug, not sure why
+                    .ticker => if (sanitize) .ReleaseFast else optimize,
+                    else => optimize,
+                },
+                .sanitize_thread = sanitize,
+                .single_threaded = single_threaded,
+                .strip = false,
+            }),
         });
         exe.root_module.addImport("aio", aio);
         exe.root_module.addImport("coro", coro);
@@ -152,12 +158,14 @@ pub fn build(b: *std.Build) void {
     }) |bench| {
         const exe = b.addExecutable(.{
             .name = @tagName(bench),
-            .root_source_file = b.path("bench/" ++ @tagName(bench) ++ ".zig"),
-            .target = target,
-            .optimize = .ReleaseFast,
-            .sanitize_thread = sanitize,
-            .single_threaded = single_threaded,
-            .strip = false,
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("bench/" ++ @tagName(bench) ++ ".zig"),
+                .target = target,
+                .optimize = .ReleaseFast,
+                .sanitize_thread = sanitize,
+                .single_threaded = single_threaded,
+                .strip = false,
+            }),
         });
         exe.root_module.addImport("aio", aio);
         exe.root_module.addImport("coro", coro);

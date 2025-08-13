@@ -10,19 +10,21 @@ pub const std_options: std.Options = .{
 
 fn getWeather(completed: *std.atomic.Value(u32), allocator: std.mem.Allocator, city: []const u8, lang: []const u8) anyerror![]const u8 {
     defer _ = completed.fetchAdd(1, .monotonic);
-    var url: std.BoundedArray(u8, 256) = .{};
+    var buf: [256]u8 = undefined;
+    var url: std.ArrayListUnmanaged(u8) = .initBuffer(&buf);
     if (builtin.target.os.tag == .windows) {
-        try url.writer().print("https://wttr.in/{s}?AFT&lang={s}", .{ city, lang });
+        try url.fixedWriter().print("https://wttr.in/{s}?AFT&lang={s}", .{ city, lang });
     } else {
-        try url.writer().print("https://wttr.in/{s}?AF&lang={s}", .{ city, lang });
+        try url.fixedWriter().print("https://wttr.in/{s}?AF&lang={s}", .{ city, lang });
     }
     var body = std.ArrayList(u8).init(allocator);
     errdefer body.deinit();
     var client: std.http.Client = .{ .allocator = allocator };
     defer client.deinit();
+    var writer = body.writer().adaptToNewApi();
     _ = try client.fetch(.{
-        .location = .{ .url = url.constSlice() },
-        .response_storage = .{ .dynamic = &body },
+        .location = .{ .url = &buf },
+        .response_writer = &writer.new_interface,
     });
     return body.toOwnedSlice();
 }
@@ -33,9 +35,10 @@ fn getLatestZig(completed: *std.atomic.Value(u32), allocator: std.mem.Allocator)
     defer body.deinit();
     var client: std.http.Client = .{ .allocator = allocator };
     defer client.deinit();
+    var writer = body.writer().adaptToNewApi();
     _ = try client.fetch(.{
         .location = .{ .url = "https://ziglang.org/download/index.json" },
-        .response_storage = .{ .dynamic = &body },
+        .response_writer = &writer.new_interface,
     });
     const Index = struct {
         master: struct { version: []const u8 },
@@ -102,18 +105,20 @@ pub fn main() !void {
     // don't really have to call this, but I want the defer that cleans the progress bar to run
     ltask.cancel();
 
+    var buf: [std.heap.pageSize()]u8 = undefined;
+    var writer = std.fs.File.stdout().writer(&buf);
     for (tasks.items, 0..) |task, idx| {
         if (task.complete(.wait)) |body| {
             defer allocator.free(body);
             if (idx == 3) {
-                try std.io.getStdOut().writer().print("\nAaand the current master zig version is... ", .{});
+                try writer.interface.print("\nAaand the current master zig version is... ", .{});
             }
-            try std.io.getStdOut().writeAll(body);
-            try std.io.getStdOut().writeAll("\n");
+            try writer.interface.writeAll(body);
+            try writer.interface.writeAll("\n");
         } else |err| {
-            try std.io.getStdOut().writer().print("request {} failed with: {}\n", .{ idx, err });
+            try writer.interface.print("request {} failed with: {}\n", .{ idx, err });
         }
     }
 
-    try std.io.getStdOut().writer().print("\nThat's all folks\n", .{});
+    try writer.interface.print("\nThat's all folks\n", .{});
 }

@@ -207,11 +207,12 @@ fn clock(userdata: usize, timeout: i32) std.os.wasi.subscription_t {
 pub fn poll(fds: []std.posix.pollfd, timeout: i32) std.posix.PollError!usize {
     // TODO: maybe use thread local arena instead?
     const MAX_POLL_FDS = 4096;
-    var subs: std.BoundedArray(std.os.wasi.subscription_t, MAX_POLL_FDS) = .{};
+    var buf: [MAX_POLL_FDS]std.os.wasi.subscription_t = undefined;
+    var subs: std.ArrayListUnmanaged(std.os.wasi.subscription_t) = .initBuffer(&buf);
     for (fds) |*pfd| {
         pfd.revents = 0;
         if (pfd.events & std.posix.POLL.IN != 0) {
-            subs.append(.{
+            subs.appendBounded(.{
                 .userdata = @intFromPtr(pfd),
                 .u = .{
                     .tag = .FD_READ,
@@ -220,7 +221,7 @@ pub fn poll(fds: []std.posix.pollfd, timeout: i32) std.posix.PollError!usize {
             }) catch return error.SystemResources;
         }
         if (pfd.events & std.posix.POLL.OUT != 0) {
-            subs.append(.{
+            subs.appendBounded(.{
                 .userdata = @intFromPtr(pfd),
                 .u = .{
                     .tag = .FD_WRITE,
@@ -235,12 +236,12 @@ pub fn poll(fds: []std.posix.pollfd, timeout: i32) std.posix.PollError!usize {
     }
 
     if (timeout >= 0) {
-        subs.append(clock(0, timeout)) catch return error.SystemResources;
+        subs.appendBounded(clock(0, timeout)) catch return error.SystemResources;
     }
 
     var n: usize = 0;
     var events: [MAX_POLL_FDS]std.os.wasi.event_t = undefined;
-    switch (std.os.wasi.poll_oneoff(@ptrCast(subs.constSlice().ptr), @ptrCast(events[0..subs.len].ptr), subs.len, &n)) {
+    switch (std.os.wasi.poll_oneoff(@ptrCast(&buf), @ptrCast(events[0..subs.len].ptr), subs.len, &n)) {
         .SUCCESS => {},
         else => |e| {
             log.err("poll: {}", .{e});

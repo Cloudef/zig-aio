@@ -107,7 +107,7 @@ test "ThreadPool" {
 
     const Test = struct {
         fn blocking() u32 {
-            std.time.sleep(1 * std.time.ns_per_s);
+            std.posix.nanosleep(1, 0);
             return 69;
         }
 
@@ -118,7 +118,7 @@ test "ThreadPool" {
 
         fn blockingCanceled(token: *const CancellationToken) u32 {
             while (!token.canceled.load(.acquire)) {
-                std.time.sleep(1 * std.time.ns_per_s);
+                std.posix.nanosleep(1, 0);
             }
             return if (token.canceled.load(.acquire)) 666 else 69;
         }

@@ -283,16 +283,17 @@ pub fn Uringlator(BackendOperation: type) type {
 
         pub fn queue(self: *@This(), pairs: anytype, backend: anytype, handler: anytype) aio.Error!void {
             if (comptime pairs.len > 1) {
-                var ids: std.BoundedArray(aio.Id, pairs.len) = .{};
-                errdefer inline for (ids.constSlice(), pairs) |id, pair| {
+                var buf: [pairs.len]aio.Id = undefined;
+                var ids: std.ArrayListUnmanaged(aio.Id) = .initBuffer(&buf);
+                errdefer inline for (buf, pairs) |id, pair| {
                     debug("dequeue: {}: {}, {s} ({?})", .{ id, pair.tag, @tagName(pair.link), self.prev_id });
                     backend.uringlator_dequeue(id, pair.tag, pair.op);
                     self.ops.release(id) catch unreachable;
                 };
-                inline for (pairs) |pair| ids.append(try self.queueOperation(pair.tag, pair.op, pair.link, backend)) catch unreachable;
-                inline for (ids.constSlice()[0..pairs.len]) |id| self.queued.add(id) catch unreachable;
+                inline for (pairs) |pair| ids.appendAssumeCapacity(try self.queueOperation(pair.tag, pair.op, pair.link, backend));
+                inline for (buf) |id| self.queued.add(id) catch unreachable;
                 if (@TypeOf(handler) != void) {
-                    inline for (ids.constSlice(), pairs) |id, pair| handler.aio_queue(id, pair.op.userdata);
+                    inline for (buf, pairs) |id, pair| handler.aio_queue(id, pair.op.userdata);
                 }
             } else {
                 inline for (pairs) |pair| {
