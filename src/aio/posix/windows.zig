@@ -331,7 +331,7 @@ comptime {
 pub fn sendmsgEx(sockfd: std.posix.socket_t, msg: *const msghdr_const, flags: u32, overlapped: ?*io.OVERLAPPED) !PendingOrTransmitted {
     var written: u32 = 0;
     while (true) {
-        const rc = win_sock.WSASendMsg(sockfd, @constCast(@ptrCast(msg)), flags, &written, overlapped, null);
+        const rc = win_sock.WSASendMsg(sockfd, @ptrCast(@constCast(msg)), flags, &written, overlapped, null);
         if (rc == win_sock.SOCKET_ERROR) {
             switch (win_sock.WSAGetLastError()) {
                 .EWOULDBLOCK, .EINTR, .EINPROGRESS => continue,
@@ -378,7 +378,7 @@ pub fn recvmsgEx(sockfd: std.posix.socket_t, msg: *msghdr, _: u32, overlapped: ?
                 sock,
                 win_sock.SIO_GET_EXTENSION_FUNCTION_POINTER,
                 // not in zigwin32
-                @constCast(@ptrCast(&std.os.windows.ws2_32.WSAID_WSARECVMSG)),
+                @ptrCast(@constCast(&std.os.windows.ws2_32.WSAID_WSARECVMSG)),
                 @sizeOf(std.os.windows.GUID),
                 @ptrCast(&fun),
                 @sizeOf(@TypeOf(fun)),
