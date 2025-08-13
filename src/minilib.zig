@@ -3,7 +3,6 @@ pub const FixedArrayList = @import("minilib/fixed_array_list.zig").FixedArrayLis
 pub const DoubleBufferedFixedArrayList = @import("minilib/fixed_array_list.zig").DoubleBufferedFixedArrayList;
 pub const Id = @import("minilib/id.zig").Id;
 pub const TimerQueue = @import("minilib/TimerQueue.zig");
-pub const BoundedArray = @import("minilib/bounded_array.zig").BoundedArray;
 
 const std = @import("std");
 

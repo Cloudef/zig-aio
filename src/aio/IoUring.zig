@@ -3,7 +3,6 @@ const aio = @import("../aio.zig");
 const Operation = @import("ops.zig").Operation;
 const posix = @import("posix/posix.zig");
 const linux = @import("posix/linux.zig");
-const BoundedArray = @import("minilib").BoundedArray;
 const log = std.log.scoped(.aio_io_uring);
 
 const Supported = struct {
@@ -160,14 +159,15 @@ pub fn queue(self: *@This(), pairs: anytype, handler: anytype) aio.Error!void {
     const saved_sq = self.io.sq;
     errdefer self.io.sq = saved_sq;
     if (comptime pairs.len > 1) {
-        var ids: BoundedArray(aio.Id, pairs.len) = .{};
-        errdefer inline for (ids.constSlice(), pairs) |id, pair| {
+        var buf: [pairs.len]aio.Id = undefined;
+        var ids: std.ArrayListUnmanaged(aio.Id) = .initBuffer(&buf);
+        errdefer inline for (buf, pairs) |id, pair| {
             debug("dequeue: {f}: {any}, {s}", .{ id, pair.tag, @tagName(pair.link) });
             self.ops.release(id) catch unreachable;
         };
-        inline for (pairs) |pair| ids.append(try self.queueOperation(pair.tag, pair.op, pair.link)) catch unreachable;
+        inline for (pairs) |pair| ids.appendAssumeCapacity(try self.queueOperation(pair.tag, pair.op, pair.link));
         if (@TypeOf(handler) != void) {
-            inline for (ids.constSlice(), pairs) |id, pair| {
+            inline for (buf, pairs) |id, pair| {
                 handler.aio_queue(id, pair.op.userdata);
             }
         }
