@@ -42,8 +42,9 @@ const Region = struct {
         self.* = .{
             .id = id,
             .ticker = ticker,
-            .thread = try std.Thread.spawn(.{}, @This().run, .{self}),
+            .thread = undefined,
         };
+        self.thread = try std.Thread.spawn(.{}, @This().run, .{self});
     }
 
     pub fn deinit(self: *@This()) void {
