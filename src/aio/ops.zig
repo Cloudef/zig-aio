@@ -612,7 +612,7 @@ pub const Operation = enum {
 
     pub const anyresult = opaque {
         pub fn cast(self: *@This(), T: type) T {
-            return @alignCast(@ptrCast(self));
+            return @ptrCast(@alignCast(self));
         }
 
         pub fn init(comptime op_type: Operation, op: op_type.Type()) *@This() {

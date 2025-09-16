@@ -260,7 +260,7 @@ pub fn uringlator_queue(_: *@This(), _: aio.Id, comptime op_type: Operation, op:
         .ovl = .{},
         .win_state = switch (op_type) {
             .wait_event_source => .{ .event_source = undefined },
-            inline .recv, .send => .{ .wsabuf = .{.{ .buf = @constCast(@ptrCast(op.buffer.ptr)), .len = @intCast(op.buffer.len) }} },
+            inline .recv, .send => .{ .wsabuf = .{.{ .buf = @ptrCast(@constCast(op.buffer.ptr)), .len = @intCast(op.buffer.len) }} },
             .accept => .{ .accept = undefined },
             else => undefined,
         },
