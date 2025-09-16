@@ -46,7 +46,6 @@ fn server(startup: *std.Thread.ResetEvent) !void {
     var ring = try std.os.linux.IoUring.init(CQES, std.os.linux.IORING_SETUP_SINGLE_ISSUER | std.os.linux.IORING_SETUP_COOP_TASKRUN);
     defer ring.deinit();
 
-
     const HDR_BUFSZ = BUFSZ + @sizeOf(std.os.linux.io_uring_recvmsg_out);
     var buf_ring = try std.os.linux.IoUring.BufferGroup.init(&ring, std.heap.smp_allocator, 0, HDR_BUFSZ * NUM_BUFFERS, NUM_BUFFERS);
     defer buf_ring.deinit(std.heap.smp_allocator);
